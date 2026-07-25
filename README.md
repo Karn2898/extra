@@ -5,10 +5,11 @@
   </picture>
 </p>
 
+<h1 align="center">Make your product queryable.</h1>
+
 <p align="center">
-  <b>Turn your app into an agentic product — from one YAML file.</b><br>
-  Give any application a smart, domain-aware agent layer, without
-  building the engine yourself.
+  Turn the APIs, tools, and business logic you already have into a secure AI
+  interface inside your product.
 </p>
 
 <p align="center">
@@ -18,35 +19,103 @@
 </p>
 
 <p align="center">
-  <a href="https://docs.extra-ai.co/docs/introduction">Documentation</a> ·
   <a href="#quick-start">Quick Start</a> ·
-  <a href="#how-it-works">How it works</a> ·
-  <a href="#learn-more">Learn more</a> ·
+  <a href="#why-extra">Why Extra</a> ·
+  <a href="#who-is-extra-for">Who it's for</a> ·
+  <a href="https://docs.extra-ai.co/docs/introduction">Documentation</a> ·
   <a href="#contributing">Contributing</a>
 </p>
 
 ---
 
-## What Extra is
+Your users shouldn't have to learn your UI to get an answer out of it.
 
-Extra is a lightweight engine that adds an agentic layer to any application.
-You describe your agents in a simple YAML file — what each one is responsible
-for and what it can access — and Extra turns that into a running system that
-routes each request to the right agent and answers it accurately.
+Extra lets them ask questions and trigger actions using the APIs and business
+logic you already built.
 
-Every agent has a single, clear responsibility and is scoped to its own
-domain, with its own prompt, tools, and data. That scoping is what keeps
-answers grounded: a request about billing never reaches the returns agent, so
-there's no context bleeding between domains and no hallucinated hand-off. You
-get tools, MCP servers, authentication, provider connectors, and
-observability out of the box — so your app can be agentic in a day, not a
-quarter.
+Define the system in YAML. Extra handles routing, orchestration, and access
+boundaries while your logic and credentials stay in your backend.
 
-## How it works
+## Why Extra
 
-You define a small graph in YAML: one **orchestrator** that routes, and
-focused **agents** that do the work. Extra runs it — picking the right agent
-per request and keeping each one inside its own domain.
+**Ship faster.** Define your agent system instead of rebuilding routing,
+streaming, tool execution, and tracing.
+
+**Reuse your backend.** Connect the APIs, services, and business logic you
+already have.
+
+**Keep access control outside the model.** Authorization runs in trusted code —
+the model cannot grant itself access to protected capabilities.
+
+**Avoid model lock-in.** Switch model providers through configuration rather
+than rewriting your product.
+
+**Embed it in your product.** Serve the system as an API or as an embeddable
+chat component.
+
+## Quick Start
+
+You need Docker and an API key for your model provider.
+
+Create `agents.yml` — a single agent is a complete system:
+
+```yaml
+system:
+  name: "Support Bot"
+
+defaults:
+  model:
+    provider: anthropic
+    name: claude-sonnet-4-6
+
+agents:
+  support_agent:
+    description: "Answers questions about orders and returns."
+    prompts:
+      system: "prompts/support.md"
+
+graph:
+  support_agent:
+```
+
+Write the prompt it references, in `prompts/support.md`:
+
+```markdown
+You are a support agent for an online store. Answer questions about orders
+and returns.
+```
+
+Run it:
+
+```bash
+docker run -p 8090:8090 -v "$(pwd):/workspace" -w /workspace \
+  -e ANTHROPIC_API_KEY=sk-... \
+  ghcr.io/extra-org/extra:latest serve --config agents.yml
+```
+
+Your system is live at `http://localhost:8090` — send it a message with
+`POST /invoke`.
+
+Tools, MCP servers, routing between agents, conversation history, and the chat
+widget are covered in the
+[Quickstart](https://docs.extra-ai.co/docs/quickstart).
+
+## Features
+
+- YAML-defined agents and routing
+- Local Python tools and remote MCP servers
+- Per-node authorization
+- Human-in-the-loop tool approvals
+- Anthropic, OpenAI, Gemini, and Bedrock
+- Streaming API
+- Structured logs and Langfuse tracing
+- Embeddable web component
+
+## Architecture
+
+An orchestrator routes each request; focused agents do the domain work. Each
+agent is scoped to its own prompt, tools, and domain data, which keeps answers
+grounded in the right part of your business.
 
 ```mermaid
 flowchart TD
@@ -64,149 +133,30 @@ flowchart TD
     A3 --> RESP
 ```
 
-Each agent only sees its own tools and data, so the model stays focused and
-answers correctly for that part of your business. Add a new capability by
-adding an agent to the file — no routing code to write.
+Extra runs the graph. Your project's plugins hold the trusted business logic —
+tools, access checks, and the values resolved into prompts.
 
-Here's the same idea in YAML:
-
-```yaml
-orchestrators:
-  router:
-    description: "Routes each request to the right department."
-    prompts:
-      orchestrator: "prompts/router.md"
-
-agents:
-  orders_agent:
-    description: "Handles order status and tracking."
-    prompts:
-      system: "prompts/orders_agent.md"
-    tools: [get_order_status]
-    mcps: [orders_api]
-
-  returns_agent:
-    description: "Handles returns and refunds."
-    prompts:
-      system: "prompts/returns_agent.md"
-    tools: [create_return]
-
-graph:
-  router:
-    orders_agent:
-    returns_agent:
-```
-
-That's the whole system. Extra validates it, compiles it, and serves it as an
-API. You only write your own business logic — the tool and connector stubs
-Extra generates for you.
-
-## Quick Start
-
-Write your `agents.yml` (like the one above), then generate the plugin stubs
-and serve it:
-
-```bash
-# Generate tool/resolver stubs from your spec, then fill in your logic
-docker run --rm -v "$(pwd):/workspace" -w /workspace \
-  ghcr.io/extra-org/extra:latest generate --config agents.yml
-
-# Serve your system
-docker run -p 8090:8090 -v "$(pwd):/workspace" -w /workspace \
-  -e ANTHROPIC_API_KEY=sk-... \
-  ghcr.io/extra-org/extra:latest serve --config agents.yml
-```
-
-Your agent API is live at `http://localhost:8090`. For the widget, local
-(non-Docker) setup, and the full walkthrough, see the
-[Quickstart docs](https://docs.extra-ai.co/docs/quickstart).
-
-### Agent setup skill
-
-If you use Claude Code, Cursor, or Codex, you can install the official Extra
-setup skill to create or repair an `extra` project configuration
-interactively. The same open Agent Skills-format skill works across supported
-agents; it helps set up `agents.yml`, prompts, MCPs, tools, resolvers, plugins,
-generation, Docker/local execution, and validation.
-
-List available skills:
-
-```bash
-npx skills add extra-org/extra-skills --list
-```
-
-Install for Claude Code:
-
-```bash
-npx skills add extra-org/extra-skills --skill '*' -a claude-code
-```
-
-Install for Cursor:
-
-```bash
-npx skills add extra-org/extra-skills --skill '*' -a cursor
-```
-
-Install for Codex:
-
-```bash
-npx skills add extra-org/extra-skills --skill '*' -a codex
-```
-
-Install for all three:
-
-```bash
-npx skills add extra-org/extra-skills --skill '*' -a claude-code -a cursor -a codex
-```
-
-Add `-g` to install globally for the current user instead of into the current
-project.
-
-In Claude Code, open your project:
-
-```bash
-claude
-```
-
-Then run:
-
-```text
-/extra-setup
-```
-
-Examples:
-
-```text
-/extra-setup simple banking demo
-/extra-setup repair my agents.yml
-/extra-setup configure MCP tools and resolvers
-```
-
-In Cursor or Codex, install the same `extra-setup` skill and ask the agent to
-use it:
-
-```text
-Use the extra-setup skill to create a simple banking demo for this project.
-```
-
-If your current Cursor or Codex version supports direct skill invocation, use
-that agent's documented invocation flow.
-
-The skill repository is available at
-[extra-org/extra-skills](https://github.com/extra-org/extra-skills).
-
-## What you get out of the box
-
-- **Domain-focused agents** — one responsibility each, scoped to their own tools and data, so answers stay accurate.
-- **Automatic routing** — declare the graph; Extra sends each request to the right agent.
-- **Tools, MCP & auth** — connect any tool or MCP server, with tokens that never reach the model or the logs.
-- **Observability** — a full trace of every request.
-
-## Learn more
-
-- **[Full example](https://docs.extra-ai.co/docs/tutorial)** — build a complete multi-agent system step by step.
+- **[Tutorial](https://docs.extra-ai.co/docs/tutorial)** — build a complete multi-agent system step by step.
 - **[YAML reference](https://docs.extra-ai.co/docs/yaml-spec)** — every field you can declare.
-- **[Architecture](https://docs.extra-ai.co/docs/architecture)** — how routing and execution work under the hood.
+- **[Architecture](https://docs.extra-ai.co/docs/architecture)** — how routing and execution work.
+- **[`examples/`](examples/)** — runnable specs, including an enterprise knowledge assistant.
+
+## Who is Extra for?
+
+Extra is built for teams adding an AI interface to:
+
+- Existing SaaS products
+- Internal enterprise systems
+- Customer support workflows
+- Multi-step business operations
+- Multi-tenant products with strict access boundaries
+
+### Extra may be unnecessary if
+
+- You need a single prompt with a few simple tools.
+- You are building a chatbot with no product or backend integration.
+- You need full low-level control over the orchestration runtime.
+- Your workload is primarily batch or offline processing.
 
 ## Contributing
 
