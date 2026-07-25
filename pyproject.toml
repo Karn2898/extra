@@ -63,6 +63,7 @@ dependencies = [
     "langchain-google-genai>=2.0",
     "langfuse>=2.0",
     "asyncpg>=0.29",
+    "langsmith>=0.8.18,<0.9",
 ]
 
 [project.optional-dependencies]
