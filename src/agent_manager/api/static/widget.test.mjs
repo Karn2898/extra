@@ -255,7 +255,7 @@ assert.equal(customElements.defineCount, definesBefore, "defineAgentChat is idem
   assert.deepEqual(cfg, {
     endpoint: "https://widget.example",
     title: "Assistant",
-    color: "#2563eb",
+    color: "#18181b",
     greeting: "",
     position: "bottom-right",
     avatar: "",
@@ -288,7 +288,7 @@ assert.equal(customElements.defineCount, definesBefore, "defineAgentChat is idem
   element.setAttribute("position", "top-left");
   element.setAttribute("mode", "sideways");
   const cfg = parseConfig(element, "https://widget.example");
-  assert.equal(cfg.color, "#2563eb");
+  assert.equal(cfg.color, "#18181b");
   assert.equal(cfg.position, "bottom-right");
   assert.equal(cfg.mode, "floating");
 }

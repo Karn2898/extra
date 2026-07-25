@@ -2,7 +2,7 @@ import type { AgentChatConfig, AgentChatConfigInput, AgentChatMode, AgentChatPos
 
 export const DEFAULT_CONFIG: Omit<AgentChatConfig, "endpoint"> = {
   title: "Assistant",
-  color: "#2563eb",
+  color: "#18181b",
   greeting: "",
   position: "bottom-right",
   avatar: "",
