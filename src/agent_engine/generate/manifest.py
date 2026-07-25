@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import re
 import tomllib
+from collections.abc import Sequence
 from pathlib import Path
 
 from agent_engine.runtime.hooks.models import HOOK_POINTS
@@ -49,12 +50,16 @@ class PluginManifestError(RuntimeError):
 
 
 def ensure_plugins_manifest_exists(
-    plugin_root: Path, *, package: str | None = None
+    plugin_root: Path, *, package: str | None = None, import_roots: Sequence[Path] = ()
 ) -> tuple[Path, bool]:
     """Ensure ``plugin_root``, its ``__init__.py``, and ``plugins.toml`` exist.
 
     Returns ``(manifest_path, created)`` where ``created`` is True only when the
     manifest was newly written. An existing manifest is never overwritten.
+
+    ``import_roots`` are the resolved ``plugins.import_roots`` from the spec;
+    they decide the package prefix written into a new manifest so the generated
+    refs import at runtime.
     """
     plugin_root.mkdir(parents=True, exist_ok=True)
     init_file = plugin_root / "__init__.py"
@@ -65,7 +70,7 @@ def ensure_plugins_manifest_exists(
     path = plugin_root / MANIFEST_NAME
     if path.exists():
         return path, False
-    pkg = package or _derive_package(plugin_root)
+    pkg = package or _derive_package(plugin_root, import_roots)
     path.write_text(_render(_default_manifest(pkg)), encoding="utf-8")
     logger.info("created plugin manifest %s", path)
     return path, True
@@ -85,13 +90,18 @@ def hook_plugin_refs(path: Path) -> dict[str, str]:
     return {str(key): str(value) for key, value in plugins.items()}
 
 
-def manifest_package(path: Path) -> str:
-    """Return the manifest's declared package name (or derive from the path)."""
+def manifest_package(path: Path, import_roots: Sequence[Path] = ()) -> str:
+    """Return the manifest's declared package name (or derive it).
+
+    A manifest written by an earlier version may carry a package prefix that
+    does not import; its declared name still wins here, because rewriting it
+    could break a project that fixed the value by hand.
+    """
     if path.exists():
         name = load_manifest(path).get("package", {}).get("name")
         if isinstance(name, str) and name:
             return name
-    return _derive_package(path.parent)
+    return _derive_package(path.parent, import_roots)
 
 
 def update_manifest(
@@ -156,11 +166,30 @@ def update_manifest(
 # -- internals --------------------------------------------------------------
 
 
-def _derive_package(plugin_root: Path) -> str:
-    parent, name = plugin_root.parent.name, plugin_root.name
-    if name.isidentifier() and parent.isidentifier():
-        return f"{parent}.{name}"
-    return name if name.isidentifier() else "plugins"
+def _derive_package(plugin_root: Path, import_roots: Sequence[Path] = ()) -> str:
+    """Return the package name that matches how the runtime imports it.
+
+    The engine puts ``plugins.import_roots`` on ``sys.path``, so the package is
+    ``plugin_root`` expressed relative to whichever declared root contains it.
+    For the documented ``import_roots: ["."]`` layout — ``plugins/`` beside
+    ``agents.yml`` — that is simply ``plugins``.
+
+    Falls back to the directory's own name when no root contains it (callers
+    without a spec). Deriving a prefix from the *parent* directory name would
+    only be right if the import root were the directory above the example, and
+    produced refs that could not be imported at all when the example directory
+    happened to be a valid Python identifier.
+    """
+    resolved = plugin_root.resolve()
+    for import_root in import_roots:
+        try:
+            relative = resolved.relative_to(import_root.resolve())
+        except ValueError:
+            continue  # plugin_root is not under this root
+        parts = relative.parts
+        if parts and all(part.isidentifier() for part in parts):
+            return ".".join(parts)
+    return plugin_root.name if plugin_root.name.isidentifier() else "plugins"
 
 
 def _default_manifest(pkg: str) -> dict:
