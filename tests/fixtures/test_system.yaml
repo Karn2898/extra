@@ -24,10 +24,7 @@ tools:
 
 resolvers:
   current_date:
-    scope: shared
-
   user_name:
-    scope: shared
 
 orchestrators:
   root_router:
@@ -44,7 +41,7 @@ orchestrators:
 
 agents:
   greeting_agent:
-    name: "Greeting Agent"
+    name: "greeting"
     description: >
       Handles simple greetings and small talk.
     prompts:
@@ -54,13 +51,14 @@ agents:
       - user_name
 
   echo_agent:
-    name: "Echo Agent"
+    name: "echo"
     description: >
       Demonstrates tool usage by echoing user input.
     prompts:
       system: prompts/echo_agent/system.md
     tools:
       - echo_tool
+    auto: true
 
 graph:
   root_router:
