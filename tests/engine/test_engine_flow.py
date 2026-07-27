@@ -589,8 +589,7 @@ async def test_orchestrator_loads_both_prompts(tmp_path: Path) -> None:
     )
     assert model_both.captured_prompt == expected_both
 
-    # 2. Test system prompt only (no orchestrator) — falls back to description because
-    # orchestrator is required; system alone is not enough to build the prompt.
+    # 2. Test system prompt only (no orchestrator) — uses system as the base prompt.
     spec_sys = OrchestratorSpec(
         id="orch",
         name="orch",
@@ -610,9 +609,11 @@ async def test_orchestrator_loads_both_prompts(tmp_path: Path) -> None:
         base_dir=tmp_path,
     )
     await node_sys({"message": "hi", "visited": [], "used_tools": []})
-    assert model_sys.captured_prompt == f"orch desc\n{_ORCHESTRATOR_CONTRACT}"
+    expected_sys = f"System persona content\n\n\n{_ORCHESTRATOR_CONTRACT}"
+    assert model_sys.captured_prompt == expected_sys
 
-    # 3. Test orchestrator prompt only
+    # 3. Test orchestrator prompt only (no system) —
+    # description is used as base, then orchestrator is appended.
     spec_orch = OrchestratorSpec(
         id="orch",
         name="orch",
@@ -632,7 +633,8 @@ async def test_orchestrator_loads_both_prompts(tmp_path: Path) -> None:
         base_dir=tmp_path,
     )
     await node_orch({"message": "hi", "visited": [], "used_tools": []})
-    assert model_orch.captured_prompt == f"Orchestrator routing content\n{_ORCHESTRATOR_CONTRACT}"
+    expected_orch = f"orch desc\n\nOrchestrator routing content\n{_ORCHESTRATOR_CONTRACT}"
+    assert model_orch.captured_prompt == expected_orch
 
     # 4. Test fallback to description
     spec_desc = OrchestratorSpec(
@@ -652,4 +654,5 @@ async def test_orchestrator_loads_both_prompts(tmp_path: Path) -> None:
         base_dir=tmp_path,
     )
     await node_desc({"message": "hi", "visited": [], "used_tools": []})
-    assert model_desc.captured_prompt == f"orch desc\n{_ORCHESTRATOR_CONTRACT}"
+    expected_desc = f"orch desc\n\n\n{_ORCHESTRATOR_CONTRACT}"
+    assert model_desc.captured_prompt == expected_desc
