@@ -15,6 +15,8 @@ import type {
 } from "../types";
 
 export interface Conversation {
+  peekId(): string | null;
+  ensureId(): Promise<string>;
   send(text: string): Promise<SendMessageResponse>;
   stream(text: string): AsyncGenerator<StreamEvent>;
   loadHistory(): Promise<ChatMessage[]>;
@@ -37,6 +39,11 @@ export function useConversation(
     setStoredConversationId(endpoint, userId, created);
     return created;
   }, [client, endpoint, userId]);
+
+  const peekId = useCallback(
+    () => getStoredConversationId(endpoint, userId),
+    [endpoint, userId],
+  );
 
   const ensureId = useCallback(
     async () => getStoredConversationId(endpoint, userId) ?? startConversation(),
@@ -109,7 +116,17 @@ export function useConversation(
   );
 
   return useMemo(
-    () => ({ send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew }),
-    [send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew],
+    () => ({
+      peekId,
+      ensureId,
+      send,
+      stream,
+      loadHistory,
+      loadUsage,
+      listThreads,
+      switchTo,
+      startNew,
+    }),
+    [peekId, ensureId, send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew],
   );
 }
