@@ -1,7 +1,15 @@
 from __future__ import annotations
 
+import sys
+
 import pytest
-from tests.fixtures.support import FakeEngine, load_test_system
+from tests.fixtures.utils import FakeEngine, load_test_system
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_shared() -> None:
+    yield
+    sys.modules.pop("shared", None)
 
 
 def test_spec_validates_offline() -> None:

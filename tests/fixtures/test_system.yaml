@@ -1,9 +1,7 @@
 system:
   name: "Test Agent System"
 
-# Provider is declared here in YAML. The matching API key is NOT set in YAML —
-# it comes from the environment (e.g. OPENAI_API_KEY). `agentctl validate`
-# needs no key; `agentctl run`/`serve` need a key for the chosen provider.
+
 defaults:
   model:
     provider: openai

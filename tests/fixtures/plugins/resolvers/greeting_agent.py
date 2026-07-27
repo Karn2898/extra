@@ -1,9 +1,8 @@
 from __future__ import annotations
 
+from shared import SharedResolver
 
-class Resolver:
-    def current_date(self, ctx: dict) -> str:
-        return "2026-07-19"
 
-    def user_name(self, ctx: dict) -> str:
-        return "Tester"
+class Resolver(SharedResolver):
+    def __init__(self) -> None:
+        super().__init__()

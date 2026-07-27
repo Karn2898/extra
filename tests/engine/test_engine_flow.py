@@ -38,7 +38,7 @@ from agent_engine.engine.langgraph.filters import AccessFilter
 from agent_engine.engine.types import RunResult
 from agent_engine.runtime.hooks import AuthContext, RunContext
 from agent_engine.runtime.state import GraphState
-from tests.fixtures.support import fake_model_factory
+from tests.fixtures.utils import fake_model_factory
 
 # ---------------------------------------------------------------------------
 # Fake chat model
