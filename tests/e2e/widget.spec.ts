@@ -291,7 +291,7 @@ test("floating widget loads, registers, opens, closes, and shows greeting", asyn
   await expect.poll(() => page.evaluate(() => Boolean(customElements.get("agent-chat")))).toBe(true);
   await expect.poll(async () => (await widget(page)).evaluate((element) => Boolean(element.shadowRoot))).toBe(true);
   await expect.poll(() => shadowExists(page, ".launcher")).toBe(true);
-  await expect.poll(() => shadowAttribute(page, ".launcher", "aria-label")).toBe("Open chat");
+  await expect.poll(() => shadowAttribute(page, ".launcher", "aria-label")).toBe("Open Assistant");
   await expect.poll(() => shadowAttribute(page, ".launcher", "aria-expanded")).toBe("false");
   await expect.poll(() => shadowAttribute(page, ".launcher", "aria-controls")).not.toBe("");
   await expect.poll(() => shadowAttribute(page, ".panel", "role")).toBe("dialog");
@@ -302,7 +302,7 @@ test("floating widget loads, registers, opens, closes, and shows greeting", asyn
   await expect.poll(() => shadowClassContains(page, ".panel", "open")).toBe(true);
   await expect.poll(() => shadowAttribute(page, ".launcher", "aria-expanded")).toBe("true");
   await expect.poll(() => shadowActiveMatches(page, ".input")).toBe(true);
-  await expect.poll(() => shadowText(page, ".messages")).toContain("Hi! How can I help?");
+  await expect.poll(() => shadowText(page, ".messages")).toContain("How can I help you today?");
 
   await shadowClick(page, ".close");
   await expect.poll(() => shadowClassContains(page, ".panel", "open")).toBe(false);

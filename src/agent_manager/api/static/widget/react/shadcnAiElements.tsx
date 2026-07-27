@@ -89,6 +89,7 @@ export function PromptInput({
     if (!text) return;
     input!.value = "";
     input!.style.height = "auto";
+    input!.style.overflowY = "hidden";
     onSubmit({ text });
   }
 
@@ -122,20 +123,24 @@ export function PromptInputTextarea({
   }
 
   return (
-    <textarea
-      {...props}
-      className={cn("input", props.className)}
-      name="message"
-      onInput={(event) => {
-        props.onInput?.(event);
-        const input = event.currentTarget;
-        input.style.height = "auto";
-        input.style.height = `${Math.min(input.scrollHeight, 120)}px`;
-      }}
-      onKeyDown={onKeyDown}
-      ref={inputRef}
-      rows={props.rows ?? 1}
-    />
+    <div className="input-wrap">
+      <textarea
+        {...props}
+        className={cn("input", props.className)}
+        name="message"
+        onInput={(event) => {
+          props.onInput?.(event);
+          const input = event.currentTarget;
+          input.style.height = "auto";
+          input.style.height = `${Math.min(input.scrollHeight, 140)}px`;
+          // Only scroll once we've hit the max height; otherwise it grows to fit.
+          input.style.overflowY = input.scrollHeight > 140 ? "auto" : "hidden";
+        }}
+        onKeyDown={onKeyDown}
+        ref={inputRef}
+        rows={props.rows ?? 1}
+      />
+    </div>
   );
 }
 

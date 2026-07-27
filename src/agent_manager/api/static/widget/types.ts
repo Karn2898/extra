@@ -28,6 +28,16 @@ export interface ChatMessage {
   created_at?: string;
 }
 
+export interface MessageEntry {
+  id: string;
+  role: "user" | "ai";
+  text: string;
+  typing?: boolean;
+  error?: boolean;
+  route?: string[];
+  tools?: ToolRecord[];
+}
+
 export interface ToolRecord {
   name: string;
   provider: string;
