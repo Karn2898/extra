@@ -10,6 +10,7 @@ from agent_manager.domain.models import (
     Role,
     TokenBudgetUsage,
     User,
+    thread_title,
 )
 from agent_manager.domain.repository import Repository
 
@@ -24,4 +25,5 @@ __all__ = [
     "Role",
     "TokenBudgetUsage",
     "User",
+    "thread_title",
 ]
