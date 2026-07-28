@@ -34,19 +34,19 @@ export function useConversation(
 ): Conversation {
   const startConversation = useCallback(async () => {
     const created = await client.createConversation(userId);
-    setStoredConversationId(endpoint, created);
+    setStoredConversationId(endpoint, userId, created);
     return created;
   }, [client, endpoint, userId]);
 
   const ensureId = useCallback(
-    async () => getStoredConversationId(endpoint) ?? startConversation(),
-    [endpoint, startConversation],
+    async () => getStoredConversationId(endpoint, userId) ?? startConversation(),
+    [endpoint, userId, startConversation],
   );
 
   const restartId = useCallback(async () => {
-    removeStoredConversationId(endpoint);
+    removeStoredConversationId(endpoint, userId);
     return startConversation();
-  }, [endpoint, startConversation]);
+  }, [endpoint, userId, startConversation]);
 
   const send = useCallback(
     async (text: string) => {
@@ -73,25 +73,25 @@ export function useConversation(
   );
 
   const loadHistory = useCallback(async () => {
-    const stored = getStoredConversationId(endpoint);
+    const stored = getStoredConversationId(endpoint, userId);
     if (!stored) return [];
     try {
       return await client.getMessages(stored);
     } catch (error) {
-      if (isMissingConversation(error)) removeStoredConversationId(endpoint);
+      if (isMissingConversation(error)) removeStoredConversationId(endpoint, userId);
       return [];
     }
-  }, [client, endpoint]);
+  }, [client, endpoint, userId]);
 
   const loadUsage = useCallback(async () => {
-    const stored = getStoredConversationId(endpoint);
+    const stored = getStoredConversationId(endpoint, userId);
     if (!stored) return null;
     try {
       return await client.getUsage(stored);
     } catch {
       return null;
     }
-  }, [client, endpoint]);
+  }, [client, endpoint, userId]);
 
   const listThreads = useCallback(
     () => client.listConversations(userId).catch(() => []),
@@ -99,11 +99,14 @@ export function useConversation(
   );
 
   const switchTo = useCallback(
-    (conversationId: string) => setStoredConversationId(endpoint, conversationId),
-    [endpoint],
+    (conversationId: string) => setStoredConversationId(endpoint, userId, conversationId),
+    [endpoint, userId],
   );
 
-  const startNew = useCallback(() => removeStoredConversationId(endpoint), [endpoint]);
+  const startNew = useCallback(
+    () => removeStoredConversationId(endpoint, userId),
+    [endpoint, userId],
+  );
 
   return useMemo(
     () => ({ send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew }),

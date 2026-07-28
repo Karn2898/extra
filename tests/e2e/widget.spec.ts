@@ -2,6 +2,20 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 
 const history: Record<string, Array<{ role: string; content: string; created_at: string }>> = {};
 
+const ENDPOINT = "http://127.0.0.1:8123";
+const E2E_USER = "e2e-user";
+// Conversation storage is scoped by user, so a test that reads or seeds it has
+// to know which user the widget will pick. Pin the anonymous id it would
+// otherwise generate.
+const CONVERSATION_KEY = `agent-chat:${ENDPOINT}:${E2E_USER}`;
+
+async function pinUser(page: Page) {
+  await page.addInitScript(
+    ([endpoint, user]) => localStorage.setItem(`agent-chat:user:${endpoint}`, user),
+    [ENDPOINT, E2E_USER],
+  );
+}
+
 async function mockConversationApi(
   page: Page,
   options: {
@@ -397,6 +411,7 @@ test("sending a message calls backend, renders assistant answer, stores conversa
   page,
 }) => {
   const calls = await mockConversationApi(page);
+  await pinUser(page);
   await page.goto("/widget-demo.html");
   await shadowClick(page, ".launcher");
   await shadowFill(page, ".input", "hello browser");
@@ -405,7 +420,7 @@ test("sending a message calls backend, renders assistant answer, stores conversa
   await expect.poll(() => shadowText(page, ".messages")).toContain("Echo: hello browser");
   await expect.poll(() => shadowActiveMatches(page, ".input")).toBe(true);
   await expect
-    .poll(() => page.evaluate(() => localStorage.getItem("agent-chat:http://127.0.0.1:8123")))
+    .poll(() => page.evaluate((key) => localStorage.getItem(key), CONVERSATION_KEY))
     .toBe("conv-smoke");
   expect(calls).toContain("POST /conversations");
   expect(calls).toContain("POST /conversations/conv-smoke/messages/stream");
@@ -526,8 +541,9 @@ test("thread drawer lists conversations, switches to one, and starts a new chat"
 
 test("stale stored conversation is replaced before sending to the agent", async ({ page }) => {
   const calls = await mockConversationApiWithStaleConversation(page);
+  await pinUser(page);
   await page.goto("/widget-demo.html");
-  await page.evaluate(() => localStorage.setItem("agent-chat:http://127.0.0.1:8123", "conv-stale"));
+  await page.evaluate((key) => localStorage.setItem(key, "conv-stale"), CONVERSATION_KEY);
 
   await shadowClick(page, ".launcher");
   await shadowFill(page, ".input", "recover please");
@@ -535,7 +551,7 @@ test("stale stored conversation is replaced before sending to the agent", async 
 
   await expect.poll(() => shadowText(page, ".messages")).toContain("Recovered: recover please");
   await expect
-    .poll(() => page.evaluate(() => localStorage.getItem("agent-chat:http://127.0.0.1:8123")))
+    .poll(() => page.evaluate((key) => localStorage.getItem(key), CONVERSATION_KEY))
     .toBe("conv-fresh");
   expect(calls).toContain("GET /conversations/conv-stale/messages");
   expect(calls).toContain("POST /conversations");

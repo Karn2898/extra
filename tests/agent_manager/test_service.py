@@ -7,7 +7,11 @@ import asyncio
 import pytest
 
 from agent_engine.engine.types import ChatMessage, ChatRole
-from agent_manager.application import ConversationNotFound, ConversationService
+from agent_manager.application import (
+    ConversationAccessDenied,
+    ConversationNotFound,
+    ConversationService,
+)
 from agent_manager.domain import Role
 from agent_manager.infrastructure.persistence.memory_repository import MemoryRepository
 from tests.agent_manager.conftest import RecordingEngine
@@ -78,6 +82,28 @@ async def test_send_uses_stable_session_and_unique_run_id() -> None:
     assert contexts[0].run_id is not None
     assert contexts[1].run_id is not None
     assert contexts[0].run_id != contexts[1].run_id
+
+
+async def test_turn_runs_as_the_session_owner_when_the_caller_sends_no_user_id() -> None:
+    """A client that only knows the conversation id must not run as nobody —
+    hooks and tools authorize on RunContext.user_id."""
+    service, engine = _service()
+    cid = await service.create(user_id="u1", session_id="sess-1")
+
+    await service.send(cid, "hi")
+
+    assert [ctx.user_id for ctx in engine.contexts if ctx] == ["u1"]
+
+
+async def test_turn_refuses_a_user_id_that_does_not_own_the_conversation() -> None:
+    service, engine = _service()
+    cid = await service.create(user_id="u1", session_id="sess-1")
+
+    with pytest.raises(ConversationAccessDenied):
+        await service.send(cid, "hi", user_id="u2")
+
+    assert engine.contexts == []
+    assert await service.history(cid) == []
 
 
 async def test_service_creates_user_and_session_metadata() -> None:

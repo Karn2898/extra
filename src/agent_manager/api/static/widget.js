@@ -52423,17 +52423,17 @@ var X = createLucideIcon("x", __iconNode12);
 var import_react10 = __toESM(require_react(), 1);
 
 // src/agent_manager/api/static/widget/storage/conversationStorage.ts
-function conversationStorageKey(endpoint) {
-  return `agent-chat:${endpoint}`;
+function conversationStorageKey(endpoint, userId) {
+  return `agent-chat:${endpoint}:${userId}`;
 }
-function getStoredConversationId(endpoint, storage = localStorage) {
-  return storage.getItem(conversationStorageKey(endpoint));
+function getStoredConversationId(endpoint, userId, storage = localStorage) {
+  return storage.getItem(conversationStorageKey(endpoint, userId));
 }
-function setStoredConversationId(endpoint, conversationId, storage = localStorage) {
-  storage.setItem(conversationStorageKey(endpoint), conversationId);
+function setStoredConversationId(endpoint, userId, conversationId, storage = localStorage) {
+  storage.setItem(conversationStorageKey(endpoint, userId), conversationId);
 }
-function removeStoredConversationId(endpoint, storage = localStorage) {
-  storage.removeItem(conversationStorageKey(endpoint));
+function removeStoredConversationId(endpoint, userId, storage = localStorage) {
+  storage.removeItem(conversationStorageKey(endpoint, userId));
 }
 function getOrCreateUserId(endpoint, storage = localStorage) {
   const key = `agent-chat:user:${endpoint}`;
@@ -53069,17 +53069,17 @@ var isMissingConversation = (error) => error instanceof AgentChatHttpError && er
 function useConversation(client, endpoint, userId) {
   const startConversation = (0, import_react9.useCallback)(async () => {
     const created = await client.createConversation(userId);
-    setStoredConversationId(endpoint, created);
+    setStoredConversationId(endpoint, userId, created);
     return created;
   }, [client, endpoint, userId]);
   const ensureId = (0, import_react9.useCallback)(
-    async () => getStoredConversationId(endpoint) ?? startConversation(),
-    [endpoint, startConversation]
+    async () => getStoredConversationId(endpoint, userId) ?? startConversation(),
+    [endpoint, userId, startConversation]
   );
   const restartId = (0, import_react9.useCallback)(async () => {
-    removeStoredConversationId(endpoint);
+    removeStoredConversationId(endpoint, userId);
     return startConversation();
-  }, [endpoint, startConversation]);
+  }, [endpoint, userId, startConversation]);
   const send = (0, import_react9.useCallback)(
     async (text10) => {
       try {
@@ -53103,33 +53103,36 @@ function useConversation(client, endpoint, userId) {
     [client, ensureId, restartId]
   );
   const loadHistory = (0, import_react9.useCallback)(async () => {
-    const stored = getStoredConversationId(endpoint);
+    const stored = getStoredConversationId(endpoint, userId);
     if (!stored) return [];
     try {
       return await client.getMessages(stored);
     } catch (error) {
-      if (isMissingConversation(error)) removeStoredConversationId(endpoint);
+      if (isMissingConversation(error)) removeStoredConversationId(endpoint, userId);
       return [];
     }
-  }, [client, endpoint]);
+  }, [client, endpoint, userId]);
   const loadUsage = (0, import_react9.useCallback)(async () => {
-    const stored = getStoredConversationId(endpoint);
+    const stored = getStoredConversationId(endpoint, userId);
     if (!stored) return null;
     try {
       return await client.getUsage(stored);
     } catch {
       return null;
     }
-  }, [client, endpoint]);
+  }, [client, endpoint, userId]);
   const listThreads = (0, import_react9.useCallback)(
     () => client.listConversations(userId).catch(() => []),
     [client, userId]
   );
   const switchTo = (0, import_react9.useCallback)(
-    (conversationId) => setStoredConversationId(endpoint, conversationId),
-    [endpoint]
+    (conversationId) => setStoredConversationId(endpoint, userId, conversationId),
+    [endpoint, userId]
   );
-  const startNew = (0, import_react9.useCallback)(() => removeStoredConversationId(endpoint), [endpoint]);
+  const startNew = (0, import_react9.useCallback)(
+    () => removeStoredConversationId(endpoint, userId),
+    [endpoint, userId]
+  );
   return (0, import_react9.useMemo)(
     () => ({ send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew }),
     [send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew]
@@ -53309,7 +53312,7 @@ function AgentChatApp({ client, config, onAnswer, panelId, titleId }) {
                   {
                     open: threadsOpen,
                     threads,
-                    activeId: getStoredConversationId(config.endpoint),
+                    activeId: getStoredConversationId(config.endpoint, userId),
                     onSelect: openThread,
                     onNew: startNewThread,
                     onClose: () => setThreadsOpen(false)

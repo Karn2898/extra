@@ -236,7 +236,7 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
           <ThreadDrawer
             open={threadsOpen}
             threads={threads}
-            activeId={getStoredConversationId(config.endpoint)}
+            activeId={getStoredConversationId(config.endpoint, userId)}
             onSelect={openThread}
             onNew={startNewThread}
             onClose={() => setThreadsOpen(false)}
