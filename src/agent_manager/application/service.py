@@ -32,6 +32,10 @@ class ConversationNotFound(Exception):
     """Raised when an operation targets a conversation id that does not exist."""
 
 
+class ConversationAccessDenied(Exception):
+    """Raised when a caller acts on a conversation owned by a different user."""
+
+
 class ConversationTokenBudgetExceeded(Exception):
     """Raised when a conversation's lifetime token budget is exhausted."""
 
@@ -119,7 +123,14 @@ class ConversationService:
         user_id: str | None = None,
     ) -> PreparedConversationTurn:
         """Persist a user message and return its isolated prior model context."""
-        await self._require(conversation_id)
+        session = await self._require(conversation_id)
+        # The stored session owns the identity of the turn — not the caller. A
+        # client that omits user_id still runs as the session's owner (hooks and
+        # tools authorize on RunContext.user_id), and one that sends a different
+        # user_id is refused rather than silently rebound.
+        if session.user_id and user_id and user_id != session.user_id:
+            raise ConversationAccessDenied(conversation_id)
+        user_id = session.user_id or user_id
         if user_id:
             await self._repository.upsert_user(user_id)
 
@@ -229,6 +240,8 @@ class ConversationService:
                 snapshot_ttl_seconds=self._snapshot_ttl_seconds,
             )
 
-    async def _require(self, conversation_id: str) -> None:
-        if not await self._repository.conversation_exists(conversation_id):
+    async def _require(self, conversation_id: str) -> ConversationSession:
+        session = await self._repository.get_session(conversation_id)
+        if session is None:
             raise ConversationNotFound(conversation_id)
+        return session

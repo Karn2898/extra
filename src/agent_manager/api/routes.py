@@ -24,6 +24,7 @@ from agent_manager.api.schemas import (
     ToolRecord,
 )
 from agent_manager.application import (
+    ConversationAccessDenied,
     ConversationNotFound,
     ConversationService,
     ConversationTokenBudgetExceeded,
@@ -45,6 +46,13 @@ async def create_conversation(
 
 @router.get("/conversations", response_model=list[ConversationSummary])
 async def list_conversations(service: Service, user_id: str) -> list[ConversationSummary]:
+    """List a user's conversations.
+
+    `user_id` is a caller-supplied identifier, not an authenticated principal —
+    it scopes the listing, it does not authorize it. A deployment that needs a
+    real boundary puts auth in front of this router (or overrides `get_service`)
+    and derives the id from the verified credential instead of the query string.
+    """
     sessions = await service.list_conversations(user_id)
     return [
         ConversationSummary(
@@ -87,6 +95,8 @@ async def send_message(
         result = await service.send(conversation_id, body.message, user_id=body.user_id)
     except ConversationNotFound as exc:
         raise HTTPException(status_code=404, detail="conversation not found") from exc
+    except ConversationAccessDenied:
+        raise HTTPException(status_code=403, detail="conversation owned by another user") from None
     except ConversationTokenBudgetExceeded:
         raise HTTPException(status_code=429, detail="conversation token budget exceeded") from None
     except Exception as exc:  # engine failure
@@ -129,6 +139,8 @@ async def stream_message(
         first = None
     except ConversationNotFound as exc:
         raise HTTPException(status_code=404, detail="conversation not found") from exc
+    except ConversationAccessDenied:
+        raise HTTPException(status_code=403, detail="conversation owned by another user") from None
     except ConversationTokenBudgetExceeded:
         raise HTTPException(status_code=429, detail="conversation token budget exceeded") from None
 
