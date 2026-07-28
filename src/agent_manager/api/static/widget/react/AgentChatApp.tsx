@@ -65,22 +65,35 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
     () => config.user || getOrCreateUserId(config.endpoint),
     [config.user, config.endpoint],
   );
-  const conversation = useConversation(client, config.endpoint, userId);
   const [open, setOpen] = useState(inline);
   const [loaded, setLoaded] = useState(false);
   const [sending, setSending] = useState(false);
   const [entriesById, setEntriesById] = useState<Record<string, MessageEntry[]>>({});
+  const [usageById, setUsageById] = useState<Record<string, TokenBudget | null>>({});
   const [activeId, setActiveId] = useState("");
   const entries = entriesById[activeId] ?? [];
-  const [usage, setUsage] = useState<TokenBudget | null>(null);
+  const usage = usageById[activeId] ?? null;
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [threadsOpen, setThreadsOpen] = useState(false);
   const launcherRef = useRef<HTMLButtonElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
-  const refreshUsage = useCallback(async () => {
-    setUsage(await conversation.loadUsage());
-  }, [conversation]);
+  // A vanished conversation is replaced mid-turn; carry its messages onto the
+  // id the turn actually ran under so the view does not go blank.
+  const onReplaced = useCallback((staleId: string, freshId: string) => {
+    setEntriesById(({ [staleId]: moved = [], ...rest }) => ({ ...rest, [freshId]: moved }));
+    setActiveId((current) => (current === staleId ? freshId : current));
+  }, []);
+
+  const conversation = useConversation(client, config.endpoint, userId, onReplaced);
+
+  const refreshUsage = useCallback(
+    async (cid: string) => {
+      const next = await conversation.loadUsage(cid);
+      setUsageById((prev) => ({ ...prev, [cid]: next }));
+    },
+    [conversation],
+  );
 
   const putEntries = useCallback(
     (cid: string, update: (prev: MessageEntry[]) => MessageEntry[]) =>
@@ -90,7 +103,7 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
 
   const loadThread = useCallback(
     async (cid: string) => {
-      const history = await conversation.loadHistory();
+      const history = await conversation.loadHistory(cid);
       putEntries(cid, () => history.map(toEntry));
     },
     [conversation, putEntries],
@@ -103,7 +116,7 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
     if (!cid) return;
     setActiveId(cid);
     await loadThread(cid);
-    await refreshUsage();
+    await refreshUsage(cid);
   }, [conversation, loaded, loadThread, refreshUsage]);
 
   useEffect(() => {
@@ -138,7 +151,7 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
       setActiveId(conversationId);
       // ponytail: in-session map owns in-flight streams, so only cold-load a thread we haven't opened yet.
       if (!(conversationId in entriesById)) await loadThread(conversationId);
-      await refreshUsage();
+      await refreshUsage(conversationId);
       inputRef.current?.focus({ preventScroll: true });
     },
     [conversation, entriesById, loadThread, refreshUsage],
@@ -148,7 +161,6 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
     conversation.startNew();
     setThreadsOpen(false);
     setActiveId("");
-    setUsage(null);
     inputRef.current?.focus({ preventScroll: true });
   }, [conversation]);
 
@@ -161,7 +173,7 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
   const sendWithoutStreaming = useCallback(
     async (cid: string, text: string, entryId: string) => {
       try {
-        const answer = await conversation.send(text);
+        const answer = await conversation.send(cid, text);
         replaceEntry(cid, entryId, {
           id: entryId,
           role: "ai",
@@ -186,7 +198,7 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
       setSending(true);
       try {
         let entry = pending;
-        for await (const event of conversation.stream(text)) {
+        for await (const event of conversation.stream(cid, text)) {
           entry = reduceStreamEvent(entry, event);
           replaceEntry(cid, pending.id, entry);
         }
@@ -196,7 +208,7 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
         await sendWithoutStreaming(cid, text, pending.id);
       } finally {
         setSending(false);
-        void refreshUsage();
+        void refreshUsage(cid);
       }
     },
     [conversation, onAnswer, putEntries, refreshUsage, replaceEntry, sendWithoutStreaming],
