@@ -18,11 +18,11 @@ from agent_engine.runtime.hooks import RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
 from agent_manager.application.context import build_history
 from agent_manager.domain import (
-    ContextUsage,
     ConversationMessage,
     Message,
     Repository,
     Role,
+    TokenBudgetUsage,
 )
 
 
@@ -82,10 +82,10 @@ class ConversationService:
         await self._require(conversation_id)
         return await self._repository.list_messages(conversation_id)
 
-    async def usage(self, conversation_id: str) -> ContextUsage:
+    async def usage(self, conversation_id: str) -> TokenBudgetUsage:
         await self._require(conversation_id)
         used = await self._repository.get_token_usage(conversation_id)
-        return ContextUsage.from_totals(used, self._max_tokens)
+        return TokenBudgetUsage.from_totals(used, self._max_tokens)
 
     async def send(
         self, conversation_id: str, text: str, *, user_id: str | None = None

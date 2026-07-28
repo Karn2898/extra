@@ -7,8 +7,8 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-CONTEXT_WARNING_PERCENT = 65.0
-CONTEXT_CRITICAL_PERCENT = 85.0
+BUDGET_WARNING_PERCENT = 65.0
+BUDGET_CRITICAL_PERCENT = 85.0
 
 
 class Role(StrEnum):
@@ -99,28 +99,38 @@ class ConversationContext:
     snapshot: ConversationSnapshot | None = None
 
 
-class ContextSeverity(StrEnum):
+class BudgetSeverity(StrEnum):
     NORMAL = "normal"
     WARNING = "warning"
     CRITICAL = "critical"
 
 
 @dataclass(frozen=True)
-class ContextUsage:
+class TokenBudgetUsage:
+    """How much of a conversation's lifetime token budget has been spent.
+
+    This is cumulative consumption — every turn's input + output tokens summed
+    over the whole conversation — measured against `context_max_tokens`, the
+    budget the service enforces (see `ConversationTokenBudgetExceeded`). It is
+    deliberately *not* the size of the context window currently sent to the
+    model: history is re-sent each turn, so the same message is counted again
+    every time it is included.
+    """
+
     used_tokens: int
     max_tokens: int | None
     percent: float
-    severity: ContextSeverity
+    severity: BudgetSeverity
 
     @classmethod
-    def from_totals(cls, used_tokens: int, max_tokens: int | None) -> ContextUsage:
+    def from_totals(cls, used_tokens: int, max_tokens: int | None) -> TokenBudgetUsage:
         if not max_tokens:
-            return cls(used_tokens, max_tokens, 0.0, ContextSeverity.NORMAL)
+            return cls(used_tokens, max_tokens, 0.0, BudgetSeverity.NORMAL)
         percent = min(used_tokens / max_tokens * 100, 100.0)
-        if percent > CONTEXT_CRITICAL_PERCENT:
-            severity = ContextSeverity.CRITICAL
-        elif percent >= CONTEXT_WARNING_PERCENT:
-            severity = ContextSeverity.WARNING
+        if percent >= BUDGET_CRITICAL_PERCENT:
+            severity = BudgetSeverity.CRITICAL
+        elif percent >= BUDGET_WARNING_PERCENT:
+            severity = BudgetSeverity.WARNING
         else:
-            severity = ContextSeverity.NORMAL
+            severity = BudgetSeverity.NORMAL
         return cls(used_tokens, max_tokens, percent, severity)

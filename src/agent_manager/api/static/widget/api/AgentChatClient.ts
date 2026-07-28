@@ -1,4 +1,4 @@
-import type { ChatMessage, ContextUsage, SendMessageResponse, StreamEvent } from "../types";
+import type { ChatMessage, TokenBudget, SendMessageResponse, StreamEvent } from "../types";
 
 export class AgentChatHttpError extends Error {
   constructor(readonly status: number) {
@@ -44,7 +44,7 @@ export class AgentChatClient {
     };
   }
 
-  async getUsage(conversationId: string): Promise<ContextUsage> {
+  async getUsage(conversationId: string): Promise<TokenBudget> {
     const response = await fetch(`${this.endpoint}/conversations/${conversationId}/usage`);
     if (!response.ok) {
       throw new AgentChatHttpError(response.status);

@@ -28,13 +28,14 @@ export interface ChatMessage {
   created_at?: string;
 }
 
-export type ContextSeverity = "normal" | "warning" | "critical";
+export type BudgetSeverity = "normal" | "warning" | "critical";
 
-export interface ContextUsage {
+/** Cumulative tokens spent by a conversation against its configured budget. */
+export interface TokenBudget {
   used_tokens: number;
   max_tokens: number | null;
   percent: number;
-  severity: ContextSeverity;
+  severity: BudgetSeverity;
 }
 
 export interface MessageEntry {

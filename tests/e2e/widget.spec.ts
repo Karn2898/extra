@@ -432,7 +432,7 @@ test("backend error renders a user-friendly message", async ({ page }) => {
   await expect.poll(() => shadowText(page, ".messages")).toContain("Something went wrong. Please try again.");
 });
 
-test("context meter shows token usage against the budget after a turn", async ({ page }) => {
+test("budget meter shows cumulative token usage against the budget after a turn", async ({ page }) => {
   await mockConversationApi(page);
   await page.route("**/conversations/*/usage", async (route: Route) => {
     await route.fulfill({
@@ -453,12 +453,12 @@ test("context meter shows token usage against the budget after a turn", async ({
   await page.keyboard.press("Enter");
 
   await expect.poll(() => shadowText(page, ".messages")).toContain("Echo: hello");
-  await expect.poll(() => shadowExists(page, ".context-meter")).toBe(true);
-  await expect.poll(() => shadowText(page, ".context-percent")).toBe("90%");
-  await expect.poll(() => shadowClassContains(page, ".context-meter", "critical")).toBe(true);
+  await expect.poll(() => shadowExists(page, ".budget-meter")).toBe(true);
+  await expect.poll(() => shadowText(page, ".budget-percent")).toBe("90%");
+  await expect.poll(() => shadowClassContains(page, ".budget-meter", "critical")).toBe(true);
 });
 
-test("context meter stays hidden when no budget is configured", async ({ page }) => {
+test("budget meter stays hidden when no budget is configured", async ({ page }) => {
   await mockConversationApi(page);
   await page.route("**/conversations/*/usage", async (route: Route) => {
     await route.fulfill({
@@ -473,7 +473,7 @@ test("context meter stays hidden when no budget is configured", async ({ page })
   await page.keyboard.press("Enter");
 
   await expect.poll(() => shadowText(page, ".messages")).toContain("Echo: hello");
-  await expect.poll(() => shadowExists(page, ".context-meter")).toBe(false);
+  await expect.poll(() => shadowExists(page, ".budget-meter")).toBe(false);
 });
 
 test("stale stored conversation is replaced before sending to the agent", async ({ page }) => {

@@ -1,21 +1,20 @@
 """Domain layer: value objects and ports. Pure Python, no frameworks."""
 
 from agent_manager.domain.models import (
-    ContextSeverity,
-    ContextUsage,
+    BudgetSeverity,
     ConversationContext,
     ConversationMessage,
     ConversationSession,
     ConversationSnapshot,
     Message,
     Role,
+    TokenBudgetUsage,
     User,
 )
 from agent_manager.domain.repository import Repository
 
 __all__ = [
-    "ContextSeverity",
-    "ContextUsage",
+    "BudgetSeverity",
     "ConversationContext",
     "ConversationMessage",
     "ConversationSession",
@@ -23,5 +22,6 @@ __all__ = [
     "Message",
     "Repository",
     "Role",
+    "TokenBudgetUsage",
     "User",
 ]

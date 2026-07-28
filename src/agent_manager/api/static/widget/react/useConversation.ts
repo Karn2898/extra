@@ -6,13 +6,13 @@ import {
   removeStoredConversationId,
   setStoredConversationId,
 } from "../storage/conversationStorage";
-import type { ChatMessage, ContextUsage, SendMessageResponse, StreamEvent } from "../types";
+import type { ChatMessage, TokenBudget, SendMessageResponse, StreamEvent } from "../types";
 
 export interface Conversation {
   send(text: string): Promise<SendMessageResponse>;
   stream(text: string): AsyncGenerator<StreamEvent>;
   loadHistory(): Promise<ChatMessage[]>;
-  loadUsage(): Promise<ContextUsage | null>;
+  loadUsage(): Promise<TokenBudget | null>;
 }
 
 const isMissingConversation = (error: unknown): boolean =>

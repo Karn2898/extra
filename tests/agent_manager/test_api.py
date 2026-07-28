@@ -14,7 +14,7 @@ from agent_engine.runtime.hooks.models import RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
 from agent_manager.api.routes import router
 from agent_manager.application import ConversationService
-from agent_manager.domain import ContextUsage
+from agent_manager.domain import TokenBudgetUsage
 from agent_manager.infrastructure.persistence.memory_repository import MemoryRepository
 from tests.agent_manager.conftest import RecordingEngine
 
@@ -57,7 +57,7 @@ def test_usage_reports_null_budget_when_unset(client: TestClient) -> None:
     }
 
 
-def test_usage_reports_accumulated_tokens_and_severity_against_budget() -> None:
+def test_usage_reports_cumulative_tokens_and_severity_against_budget() -> None:
     class TokenEngine(RecordingEngine):
         async def run(
             self,
@@ -75,9 +75,7 @@ def test_usage_reports_accumulated_tokens_and_severity_against_budget() -> None:
             )
 
     app = FastAPI()
-    app.state.service = ConversationService(
-        TokenEngine(), MemoryRepository(), max_tokens=1000
-    )
+    app.state.service = ConversationService(TokenEngine(), MemoryRepository(), max_tokens=1000)
     app.include_router(router)
     client = TestClient(app)
 
@@ -91,13 +89,14 @@ def test_usage_reports_accumulated_tokens_and_severity_against_budget() -> None:
     assert body["severity"] == "warning"
 
 
-def test_context_usage_severity_thresholds() -> None:
-    assert ContextUsage.from_totals(0, None).severity == "normal"
-    assert ContextUsage.from_totals(640, 1000).severity == "normal"
-    assert ContextUsage.from_totals(650, 1000).severity == "warning"
-    assert ContextUsage.from_totals(850, 1000).severity == "warning"
-    assert ContextUsage.from_totals(851, 1000).severity == "critical"
-    assert ContextUsage.from_totals(5000, 1000).percent == 100.0
+def test_token_budget_severity_thresholds() -> None:
+    assert TokenBudgetUsage.from_totals(0, None).severity == "normal"
+    assert TokenBudgetUsage.from_totals(640, 1000).severity == "normal"
+    # Both thresholds are inclusive: exactly 65% warns, exactly 85% is critical.
+    assert TokenBudgetUsage.from_totals(650, 1000).severity == "warning"
+    assert TokenBudgetUsage.from_totals(849, 1000).severity == "warning"
+    assert TokenBudgetUsage.from_totals(850, 1000).severity == "critical"
+    assert TokenBudgetUsage.from_totals(5000, 1000).percent == 100.0
 
 
 class _SubAgentEngine(Engine):
