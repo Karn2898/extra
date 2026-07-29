@@ -16,6 +16,15 @@ def test_spec_validates_offline() -> None:
     load_test_system()
 
 
+def test_fixture_execution_policy_parsed_from_yaml() -> None:
+    spec, _ = load_test_system()
+    assert spec.execution.max_iterations == 10
+    assert spec.execution.max_tool_calls == 5
+    assert spec.execution.max_tool_calls_per_agent == 3
+    assert spec.execution.max_child_agent_calls == 4
+    assert spec.execution.allow_duplicate_tool_calls is False
+
+
 @pytest.mark.asyncio
 async def test_engine_builds_from_fixture() -> None:
     async with FakeEngine():

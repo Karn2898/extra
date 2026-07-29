@@ -136,21 +136,27 @@ def fake_model_factory(
     return FakeChatModel(answer=answer)
 
 
-FIXTURE_DIR = Path(__file__).resolve().parent
-FIXTURE_SPEC = FIXTURE_DIR / "test_system.yaml"
+FIXTURES_ROOT = Path(__file__).resolve().parent
 
 
-def load_test_system() -> tuple[SystemSpec, Path]:
+def fixture_path(*parts: str) -> Path:
+    return FIXTURES_ROOT.joinpath(*parts)
+
+
+def load_test_system(spec_path: Path | None = None) -> tuple[SystemSpec, Path]:
+    if spec_path is None:
+        spec_path = FIXTURES_ROOT / "test_system" / "agents.yaml"
+    base_dir = spec_path.resolve().parent
     from agent_engine.core.validator import SystemSpecValidator
     from agent_engine.parsers.yaml.parser import YAMLParser
 
-    spec = YAMLParser().parse(str(FIXTURE_SPEC))
-    errors = SystemSpecValidator().validate(spec, FIXTURE_DIR)
+    spec = YAMLParser().parse(str(spec_path))
+    errors = SystemSpecValidator().validate(spec, base_dir)
     if errors:
         raise AssertionError(
             "Fixture validation failed:\n" + "\n".join(str(e) for e in errors)
         )
-    return spec, FIXTURE_DIR
+    return spec, base_dir
 
 
 class FakeEngine:
