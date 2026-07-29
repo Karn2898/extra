@@ -22,7 +22,9 @@ tools:
 
 resolvers:
   current_date:
+    scope: shared
   user_name:
+    scope: shared
 
 orchestrators:
   root_router:
