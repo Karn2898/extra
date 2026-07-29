@@ -659,6 +659,84 @@ test("a turn stays on its own conversation when the user switches threads mid-re
     .toBe("/conversations/conv-smoke/usage");
 });
 
+async function mockConversationApiWithTokenBudgetExceeded(page: Page) {
+  const calls: string[] = [];
+
+  await page.route("**/conversations", async (route) => {
+    calls.push(`${route.request().method()} ${new URL(route.request().url()).pathname}`);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ conversation_id: "conv-budget", session_id: "conv-budget" }),
+    });
+  });
+
+  await page.route("**/conversations/*/messages/stream", async (route: Route) => {
+    calls.push(`${route.request().method()} ${new URL(route.request().url()).pathname}`);
+    await route.fulfill({
+      status: 429,
+      contentType: "application/json",
+      body: JSON.stringify({
+        detail: {
+          error_type: "context_limit_exceeded",
+          message: "This conversation has reached its context limit. Start a new chat to continue.",
+        },
+      }),
+    });
+  });
+
+  await page.route("**/conversations/*/messages", async (route: Route) => {
+    calls.push(`${route.request().method()} ${new URL(route.request().url()).pathname}`);
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([]),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 429,
+      contentType: "application/json",
+      body: JSON.stringify({
+        detail: {
+          error_type: "context_limit_exceeded",
+          message: "This conversation has reached its context limit. Start a new chat to continue.",
+        },
+      }),
+    });
+  });
+
+  return calls;
+}
+
+test("token budget exceeded shows context-limit message instead of generic error", async ({
+  page,
+}) => {
+  const calls = await mockConversationApiWithTokenBudgetExceeded(page);
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "one more message");
+  await shadowClick(page, ".send");
+
+  await expect
+    .poll(() => shadowText(page, ".messages"))
+    .toContain("This conversation has reached its context limit. Start a new chat to continue.");
+  const text = await shadowText(page, ".messages");
+  expect(text).not.toContain("Something went wrong. Please try again.");
+  expect(calls).toContain("POST /conversations/conv-budget/messages/stream");
+  expect(calls).not.toContain("POST /conversations/conv-budget/messages");
+
+  const inputEl = page.locator("agent-chat");
+  const isDisabled = await inputEl.evaluate(
+    (el) => !!el.shadowRoot?.querySelector(".input")?.hasAttribute("disabled"),
+  );
+  expect(isDisabled).toBe(true);
+
+  const placeholder = await shadowAttribute(page, ".input", "placeholder");
+  expect(placeholder).toBe("Context limit reached.");
+});
+
 test("stale stored conversation is replaced before sending to the agent", async ({ page }) => {
   const calls = await mockConversationApiWithStaleConversation(page);
   await pinUser(page);

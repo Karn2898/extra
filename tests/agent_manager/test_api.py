@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import AsyncIterator, Sequence
 
 import pytest
@@ -240,3 +241,58 @@ def test_create_accepts_stable_session_and_send_accepts_user(client: TestClient)
     sent = client.post("/conversations/sess-1/messages", json={"message": "hello", "user_id": "u1"})
 
     assert sent.status_code == 200
+
+
+class _BudgetEngine(RecordingEngine):
+    async def run(
+        self,
+        message: str,
+        *,
+        history: Sequence[ChatMessage] = (),
+        context: RunContext | None = None,
+    ) -> RunResult:
+        res = await super().run(message, history=history, context=context)
+        return dataclasses.replace(res, input_tokens=5, output_tokens=5)
+
+
+def test_send_returns_429_when_token_budget_exceeded() -> None:
+    """send_message returns 429 when the conversation token budget is exhausted."""
+    app = FastAPI()
+    service = ConversationService(_BudgetEngine(), MemoryRepository(), max_tokens=1)
+    app.state.service = service
+    app.include_router(router)
+    client = TestClient(app)
+
+    cid = client.post("/conversations").json()["conversation_id"]
+    client.post(f"/conversations/{cid}/messages", json={"message": "first"})
+    response = client.post(f"/conversations/{cid}/messages", json={"message": "second"})
+
+    assert response.status_code == 429
+    detail = response.json()["detail"]
+    assert detail["error_type"] == "context_limit_exceeded"
+    assert (
+        detail["message"]
+        == "This conversation has reached its context limit. Start a new chat to continue."
+    )
+
+
+def test_stream_returns_429_when_token_budget_exceeded() -> None:
+    """stream_message returns 429 when the conversation token budget is exhausted."""
+    app = FastAPI()
+    service = ConversationService(_BudgetEngine(), MemoryRepository(), max_tokens=1)
+    app.state.service = service
+    app.include_router(router)
+    client = TestClient(app)
+
+    cid = client.post("/conversations").json()["conversation_id"]
+    client.post(f"/conversations/{cid}/messages", json={"message": "first"})
+    response = client.post(f"/conversations/{cid}/messages/stream", json={"message": "second"})
+
+    assert response.status_code == 429
+    detail = response.json()["detail"]
+    assert detail["error_type"] == "context_limit_exceeded"
+    assert (
+        detail["message"]
+        == "This conversation has reached its context limit. Start a new chat to continue."
+    )
+

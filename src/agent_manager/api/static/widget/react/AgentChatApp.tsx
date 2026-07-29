@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { type Ref, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { AgentChatClient } from "../api/AgentChatClient";
+import { AgentChatHttpError, type AgentChatClient } from "../api/AgentChatClient";
 import { getOrCreateUserId, getStoredConversationId } from "../storage/conversationStorage";
 import type {
   AgentChatAnswerDetail,
@@ -68,6 +68,7 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
   const [open, setOpen] = useState(inline);
   const [loaded, setLoaded] = useState(false);
   const [sending, setSending] = useState(false);
+  const [budgetExceeded, setBudgetExceeded] = useState(false);
   const [entriesById, setEntriesById] = useState<Record<string, MessageEntry[]>>({});
   const [usageById, setUsageById] = useState<Record<string, TokenBudget | null>>({});
   const [activeId, setActiveId] = useState("");
@@ -182,8 +183,13 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
           tools: answer.used_tools,
         });
         onAnswer({ visited: answer.visited ?? [], used_tools: answer.used_tools ?? [] });
-      } catch {
-        replaceEntry(cid, entryId, { id: entryId, role: "ai", text: GENERIC_ERROR, error: true });
+      } catch (error) {
+        const is4xx = error instanceof AgentChatHttpError && error.status >= 400 && error.status < 500;
+        if (error instanceof AgentChatHttpError && error.errorType === "context_limit_exceeded") {
+          setBudgetExceeded(true);
+        }
+        const errorMessage = is4xx ? error.message : GENERIC_ERROR;
+        replaceEntry(cid, entryId, { id: entryId, role: "ai", text: errorMessage, error: true });
       }
     },
     [conversation, onAnswer, replaceEntry],
@@ -204,8 +210,16 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
         }
         replaceEntry(cid, pending.id, { ...entry, typing: false });
         onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
-      } catch {
-        await sendWithoutStreaming(cid, text, pending.id);
+      } catch (error) {
+        const is4xx = error instanceof AgentChatHttpError && error.status >= 400 && error.status < 500;
+        if (error instanceof AgentChatHttpError && error.errorType === "context_limit_exceeded") {
+          setBudgetExceeded(true);
+        }
+        if (is4xx) {
+          replaceEntry(cid, pending.id, { id: pending.id, role: "ai", text: error.message, error: true });
+        } else {
+          await sendWithoutStreaming(cid, text, pending.id);
+        }
       } finally {
         setSending(false);
         void refreshUsage(cid);
@@ -289,17 +303,17 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
           <PromptInput onSubmit={(message) => void submit(message.text)}>
             <PromptInputTextarea
               aria-label="Message"
-              disabled={false}
+              disabled={sending || budgetExceeded}
               inputRef={inputRef}
               onSubmit={() => inputRef.current?.form?.requestSubmit()}
-              placeholder="Message..."
+              placeholder={budgetExceeded ? "Context limit reached." : "Message..."}
             />
             <PromptInputFooter>
               <div className="footer-start">
                 {usage ? <BudgetMeter usage={usage} /> : null}
                 <span className="prompt-hint">Enter to send · Shift+Enter for a new line</span>
               </div>
-              <PromptInputSubmit disabled={sending} />
+              <PromptInputSubmit disabled={sending || budgetExceeded} />
             </PromptInputFooter>
           </PromptInput>
           <div className="powered">Powered by Extra</div>

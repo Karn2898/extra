@@ -52102,12 +52102,28 @@ var import_client = __toESM(require_client(), 1);
 
 // src/agent_manager/api/static/widget/api/AgentChatClient.ts
 var AgentChatHttpError = class extends Error {
-  constructor(status) {
-    super(`HTTP ${status}`);
+  constructor(status, errorType, message) {
+    super(message || `HTTP ${status}`);
     this.status = status;
+    this.errorType = errorType;
     this.name = "AgentChatHttpError";
   }
 };
+async function handleHttpError(response) {
+  let errorType;
+  let message;
+  try {
+    const body = await response.json();
+    if (typeof body.detail === "object" && body.detail !== null) {
+      errorType = body.detail.error_type;
+      message = body.detail.message;
+    } else if (typeof body.detail === "string") {
+      message = body.detail;
+    }
+  } catch {
+  }
+  throw new AgentChatHttpError(response.status, errorType, message);
+}
 var AgentChatClient = class {
   constructor(endpoint) {
     this.endpoint = endpoint;
@@ -52119,7 +52135,7 @@ var AgentChatClient = class {
       body: JSON.stringify({ user_id: userId })
     });
     if (!response.ok) {
-      throw new AgentChatHttpError(response.status);
+      await handleHttpError(response);
     }
     const data = await response.json();
     return String(data.conversation_id);
@@ -52141,7 +52157,7 @@ var AgentChatClient = class {
   async getMessages(conversationId) {
     const response = await fetch(`${this.endpoint}/conversations/${conversationId}/messages`);
     if (!response.ok) {
-      throw new AgentChatHttpError(response.status);
+      await handleHttpError(response);
     }
     return await response.json();
   }
@@ -52152,7 +52168,7 @@ var AgentChatClient = class {
       body: JSON.stringify({ message })
     });
     if (!response.ok) {
-      throw new AgentChatHttpError(response.status);
+      await handleHttpError(response);
     }
     const data = await response.json();
     return {
@@ -52181,7 +52197,7 @@ var AgentChatClient = class {
       body: JSON.stringify({ message })
     });
     if (!response.ok) {
-      throw new AgentChatHttpError(response.status);
+      await handleHttpError(response);
     }
     if (!response.body) {
       throw new Error("Streaming response has no body");
@@ -53178,6 +53194,7 @@ function AgentChatApp({ client, config, onAnswer, panelId, titleId }) {
   const [open, setOpen] = (0, import_react10.useState)(inline);
   const [loaded, setLoaded] = (0, import_react10.useState)(false);
   const [sending, setSending] = (0, import_react10.useState)(false);
+  const [budgetExceeded, setBudgetExceeded] = (0, import_react10.useState)(false);
   const [entriesById, setEntriesById] = (0, import_react10.useState)({});
   const [usageById, setUsageById] = (0, import_react10.useState)({});
   const [activeId, setActiveId] = (0, import_react10.useState)("");
@@ -53272,8 +53289,13 @@ function AgentChatApp({ client, config, onAnswer, panelId, titleId }) {
           tools: answer.used_tools
         });
         onAnswer({ visited: answer.visited ?? [], used_tools: answer.used_tools ?? [] });
-      } catch {
-        replaceEntry(cid, entryId, { id: entryId, role: "ai", text: GENERIC_ERROR, error: true });
+      } catch (error) {
+        const is4xx = error instanceof AgentChatHttpError && error.status >= 400 && error.status < 500;
+        if (error instanceof AgentChatHttpError && error.errorType === "context_limit_exceeded") {
+          setBudgetExceeded(true);
+        }
+        const errorMessage = is4xx ? error.message : GENERIC_ERROR;
+        replaceEntry(cid, entryId, { id: entryId, role: "ai", text: errorMessage, error: true });
       }
     },
     [conversation, onAnswer, replaceEntry]
@@ -53293,8 +53315,16 @@ function AgentChatApp({ client, config, onAnswer, panelId, titleId }) {
         }
         replaceEntry(cid, pending.id, { ...entry, typing: false });
         onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
-      } catch {
-        await sendWithoutStreaming(cid, text10, pending.id);
+      } catch (error) {
+        const is4xx = error instanceof AgentChatHttpError && error.status >= 400 && error.status < 500;
+        if (error instanceof AgentChatHttpError && error.errorType === "context_limit_exceeded") {
+          setBudgetExceeded(true);
+        }
+        if (is4xx) {
+          replaceEntry(cid, pending.id, { id: pending.id, role: "ai", text: error.message, error: true });
+        } else {
+          await sendWithoutStreaming(cid, text10, pending.id);
+        }
       } finally {
         setSending(false);
         void refreshUsage(cid);
@@ -53372,10 +53402,10 @@ function AgentChatApp({ client, config, onAnswer, panelId, titleId }) {
                     PromptInputTextarea,
                     {
                       "aria-label": "Message",
-                      disabled: false,
+                      disabled: sending || budgetExceeded,
                       inputRef,
                       onSubmit: () => inputRef.current?.form?.requestSubmit(),
-                      placeholder: "Message..."
+                      placeholder: budgetExceeded ? "Context limit reached." : "Message..."
                     }
                   ),
                   /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(PromptInputFooter, { children: [
@@ -53383,7 +53413,7 @@ function AgentChatApp({ client, config, onAnswer, panelId, titleId }) {
                       usage ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(BudgetMeter, { usage }) : null,
                       /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "prompt-hint", children: "Enter to send \xB7 Shift+Enter for a new line" })
                     ] }),
-                    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(PromptInputSubmit, { disabled: sending })
+                    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(PromptInputSubmit, { disabled: sending || budgetExceeded })
                   ] })
                 ] }),
                 /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { className: "powered", children: "Powered by Extra" })

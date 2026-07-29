@@ -34,6 +34,14 @@ router = APIRouter()
 
 Service = Annotated[ConversationService, Depends(get_service)]
 
+_BUDGET_EXCEEDED_DETAIL = {
+    "error_type": "context_limit_exceeded",
+    "message": (
+        "This conversation has reached its context limit."
+        " Start a new chat to continue."
+    ),
+}
+
 
 @router.post("/conversations", response_model=CreateConversationResponse)
 async def create_conversation(
@@ -98,7 +106,10 @@ async def send_message(
     except ConversationAccessDenied:
         raise HTTPException(status_code=403, detail="conversation owned by another user") from None
     except ConversationTokenBudgetExceeded:
-        raise HTTPException(status_code=429, detail="conversation token budget exceeded") from None
+        raise HTTPException(
+            status_code=429,
+            detail=_BUDGET_EXCEEDED_DETAIL,
+        ) from None
     except Exception as exc:  # engine failure
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return SendMessageResponse(
@@ -142,7 +153,10 @@ async def stream_message(
     except ConversationAccessDenied:
         raise HTTPException(status_code=403, detail="conversation owned by another user") from None
     except ConversationTokenBudgetExceeded:
-        raise HTTPException(status_code=429, detail="conversation token budget exceeded") from None
+        raise HTTPException(
+            status_code=429,
+            detail=_BUDGET_EXCEEDED_DETAIL,
+        ) from None
 
     async def event_source() -> AsyncIterator[str]:
         try:

@@ -7,10 +7,29 @@ import type {
 } from "../types";
 
 export class AgentChatHttpError extends Error {
-  constructor(readonly status: number) {
-    super(`HTTP ${status}`);
+  constructor(
+    readonly status: number,
+    readonly errorType?: string,
+    message?: string,
+  ) {
+    super(message || `HTTP ${status}`);
     this.name = "AgentChatHttpError";
   }
+}
+
+async function handleHttpError(response: Response): Promise<never> {
+  let errorType: string | undefined;
+  let message: string | undefined;
+  try {
+    const body = await response.json();
+    if (typeof body.detail === "object" && body.detail !== null) {
+      errorType = body.detail.error_type;
+      message = body.detail.message;
+    } else if (typeof body.detail === "string") {
+      message = body.detail;
+    }
+  } catch {}
+  throw new AgentChatHttpError(response.status, errorType, message);
 }
 
 export class AgentChatClient {
@@ -23,7 +42,7 @@ export class AgentChatClient {
       body: JSON.stringify({ user_id: userId }),
     });
     if (!response.ok) {
-      throw new AgentChatHttpError(response.status);
+      await handleHttpError(response);
     }
     const data = await response.json();
     return String(data.conversation_id);
@@ -47,7 +66,7 @@ export class AgentChatClient {
   async getMessages(conversationId: string): Promise<ChatMessage[]> {
     const response = await fetch(`${this.endpoint}/conversations/${conversationId}/messages`);
     if (!response.ok) {
-      throw new AgentChatHttpError(response.status);
+      await handleHttpError(response);
     }
     return (await response.json()) as ChatMessage[];
   }
@@ -59,7 +78,7 @@ export class AgentChatClient {
       body: JSON.stringify({ message }),
     });
     if (!response.ok) {
-      throw new AgentChatHttpError(response.status);
+      await handleHttpError(response);
     }
     const data = await response.json();
     return {
@@ -90,7 +109,7 @@ export class AgentChatClient {
       body: JSON.stringify({ message }),
     });
     if (!response.ok) {
-      throw new AgentChatHttpError(response.status);
+      await handleHttpError(response);
     }
     if (!response.body) {
       throw new Error("Streaming response has no body");
