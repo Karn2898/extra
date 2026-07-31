@@ -129,6 +129,16 @@ async def test_create_refuses_a_session_id_owned_by_someone_else() -> None:
     assert session.user_id == "alice"
 
 
+async def test_create_refuses_an_id_that_lost_the_race() -> None:
+    """The repository decides who created it, so a caller that did not is told
+    the name is taken rather than handed the winner's conversation."""
+    service, _ = _service()
+    await service._repository.create_session("sess-1", user_id="alice")
+
+    with pytest.raises(ConversationAlreadyExists):
+        await service.create(user_id="bob", session_id="sess-1")
+
+
 async def test_create_is_idempotent_for_the_owner() -> None:
     """agentctl reuses a --session id across runs, so the owner re-creating is
     the normal path, not an attack."""

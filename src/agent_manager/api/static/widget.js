@@ -53050,7 +53050,7 @@ function upsertTool(tools, next2) {
 
 // src/agent_manager/api/static/widget/react/useConversation.ts
 var import_react9 = __toESM(require_react(), 1);
-var isMissingConversation = (error) => error instanceof AgentChatHttpError && error.status === 404;
+var isUnusableConversation = (error) => error instanceof AgentChatHttpError && (error.status === 404 || error.status === 403);
 function useConversation(client, endpoint, userId) {
   const startConversation = (0, import_react9.useCallback)(async () => {
     const created = await client.createConversation();
@@ -53070,7 +53070,7 @@ function useConversation(client, endpoint, userId) {
       try {
         return await client.sendMessage(await ensureId(), text10);
       } catch (error) {
-        if (!isMissingConversation(error)) throw error;
+        if (!isUnusableConversation(error)) throw error;
         return client.sendMessage(await restartId(), text10);
       }
     },
@@ -53081,7 +53081,7 @@ function useConversation(client, endpoint, userId) {
       try {
         yield* client.streamMessage(await ensureId(), text10);
       } catch (error) {
-        if (!isMissingConversation(error)) throw error;
+        if (!isUnusableConversation(error)) throw error;
         yield* client.streamMessage(await restartId(), text10);
       }
     },
@@ -53093,7 +53093,7 @@ function useConversation(client, endpoint, userId) {
     try {
       return await client.getMessages(stored);
     } catch (error) {
-      if (isMissingConversation(error)) removeStoredConversationId(endpoint, userId);
+      if (isUnusableConversation(error)) removeStoredConversationId(endpoint, userId);
       return [];
     }
   }, [client, endpoint, userId]);

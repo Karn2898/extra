@@ -90,7 +90,8 @@ Manages multi-turn conversations with history persisted in SQLite (or Postgres v
 
 Every conversation route identifies its caller by the `X-Agent-Chat-User`
 header, and a conversation can only be listed, read, or written by the caller
-that owns it — the conversation id alone grants nothing.
+that owns it — the conversation id alone grants nothing. A missing or empty
+header means anonymous; ids longer than 64 characters are rejected with `400`.
 
 <Warning>
 Out of the box the header is unverified: the widget generates a random id and

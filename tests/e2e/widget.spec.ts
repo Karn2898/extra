@@ -117,7 +117,7 @@ async function mockConversationApi(
   return calls;
 }
 
-async function mockConversationApiWithStaleConversation(page: Page) {
+async function mockConversationApiWithStaleConversation(page: Page, staleStatus = 404) {
   const calls: string[] = [];
   let created = false;
 
@@ -139,9 +139,9 @@ async function mockConversationApiWithStaleConversation(page: Page) {
 
     if (conversationId === "conv-stale") {
       await route.fulfill({
-        status: 404,
+        status: staleStatus,
         contentType: "application/json",
-        body: JSON.stringify({ detail: "conversation not found" }),
+        body: JSON.stringify({ detail: "unavailable" }),
       });
       return;
     }
@@ -176,9 +176,9 @@ async function mockConversationApiWithStaleConversation(page: Page) {
 
     if (conversationId === "conv-stale") {
       await route.fulfill({
-        status: 404,
+        status: staleStatus,
         contentType: "application/json",
-        body: JSON.stringify({ detail: "conversation not found" }),
+        body: JSON.stringify({ detail: "unavailable" }),
       });
       return;
     }
@@ -533,6 +533,28 @@ test("thread drawer lists conversations, switches to one, and starts a new chat"
 
   await shadowClick(page, '.header-btn[aria-label="New chat"]');
   await expect.poll(() => shadowText(page, ".messages")).toContain("How can I help you today?");
+});
+
+test("a stored conversation owned by another caller is replaced, not retried forever", async ({
+  page,
+}) => {
+  // What a host app switching users looks like: the stored id outlives the
+  // identity that created it, so the server answers 403 and the widget has to
+  // start over rather than sit on an id it can never use.
+  const calls = await mockConversationApiWithStaleConversation(page, 403);
+  await pinUser(page);
+  await page.goto("/widget-demo.html");
+  await page.evaluate((key) => localStorage.setItem(key, "conv-stale"), CONVERSATION_KEY);
+
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "recover please");
+  await shadowClick(page, ".send");
+
+  await expect.poll(() => shadowText(page, ".messages")).toContain("Recovered: recover please");
+  await expect
+    .poll(() => page.evaluate((key) => localStorage.getItem(key), CONVERSATION_KEY))
+    .toBe("conv-fresh");
+  expect(calls).toContain("POST /conversations/conv-fresh/messages/stream");
 });
 
 test("stale stored conversation is replaced before sending to the agent", async ({ page }) => {

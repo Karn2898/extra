@@ -93,6 +93,22 @@ def test_create_cannot_claim_a_conversation_id_owned_by_another_caller(
     assert client.get("/conversations", headers=alice).json()[0]["conversation_id"] == "sess-1"
 
 
+def test_an_empty_caller_header_is_anonymous_not_an_identity(client: TestClient) -> None:
+    """An id of "" must not own anything: `list_conversations` treats it as no
+    caller, so such a conversation would exist but never be listed."""
+    empty = {"X-Agent-Chat-User": "   "}
+    cid = client.post("/conversations", headers=empty).json()["conversation_id"]
+
+    assert client.get(f"/conversations/{cid}/messages", headers=empty).status_code == 200
+    assert client.get(f"/conversations/{cid}/messages").status_code == 200
+    assert client.get("/conversations", headers=empty).json() == []
+
+
+def test_an_oversized_caller_header_is_rejected(client: TestClient) -> None:
+    """The id becomes a 64-char database key, so it is bounded at the edge."""
+    assert client.post("/conversations", headers={"X-Agent-Chat-User": "x" * 65}).status_code == 400
+
+
 def test_thread_title_collapses_whitespace_and_truncates() -> None:
     assert thread_title("  hi   there  ") == "hi there"
     assert thread_title("") == "New chat"

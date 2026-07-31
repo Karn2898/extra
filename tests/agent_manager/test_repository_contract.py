@@ -62,6 +62,30 @@ async def test_create_session_never_reassigns_an_existing_owner(repo: Repository
     assert await repo.list_sessions("bob") == []
 
 
+async def test_appending_a_message_never_claims_the_conversation(repo: Repository) -> None:
+    """Ownership is set at creation, so no later write can move it."""
+    await repo.create_session("owned", user_id="alice")
+    await repo.create_session("unowned")
+
+    for sid in ("owned", "unowned"):
+        await repo.append_message(
+            ConversationMessage(
+                message_id=uuid4().hex,
+                session_id=sid,
+                user_id="bob",
+                role=Role.USER,
+                content="hi",
+                created_at=datetime.now(UTC),
+            )
+        )
+
+    owned = await repo.get_session("owned")
+    unowned = await repo.get_session("unowned")
+    assert owned is not None and owned.user_id == "alice"
+    assert unowned is not None and unowned.user_id is None
+    assert await repo.list_sessions("bob") == []
+
+
 async def test_messages_in_insertion_order(repo: Repository) -> None:
     cid = await repo.create_conversation()
     await repo.add_message(cid, Role.USER, "hi")

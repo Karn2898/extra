@@ -24,8 +24,12 @@ export interface Conversation {
   startNew(): void;
 }
 
-const isMissingConversation = (error: unknown): boolean =>
-  error instanceof AgentChatHttpError && error.status === 404;
+/** A stored conversation the server will not serve us: gone (404), or owned by
+ *  someone else (403) — which is what a host app switching users looks like,
+ *  since the stored id outlives the identity that created it. Both are
+ *  recovered the same way, by starting a fresh conversation. */
+const isUnusableConversation = (error: unknown): boolean =>
+  error instanceof AgentChatHttpError && (error.status === 404 || error.status === 403);
 
 export function useConversation(
   client: AgentChatClient,
@@ -53,7 +57,7 @@ export function useConversation(
       try {
         return await client.sendMessage(await ensureId(), text);
       } catch (error) {
-        if (!isMissingConversation(error)) throw error;
+        if (!isUnusableConversation(error)) throw error;
         return client.sendMessage(await restartId(), text);
       }
     },
@@ -65,7 +69,7 @@ export function useConversation(
       try {
         yield* client.streamMessage(await ensureId(), text);
       } catch (error) {
-        if (!isMissingConversation(error)) throw error;
+        if (!isUnusableConversation(error)) throw error;
         yield* client.streamMessage(await restartId(), text);
       }
     },
@@ -78,7 +82,7 @@ export function useConversation(
     try {
       return await client.getMessages(stored);
     } catch (error) {
-      if (isMissingConversation(error)) removeStoredConversationId(endpoint, userId);
+      if (isUnusableConversation(error)) removeStoredConversationId(endpoint, userId);
       return [];
     }
   }, [client, endpoint, userId]);

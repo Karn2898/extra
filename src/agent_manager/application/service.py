@@ -84,10 +84,6 @@ class ConversationService:
         exist. Handing it back to its owner keeps creation idempotent; handing
         it to anyone else would be a takeover, so that is refused.
         """
-        if session_id:
-            existing = await self._repository.get_session(session_id)
-            if existing is not None and existing.user_id != user_id:
-                raise ConversationAlreadyExists(session_id)
         if user_id:
             await self._repository.upsert_user(user_id)
         session = await self._repository.create_session(
@@ -96,6 +92,10 @@ class ConversationService:
             system_name=self._system_name,
             config_path=self._config_path,
         )
+        # The repository decides, so two callers racing for the same id cannot
+        # both win: whoever did not create it is told the name is taken.
+        if session.user_id != user_id:
+            raise ConversationAlreadyExists(session.session_id)
         return session.session_id
 
     async def history(self, conversation_id: str, *, caller_id: str | None = None) -> list[Message]:

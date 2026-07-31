@@ -175,8 +175,8 @@ class SqlRepository(Repository):
                 )
                 session.add(session_row)
             else:
-                if session_row.user_id is None and message.user_id is not None:
-                    session_row.user_id = message.user_id
+                # Writing a message never claims the conversation: ownership is
+                # set at creation only (see create_session on the port).
                 session_row.updated_at = message.created_at
                 session_row.last_message_at = message.created_at
 
