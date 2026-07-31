@@ -6,7 +6,7 @@ import dataclasses
 import json
 from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -31,7 +31,6 @@ from agent_manager.application import (
     ConversationService,
     ConversationTokenBudgetExceeded,
 )
-
 
 router = APIRouter()
 

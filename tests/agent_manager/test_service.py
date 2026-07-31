@@ -13,7 +13,6 @@ from agent_manager.application import (
     ConversationNotFound,
     ConversationService,
 )
-
 from agent_manager.domain import Role
 from agent_manager.infrastructure.persistence.memory_repository import MemoryRepository
 from tests.agent_manager.conftest import RecordingEngine
