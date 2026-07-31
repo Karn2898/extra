@@ -111,8 +111,14 @@ not put private data behind them.
 
 ### `POST /conversations`
 
-Create a new conversation, owned by the calling user. The body is optional;
-`session_id` may be supplied.
+Create a new conversation, owned by the calling user. The body is optional; a
+`session_id` may be supplied to give the conversation a stable, caller-chosen
+id.
+
+A supplied id is a name, not a claim. Re-creating an id you already own returns
+it unchanged, which keeps creation idempotent; asking for one owned by someone
+else returns `409` and never transfers ownership. A conversation's owner is
+fixed at creation.
 
 ```bash
 curl -X POST http://localhost:8100/conversations \
@@ -126,6 +132,8 @@ Response:
 ```json
 { "conversation_id": "0d5a…", "session_id": "0d5a…" }
 ```
+
+Errors: `409` the supplied `session_id` belongs to another user.
 
 ### `POST /conversations/{id}/messages`
 

@@ -107,9 +107,9 @@ class SqlRepository(Repository):
                 session.add(row)
             elif any(
                 value is not None
-                for value in (user_id, system_name, config_path, title, metadata, expires_at)
+                for value in (system_name, config_path, title, metadata, expires_at)
             ):
-                row.user_id = user_id if user_id is not None else row.user_id
+                # row.user_id is deliberately absent: ownership is set once.
                 row.system_name = system_name if system_name is not None else row.system_name
                 row.config_path = config_path if config_path is not None else row.config_path
                 row.title = title if title is not None else row.title

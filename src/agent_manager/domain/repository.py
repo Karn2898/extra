@@ -43,7 +43,13 @@ class Repository(ABC):
         title: str | None = None,
         metadata: dict[str, Any] | None = None,
         expires_at: datetime | None = None,
-    ) -> ConversationSession: ...
+    ) -> ConversationSession:
+        """Create the session, or return it unchanged if the id is taken.
+
+        `user_id` establishes ownership at creation and is never reassigned
+        afterwards — an existing session's owner is immutable, or naming a live
+        id would be enough to take it over.
+        """
 
     @abstractmethod
     async def get_session(self, session_id: str) -> ConversationSession | None: ...

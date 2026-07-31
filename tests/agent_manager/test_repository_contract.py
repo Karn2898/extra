@@ -45,6 +45,23 @@ async def test_create_and_exists(repo: Repository) -> None:
     assert not await repo.conversation_exists("nope")
 
 
+async def test_create_session_never_reassigns_an_existing_owner(repo: Repository) -> None:
+    """Naming a live session id must not hand it to the caller.
+
+    The two backends used to disagree here — memory returned the existing
+    session untouched while SQL overwrote `user_id` — so this runs against both.
+    """
+    await repo.create_session("shared-id", user_id="alice")
+
+    session = await repo.create_session("shared-id", user_id="bob")
+
+    assert session.user_id == "alice"
+    stored = await repo.get_session("shared-id")
+    assert stored is not None
+    assert stored.user_id == "alice"
+    assert await repo.list_sessions("bob") == []
+
+
 async def test_messages_in_insertion_order(repo: Repository) -> None:
     cid = await repo.create_conversation()
     await repo.add_message(cid, Role.USER, "hi")

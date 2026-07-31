@@ -25,6 +25,7 @@ from agent_manager.api.schemas import (
 )
 from agent_manager.application import (
     ConversationAccessDenied,
+    ConversationAlreadyExists,
     ConversationNotFound,
     ConversationService,
     ConversationTokenBudgetExceeded,
@@ -41,7 +42,10 @@ async def create_conversation(
     service: Service, caller_id: CallerId, body: CreateConversationRequest | None = None
 ) -> CreateConversationResponse:
     body = body or CreateConversationRequest()
-    session_id = await service.create(user_id=caller_id, session_id=body.session_id)
+    try:
+        session_id = await service.create(user_id=caller_id, session_id=body.session_id)
+    except ConversationAlreadyExists:
+        raise HTTPException(status_code=409, detail="conversation id already taken") from None
     return CreateConversationResponse(conversation_id=session_id, session_id=session_id)
 
 

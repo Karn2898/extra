@@ -76,6 +76,23 @@ def test_another_caller_cannot_touch_a_conversation_it_does_not_own(client: Test
         assert stream.status_code == 403
 
 
+def test_create_cannot_claim_a_conversation_id_owned_by_another_caller(
+    client: TestClient,
+) -> None:
+    """A stable session id is a name, not a claim: naming a live conversation
+    must not transfer it."""
+    alice = {"X-Agent-Chat-User": "alice"}
+    client.post("/conversations", json={"session_id": "sess-1"}, headers=alice)
+    client.post("/conversations/sess-1/messages", json={"message": "secret"}, headers=alice)
+
+    for headers in ({"X-Agent-Chat-User": "bob"}, {}):
+        taken = client.post("/conversations", json={"session_id": "sess-1"}, headers=headers)
+        assert taken.status_code == 409
+        assert client.get("/conversations/sess-1/messages", headers=headers).status_code == 403
+
+    assert client.get("/conversations", headers=alice).json()[0]["conversation_id"] == "sess-1"
+
+
 def test_thread_title_collapses_whitespace_and_truncates() -> None:
     assert thread_title("  hi   there  ") == "hi there"
     assert thread_title("") == "New chat"

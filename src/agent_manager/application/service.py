@@ -36,6 +36,10 @@ class ConversationAccessDenied(Exception):
     """Raised when a caller acts on a conversation owned by a different user."""
 
 
+class ConversationAlreadyExists(Exception):
+    """Raised when a caller asks to create a conversation id someone else owns."""
+
+
 class ConversationTokenBudgetExceeded(Exception):
     """Raised when a conversation's lifetime token budget is exhausted."""
 
@@ -74,6 +78,16 @@ class ConversationService:
         self._config_path = config_path
 
     async def create(self, *, user_id: str | None = None, session_id: str | None = None) -> str:
+        """Create a conversation, or return a caller's own existing one.
+
+        A caller-supplied `session_id` names a conversation that may already
+        exist. Handing it back to its owner keeps creation idempotent; handing
+        it to anyone else would be a takeover, so that is refused.
+        """
+        if session_id:
+            existing = await self._repository.get_session(session_id)
+            if existing is not None and existing.user_id != user_id:
+                raise ConversationAlreadyExists(session_id)
         if user_id:
             await self._repository.upsert_user(user_id)
         session = await self._repository.create_session(

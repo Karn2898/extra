@@ -9,6 +9,7 @@ import pytest
 from agent_engine.engine.types import ChatMessage, ChatRole
 from agent_manager.application import (
     ConversationAccessDenied,
+    ConversationAlreadyExists,
     ConversationNotFound,
     ConversationService,
 )
@@ -112,6 +113,29 @@ async def test_reads_of_an_owned_conversation_refuse_other_callers() -> None:
 
     assert await service.list_conversations("u2") == []
     assert await service.list_conversations(None) == []
+
+
+async def test_create_refuses_a_session_id_owned_by_someone_else() -> None:
+    service, _ = _service()
+    await service.create(user_id="alice", session_id="sess-1")
+
+    with pytest.raises(ConversationAlreadyExists):
+        await service.create(user_id="bob", session_id="sess-1")
+    with pytest.raises(ConversationAlreadyExists):
+        await service.create(session_id="sess-1")
+
+    session = await service._repository.get_session("sess-1")
+    assert session is not None
+    assert session.user_id == "alice"
+
+
+async def test_create_is_idempotent_for_the_owner() -> None:
+    """agentctl reuses a --session id across runs, so the owner re-creating is
+    the normal path, not an attack."""
+    service, _ = _service()
+    first = await service.create(user_id="alice", session_id="sess-1")
+
+    assert await service.create(user_id="alice", session_id="sess-1") == first
 
 
 async def test_service_creates_user_and_session_metadata() -> None:
