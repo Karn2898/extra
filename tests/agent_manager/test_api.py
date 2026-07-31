@@ -42,7 +42,7 @@ def test_create_send_history_round_trip(client: TestClient) -> None:
 
 
 def test_list_conversations_returns_titled_threads_scoped_to_user(client: TestClient) -> None:
-    u1 = {"X-Agent- Chat-User": "u1"}
+    u1 = {"X-Agent-Chat-User": "u1"}
     a = client.post("/conversations", headers=u1).json()["conversation_id"]
     client.post(f"/conversations/{a}/messages", json={"message": "first thread"}, headers=u1)
     b = client.post("/conversations", headers=u1).json()["conversation_id"]
