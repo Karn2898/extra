@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import delete
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -92,30 +93,32 @@ class SqlRepository(Repository):
         now = datetime.now(UTC)
         async with self._sessions() as session, session.begin():
             row = await session.get(ConversationSessionRow, sid)
-            if row is None:
-                row = ConversationSessionRow(
-                    session_id=sid,
-                    user_id=user_id,
-                    system_name=system_name,
-                    config_path=config_path,
-                    title=title,
-                    metadata_json=dict(metadata or {}),
-                    created_at=now,
-                    updated_at=now,
-                    expires_at=expires_at,
-                )
-                session.add(row)
-            elif any(
-                value is not None
-                for value in (user_id, system_name, config_path, title, metadata, expires_at)
-            ):
-                row.user_id = user_id if user_id is not None else row.user_id
-                row.system_name = system_name if system_name is not None else row.system_name
-                row.config_path = config_path if config_path is not None else row.config_path
-                row.title = title if title is not None else row.title
-                row.metadata_json = dict(metadata) if metadata is not None else row.metadata_json
-                row.expires_at = expires_at if expires_at is not None else row.expires_at
-                row.updated_at = now
+            if row is not None:
+                return _session(row)
+            created = ConversationSessionRow(
+                session_id=sid,
+                user_id=user_id,
+                system_name=system_name,
+                config_path=config_path,
+                title=title,
+                metadata_json=dict(metadata or {}),
+                created_at=now,
+                updated_at=now,
+                expires_at=expires_at,
+            )
+            try:
+                # A savepoint, so losing the id to a concurrent creator rolls
+                # back only this insert and leaves the transaction usable.
+                async with session.begin_nested():
+                    session.add(created)
+                row = created
+            except IntegrityError:
+                # Absorbed only if the id is now taken — then that caller won
+                # and their row is the answer. Any other integrity failure
+                # leaves nothing to find and stays the caller's.
+                row = await session.get(ConversationSessionRow, sid)
+                if row is None:
+                    raise
         return _session(row)
 
     async def get_session(self, session_id: str) -> ConversationSession | None:
@@ -175,8 +178,7 @@ class SqlRepository(Repository):
                 )
                 session.add(session_row)
             else:
-                if session_row.user_id is None and message.user_id is not None:
-                    session_row.user_id = message.user_id
+                # No user_id here: writing a message never claims a conversation.
                 session_row.updated_at = message.created_at
                 session_row.last_message_at = message.created_at
 

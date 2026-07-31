@@ -10,7 +10,8 @@ import {
 import { type Ref, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AgentChatHttpError, type AgentChatClient } from "../api/AgentChatClient";
-import { getOrCreateUserId, getStoredConversationId } from "../storage/conversationStorage";
+import { getStoredConversationId } from "../storage/conversationStorage";
+
 import type {
   AgentChatAnswerDetail,
   AgentChatConfig,
@@ -54,17 +55,21 @@ const toEntry = (message: ChatMessage): MessageEntry => ({
 export interface AgentChatAppProps {
   client: AgentChatClient;
   config: AgentChatConfig;
+  userId: string;
   onAnswer: (detail: AgentChatAnswerDetail) => void;
   panelId: string;
   titleId: string;
 }
 
-export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: AgentChatAppProps) {
+export function AgentChatApp({
+  client,
+  config,
+  userId,
+  onAnswer,
+  panelId,
+  titleId,
+}: AgentChatAppProps) {
   const inline = config.mode === "inline";
-  const userId = useMemo(
-    () => config.user || getOrCreateUserId(config.endpoint),
-    [config.user, config.endpoint],
-  );
   const [open, setOpen] = useState(inline);
   const [loaded, setLoaded] = useState(false);
   const [sending, setSending] = useState(false);
@@ -74,6 +79,7 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
   const [activeId, setActiveId] = useState("");
   const entries = entriesById[activeId] ?? [];
   const usage = usageById[activeId] ?? null;
+
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [threadsOpen, setThreadsOpen] = useState(false);
   const launcherRef = useRef<HTMLButtonElement | null>(null);
@@ -156,6 +162,7 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
       inputRef.current?.focus({ preventScroll: true });
     },
     [conversation, entriesById, loadThread, refreshUsage],
+
   );
 
   const startNewThread = useCallback(() => {
@@ -170,6 +177,7 @@ export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: Age
       putEntries(cid, (prev) => prev.map((current) => (current.id === id ? entry : current))),
     [putEntries],
   );
+
 
   const sendWithoutStreaming = useCallback(
     async (cid: string, text: string, entryId: string) => {

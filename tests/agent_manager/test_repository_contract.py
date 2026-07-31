@@ -45,6 +45,71 @@ async def test_create_and_exists(repo: Repository) -> None:
     assert not await repo.conversation_exists("nope")
 
 
+async def test_create_session_never_reassigns_an_existing_owner(repo: Repository) -> None:
+    """The backends used to disagree here, so this runs against both: memory
+    returned the existing session untouched while SQL overwrote `user_id`."""
+    await repo.create_session("shared-id", user_id="alice")
+
+    session = await repo.create_session("shared-id", user_id="bob")
+
+    assert session.user_id == "alice"
+    stored = await repo.get_session("shared-id")
+    assert stored is not None
+    assert stored.user_id == "alice"
+    assert await repo.list_sessions("bob") == []
+
+
+async def test_create_session_writes_nothing_when_the_id_is_taken(repo: Repository) -> None:
+    """Creation fields describe a birth, so a taken id is left entirely alone —
+    a rejected create must not rebind a live session to another system."""
+    expiry = datetime.now(UTC) + timedelta(days=1)
+    original = await repo.create_session(
+        "shared-id",
+        user_id="alice",
+        system_name="system-a",
+        config_path="/a/agents.yml",
+        title="Alice's thread",
+        metadata={"source": "a"},
+        expires_at=expiry,
+    )
+
+    returned = await repo.create_session(
+        "shared-id",
+        user_id="bob",
+        system_name="system-b",
+        config_path="/b/agents.yml",
+        title="Bob's thread",
+        metadata={"source": "b"},
+        expires_at=expiry + timedelta(days=7),
+    )
+
+    assert returned == original
+    assert await repo.get_session("shared-id") == original
+
+
+async def test_appending_a_message_never_claims_the_conversation(repo: Repository) -> None:
+    await repo.create_session("owned", user_id="alice")
+    await repo.create_session("unowned")
+
+    for sid in ("owned", "unowned"):
+        await repo.append_message(
+            ConversationMessage(
+                message_id=uuid4().hex,
+                session_id=sid,
+                user_id="bob",
+                role=Role.USER,
+                content="hi",
+                created_at=datetime.now(UTC),
+            )
+        )
+
+    owned = await repo.get_session("owned")
+    unowned = await repo.get_session("unowned")
+    assert owned is not None and owned.user_id == "alice"
+    assert unowned is not None and unowned.user_id is None
+    assert await repo.list_sessions("bob") == []
+
+
 async def test_messages_in_insertion_order(repo: Repository) -> None:
     cid = await repo.create_conversation()
     await repo.add_message(cid, Role.USER, "hi")

@@ -125,7 +125,7 @@ class MemoryRepository(Repository):
         session = self._sessions[message.session_id]
         self._sessions[message.session_id] = ConversationSession(
             session_id=session.session_id,
-            user_id=session.user_id or message.user_id,
+            user_id=session.user_id,
             system_name=session.system_name,
             config_path=session.config_path,
             title=session.title,

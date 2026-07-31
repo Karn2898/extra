@@ -35,11 +35,16 @@ async function mockConversationApi(
   });
 
   await page.route("**/conversations", async (route) => {
-    calls.push(`${route.request().method()} ${new URL(route.request().url()).pathname}`);
+    const method = route.request().method();
+    calls.push(`${method} ${new URL(route.request().url()).pathname}`);
+    expect(route.request().headers()["x-agent-chat-user"]).toBeTruthy();
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ conversation_id: "conv-smoke", session_id: "conv-smoke" }),
+      body:
+        method === "GET"
+          ? JSON.stringify(options.threads ?? [])
+          : JSON.stringify({ conversation_id: "conv-smoke", session_id: "conv-smoke" }),
     });
   });
 
@@ -121,7 +126,7 @@ async function mockConversationApi(
   return calls;
 }
 
-async function mockConversationApiWithStaleConversation(page: Page) {
+async function mockConversationApiWithStaleConversation(page: Page, staleStatus = 404) {
   const calls: string[] = [];
   let created = false;
 
@@ -143,9 +148,9 @@ async function mockConversationApiWithStaleConversation(page: Page) {
 
     if (conversationId === "conv-stale") {
       await route.fulfill({
-        status: 404,
+        status: staleStatus,
         contentType: "application/json",
-        body: JSON.stringify({ detail: "conversation not found" }),
+        body: JSON.stringify({ detail: "unavailable" }),
       });
       return;
     }
@@ -180,9 +185,9 @@ async function mockConversationApiWithStaleConversation(page: Page) {
 
     if (conversationId === "conv-stale") {
       await route.fulfill({
-        status: 404,
+        status: staleStatus,
         contentType: "application/json",
-        body: JSON.stringify({ detail: "conversation not found" }),
+        body: JSON.stringify({ detail: "unavailable" }),
       });
       return;
     }
@@ -737,7 +742,30 @@ test("token budget exceeded shows context-limit message instead of generic error
   expect(placeholder).toBe("Context limit reached.");
 });
 
+test("a stored conversation owned by another caller is replaced, not retried forever", async ({
+  page,
+}) => {
+  // What a host app switching users looks like: the stored id outlives the
+  // identity that created it, so the server answers 403 and the widget has to
+  // start over rather than sit on an id it can never use.
+  const calls = await mockConversationApiWithStaleConversation(page, 403);
+  await pinUser(page);
+  await page.goto("/widget-demo.html");
+  await page.evaluate((key) => localStorage.setItem(key, "conv-stale"), CONVERSATION_KEY);
+
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "recover please");
+  await shadowClick(page, ".send");
+
+  await expect.poll(() => shadowText(page, ".messages")).toContain("Recovered: recover please");
+  await expect
+    .poll(() => page.evaluate((key) => localStorage.getItem(key), CONVERSATION_KEY))
+    .toBe("conv-fresh");
+  expect(calls).toContain("POST /conversations/conv-fresh/messages/stream");
+});
+
 test("stale stored conversation is replaced before sending to the agent", async ({ page }) => {
+
   const calls = await mockConversationApiWithStaleConversation(page);
   await pinUser(page);
   await page.goto("/widget-demo.html");

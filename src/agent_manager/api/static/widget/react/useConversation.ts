@@ -32,8 +32,12 @@ export interface Conversation {
   startNew(): void;
 }
 
-const isMissingConversation = (error: unknown): boolean =>
-  error instanceof AgentChatHttpError && error.status === 404;
+/** A stored conversation the server will not serve us: gone (404), or owned by
+ *  someone else (403) — which is what a host app switching users looks like,
+ *  since the stored id outlives the identity that created it. Both are
+ *  recovered the same way, by starting a fresh conversation. */
+const isUnusableConversation = (error: unknown): boolean =>
+  error instanceof AgentChatHttpError && (error.status === 404 || error.status === 403);
 
 export function useConversation(
   client: AgentChatClient,
@@ -44,7 +48,7 @@ export function useConversation(
   onReplaced?: (staleId: string, freshId: string) => void,
 ): Conversation {
   const startConversation = useCallback(async () => {
-    const created = await client.createConversation(userId);
+    const created = await client.createConversation();
     setStoredConversationId(endpoint, userId, created);
     return created;
   }, [client, endpoint, userId]);
@@ -71,7 +75,7 @@ export function useConversation(
       try {
         return await client.sendMessage(conversationId, text);
       } catch (error) {
-        if (!isMissingConversation(error)) throw error;
+        if (!isUnusableConversation(error)) throw error;
         return client.sendMessage(await replace(conversationId), text);
       }
     },
@@ -83,7 +87,7 @@ export function useConversation(
       try {
         yield* client.streamMessage(conversationId, text);
       } catch (error) {
-        if (!isMissingConversation(error)) throw error;
+        if (!isUnusableConversation(error)) throw error;
         yield* client.streamMessage(await replace(conversationId), text);
       }
     },
@@ -95,7 +99,7 @@ export function useConversation(
       try {
         return await client.getMessages(conversationId);
       } catch (error) {
-        if (isMissingConversation(error) && peekId() === conversationId) {
+        if (isUnusableConversation(error) && peekId() === conversationId) {
           removeStoredConversationId(endpoint, userId);
         }
         return [];
@@ -115,10 +119,7 @@ export function useConversation(
     [client],
   );
 
-  const listThreads = useCallback(
-    () => client.listConversations(userId).catch(() => []),
-    [client, userId],
-  );
+  const listThreads = useCallback(() => client.listConversations().catch(() => []), [client]);
 
   const switchTo = useCallback(
     (conversationId: string) => setStoredConversationId(endpoint, userId, conversationId),
@@ -145,3 +146,4 @@ export function useConversation(
     [peekId, ensureId, send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew],
   );
 }
+

@@ -43,17 +43,68 @@ def test_create_send_history_round_trip(client: TestClient) -> None:
 
 
 def test_list_conversations_returns_titled_threads_scoped_to_user(client: TestClient) -> None:
-    a = client.post("/conversations", json={"user_id": "u1"}).json()["conversation_id"]
-    client.post(f"/conversations/{a}/messages", json={"message": "first thread"})
-    b = client.post("/conversations", json={"user_id": "u1"}).json()["conversation_id"]
-    client.post(f"/conversations/{b}/messages", json={"message": "second thread"})
+    u1 = {"X-Agent-Chat-User": "u1"}
+    a = client.post("/conversations", headers=u1).json()["conversation_id"]
+    client.post(f"/conversations/{a}/messages", json={"message": "first thread"}, headers=u1)
+    b = client.post("/conversations", headers=u1).json()["conversation_id"]
+    client.post(f"/conversations/{b}/messages", json={"message": "second thread"}, headers=u1)
 
-    threads = client.get("/conversations", params={"user_id": "u1"}).json()
+    threads = client.get("/conversations", headers=u1).json()
     assert {t["conversation_id"]: t["title"] for t in threads} == {
         a: "first thread",
         b: "second thread",
     }
-    assert client.get("/conversations", params={"user_id": "u2"}).json() == []
+    assert client.get("/conversations", headers={"X-Agent-Chat-User": "u2"}).json() == []
+    assert client.get("/conversations").json() == []
+
+
+def test_another_caller_cannot_touch_a_conversation_it_does_not_own(client: TestClient) -> None:
+    """The conversation id is not a credential — every route checks the caller."""
+    u1 = {"X-Agent-Chat-User": "u1"}
+    cid = client.post("/conversations", headers=u1).json()["conversation_id"]
+    client.post(f"/conversations/{cid}/messages", json={"message": "secret"}, headers=u1)
+
+    for headers in ({"X-Agent-Chat-User": "u2"}, {}):
+        assert client.get(f"/conversations/{cid}/messages", headers=headers).status_code == 403
+        assert client.get(f"/conversations/{cid}/usage", headers=headers).status_code == 403
+        send = client.post(
+            f"/conversations/{cid}/messages", json={"message": "hi"}, headers=headers
+        )
+        assert send.status_code == 403
+        stream = client.post(
+            f"/conversations/{cid}/messages/stream", json={"message": "hi"}, headers=headers
+        )
+        assert stream.status_code == 403
+
+
+def test_create_cannot_claim_a_conversation_id_owned_by_another_caller(
+    client: TestClient,
+) -> None:
+    alice = {"X-Agent-Chat-User": "alice"}
+    client.post("/conversations", json={"session_id": "sess-1"}, headers=alice)
+    client.post("/conversations/sess-1/messages", json={"message": "secret"}, headers=alice)
+
+    for headers in ({"X-Agent-Chat-User": "bob"}, {}):
+        taken = client.post("/conversations", json={"session_id": "sess-1"}, headers=headers)
+        assert taken.status_code == 409
+        assert client.get("/conversations/sess-1/messages", headers=headers).status_code == 403
+
+    assert client.get("/conversations", headers=alice).json()[0]["conversation_id"] == "sess-1"
+
+
+def test_an_empty_caller_header_is_anonymous_not_an_identity(client: TestClient) -> None:
+    """An id of "" would own conversations that no listing can reach."""
+    empty = {"X-Agent-Chat-User": "   "}
+    cid = client.post("/conversations", headers=empty).json()["conversation_id"]
+
+    assert client.get(f"/conversations/{cid}/messages", headers=empty).status_code == 200
+    assert client.get(f"/conversations/{cid}/messages").status_code == 200
+    assert client.get("/conversations", headers=empty).json() == []
+
+
+def test_an_oversized_caller_header_is_rejected(client: TestClient) -> None:
+    """The id becomes a 64-char database key, so it is bounded at the edge."""
+    assert client.post("/conversations", headers={"X-Agent-Chat-User": "x" * 65}).status_code == 400
 
 
 def test_thread_title_collapses_whitespace_and_truncates() -> None:
@@ -233,12 +284,13 @@ def test_stream_ignores_cleanup_error_after_final() -> None:
     ]
 
 
-def test_create_accepts_stable_session_and_send_accepts_user(client: TestClient) -> None:
-    created = client.post("/conversations", json={"session_id": "sess-1", "user_id": "u1"}).json()
+def test_create_accepts_a_stable_session_id_owned_by_the_caller(client: TestClient) -> None:
+    u1 = {"X-Agent-Chat-User": "u1"}
+    created = client.post("/conversations", json={"session_id": "sess-1"}, headers=u1).json()
     assert created["conversation_id"] == "sess-1"
     assert created["session_id"] == "sess-1"
 
-    sent = client.post("/conversations/sess-1/messages", json={"message": "hello", "user_id": "u1"})
+    sent = client.post("/conversations/sess-1/messages", json={"message": "hello"}, headers=u1)
 
     assert sent.status_code == 200
 

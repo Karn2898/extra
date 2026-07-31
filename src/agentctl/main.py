@@ -165,7 +165,7 @@ async def _run_async(
             await service.create(user_id=effective_user_id, session_id=effective_session_id)
             if stream:
                 async for event in service.stream(
-                    effective_session_id, message, user_id=effective_user_id
+                    effective_session_id, message, caller_id=effective_user_id
                 ):
                     if event.type == "route" and event.route:
                         click.echo(f"  route  : {' → '.join(event.route)}", err=True)
@@ -175,7 +175,7 @@ async def _run_async(
                 sys.stdout.write("\n")
             else:
                 result = await service.send(
-                    effective_session_id, message, user_id=effective_user_id
+                    effective_session_id, message, caller_id=effective_user_id
                 )
                 click.echo(f"  route  : {' → '.join(result.visited)}", err=True)
                 click.echo("")

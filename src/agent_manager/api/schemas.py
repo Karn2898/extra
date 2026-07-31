@@ -15,7 +15,6 @@ from agent_manager.domain import BudgetSeverity, Role
 
 class CreateConversationRequest(BaseModel):
     session_id: str | None = None
-    user_id: str | None = None
 
 
 class CreateConversationResponse(BaseModel):
@@ -37,7 +36,6 @@ class MessageOut(BaseModel):
 
 class SendMessageRequest(BaseModel):
     message: str
-    user_id: str | None = None
 
 
 class ToolRecord(BaseModel):

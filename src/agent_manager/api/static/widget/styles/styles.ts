@@ -221,6 +221,7 @@ export function styles(config: AgentChatConfig): string {
       .budget-ring-value, .budget-bar-fill, .budget-popover { transition: none; }
       .thread-drawer { transition: none; }
       .thinking-dot { animation: none; }
+
     }
     @media (max-width: 480px) {
       .panel:not(.inline) { width: 100vw; height: 100dvh; max-height: 100dvh;
