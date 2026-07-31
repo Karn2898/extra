@@ -1,9 +1,10 @@
-"""Concurrent conversation creation against a real SQL database.
+"""Creating conversations against a real SQL database.
 
-The contract tests cover ownership rules sequentially; these cover the window
-between reading "no such id" and inserting it, which only a second connection
-can open. SQLite on disk, so the racers get separate connections — an
-in-memory database is one shared connection and races nothing.
+The contract tests cover the ownership rules on both backends; these cover what
+only a second connection can show — the window between reading "no such id" and
+inserting it, and what a rejected create leaves behind. SQLite on disk, so the
+racers get separate connections: an in-memory database is one shared connection
+and races nothing.
 """
 
 from __future__ import annotations
@@ -102,3 +103,37 @@ async def test_the_api_answers_409_to_the_losing_caller(db_url: str) -> None:
         responses = await asyncio.gather(create(alice, "alice"), create(bob, "bob"))
 
     assert sorted(r.status_code for r in responses) == [200, 409]
+
+
+async def test_a_rejected_create_leaves_the_other_system_s_session_alone(db_url: str) -> None:
+    """Two systems sharing a conversation database, which is when this bites:
+    naming a live id must not rebind it to the caller's system."""
+
+    def client(system: str) -> AsyncClient:
+        app = FastAPI()
+        app.state.service = ConversationService(
+            RecordingEngine(),
+            _repository(db_url),
+            system_name=system,
+            config_path=f"/{system}/agents.yml",
+        )
+        app.include_router(router)
+        return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+
+    async with client("system-a") as alice, client("system-b") as bob:
+        created = await alice.post(
+            "/conversations",
+            json={"session_id": "shared-id"},
+            headers={"X-Agent-Chat-User": "alice"},
+        )
+        assert created.status_code == 200
+        before = await _repository(db_url).get_session("shared-id")
+
+        rejected = await bob.post(
+            "/conversations",
+            json={"session_id": "shared-id"},
+            headers={"X-Agent-Chat-User": "bob"},
+        )
+
+    assert rejected.status_code == 409
+    assert await _repository(db_url).get_session("shared-id") == before

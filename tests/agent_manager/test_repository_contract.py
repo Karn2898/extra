@@ -59,6 +59,34 @@ async def test_create_session_never_reassigns_an_existing_owner(repo: Repository
     assert await repo.list_sessions("bob") == []
 
 
+async def test_create_session_writes_nothing_when_the_id_is_taken(repo: Repository) -> None:
+    """Creation fields describe a birth, so a taken id is left entirely alone —
+    a rejected create must not rebind a live session to another system."""
+    expiry = datetime.now(UTC) + timedelta(days=1)
+    original = await repo.create_session(
+        "shared-id",
+        user_id="alice",
+        system_name="system-a",
+        config_path="/a/agents.yml",
+        title="Alice's thread",
+        metadata={"source": "a"},
+        expires_at=expiry,
+    )
+
+    returned = await repo.create_session(
+        "shared-id",
+        user_id="bob",
+        system_name="system-b",
+        config_path="/b/agents.yml",
+        title="Bob's thread",
+        metadata={"source": "b"},
+        expires_at=expiry + timedelta(days=7),
+    )
+
+    assert returned == original
+    assert await repo.get_session("shared-id") == original
+
+
 async def test_appending_a_message_never_claims_the_conversation(repo: Repository) -> None:
     await repo.create_session("owned", user_id="alice")
     await repo.create_session("unowned")

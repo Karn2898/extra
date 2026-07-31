@@ -44,10 +44,13 @@ class Repository(ABC):
         metadata: dict[str, Any] | None = None,
         expires_at: datetime | None = None,
     ) -> ConversationSession:
-        """Create the session, or return it unchanged if the id is taken.
+        """Create the session, or return it untouched if the id is taken.
 
-        `user_id` sets ownership at creation and is never reassigned: otherwise
-        naming a live id would be enough to take the conversation over.
+        Every field here describes a session being born, so a taken id writes
+        nothing at all — not the owner, and not the title, config or expiry.
+        Otherwise naming a live id would be enough to take a conversation over,
+        or to rebind someone else's to another system. Later changes go through
+        the explicit operations, `rename_session` and the rest.
         """
 
     @abstractmethod
