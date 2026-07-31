@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
 from agent_engine.runtime.streaming import RunStreamEvent
-from agent_manager.api.deps import get_service
+from agent_manager.api.deps import get_caller_id, get_service
 from agent_manager.api.schemas import (
     ConversationSummary,
     CreateConversationRequest,
@@ -33,27 +33,21 @@ from agent_manager.application import (
 router = APIRouter()
 
 Service = Annotated[ConversationService, Depends(get_service)]
+CallerId = Annotated[str | None, Depends(get_caller_id)]
 
 
 @router.post("/conversations", response_model=CreateConversationResponse)
 async def create_conversation(
-    service: Service, body: CreateConversationRequest | None = None
+    service: Service, caller_id: CallerId, body: CreateConversationRequest | None = None
 ) -> CreateConversationResponse:
     body = body or CreateConversationRequest()
-    session_id = await service.create(user_id=body.user_id, session_id=body.session_id)
+    session_id = await service.create(user_id=caller_id, session_id=body.session_id)
     return CreateConversationResponse(conversation_id=session_id, session_id=session_id)
 
 
 @router.get("/conversations", response_model=list[ConversationSummary])
-async def list_conversations(service: Service, user_id: str) -> list[ConversationSummary]:
-    """List a user's conversations.
-
-    `user_id` is a caller-supplied identifier, not an authenticated principal —
-    it scopes the listing, it does not authorize it. A deployment that needs a
-    real boundary puts auth in front of this router (or overrides `get_service`)
-    and derives the id from the verified credential instead of the query string.
-    """
-    sessions = await service.list_conversations(user_id)
+async def list_conversations(service: Service, caller_id: CallerId) -> list[ConversationSummary]:
+    sessions = await service.list_conversations(caller_id)
     return [
         ConversationSummary(
             conversation_id=s.session_id,
@@ -65,20 +59,28 @@ async def list_conversations(service: Service, user_id: str) -> list[Conversatio
 
 
 @router.get("/conversations/{conversation_id}/messages", response_model=list[MessageOut])
-async def list_messages(conversation_id: str, service: Service) -> list[MessageOut]:
+async def list_messages(
+    conversation_id: str, service: Service, caller_id: CallerId
+) -> list[MessageOut]:
     try:
-        msgs = await service.history(conversation_id)
+        msgs = await service.history(conversation_id, caller_id=caller_id)
     except ConversationNotFound as exc:
         raise HTTPException(status_code=404, detail="conversation not found") from exc
+    except ConversationAccessDenied:
+        raise HTTPException(status_code=403, detail="conversation owned by another user") from None
     return [MessageOut(role=m.role, content=m.content, created_at=m.created_at) for m in msgs]
 
 
 @router.get("/conversations/{conversation_id}/usage", response_model=TokenBudgetResponse)
-async def get_usage(conversation_id: str, service: Service) -> TokenBudgetResponse:
+async def get_usage(
+    conversation_id: str, service: Service, caller_id: CallerId
+) -> TokenBudgetResponse:
     try:
-        usage = await service.usage(conversation_id)
+        usage = await service.usage(conversation_id, caller_id=caller_id)
     except ConversationNotFound as exc:
         raise HTTPException(status_code=404, detail="conversation not found") from exc
+    except ConversationAccessDenied:
+        raise HTTPException(status_code=403, detail="conversation owned by another user") from None
     return TokenBudgetResponse(
         used_tokens=usage.used_tokens,
         max_tokens=usage.max_tokens,
@@ -89,10 +91,10 @@ async def get_usage(conversation_id: str, service: Service) -> TokenBudgetRespon
 
 @router.post("/conversations/{conversation_id}/messages", response_model=SendMessageResponse)
 async def send_message(
-    conversation_id: str, body: SendMessageRequest, service: Service
+    conversation_id: str, body: SendMessageRequest, service: Service, caller_id: CallerId
 ) -> SendMessageResponse:
     try:
-        result = await service.send(conversation_id, body.message, user_id=body.user_id)
+        result = await service.send(conversation_id, body.message, caller_id=caller_id)
     except ConversationNotFound as exc:
         raise HTTPException(status_code=404, detail="conversation not found") from exc
     except ConversationAccessDenied:
@@ -129,9 +131,9 @@ def _to_stream_event(event: RunStreamEvent) -> StreamEventOut:
 
 @router.post("/conversations/{conversation_id}/messages/stream")
 async def stream_message(
-    conversation_id: str, body: SendMessageRequest, service: Service
+    conversation_id: str, body: SendMessageRequest, service: Service, caller_id: CallerId
 ) -> StreamingResponse:
-    stream = service.stream(conversation_id, body.message, user_id=body.user_id)
+    stream = service.stream(conversation_id, body.message, caller_id=caller_id)
 
     try:
         first = await stream.__anext__()

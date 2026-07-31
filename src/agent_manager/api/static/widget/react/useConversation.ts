@@ -33,7 +33,7 @@ export function useConversation(
   userId: string,
 ): Conversation {
   const startConversation = useCallback(async () => {
-    const created = await client.createConversation(userId);
+    const created = await client.createConversation();
     setStoredConversationId(endpoint, userId, created);
     return created;
   }, [client, endpoint, userId]);
@@ -93,10 +93,7 @@ export function useConversation(
     }
   }, [client, endpoint, userId]);
 
-  const listThreads = useCallback(
-    () => client.listConversations(userId).catch(() => []),
-    [client, userId],
-  );
+  const listThreads = useCallback(() => client.listConversations().catch(() => []), [client]);
 
   const switchTo = useCallback(
     (conversationId: string) => setStoredConversationId(endpoint, userId, conversationId),

@@ -25,21 +25,17 @@ async function mockConversationApi(
 ) {
   const calls: string[] = [];
 
-  await page.route(/\/conversations\?/, async (route) => {
-    calls.push(`GET ${new URL(route.request().url()).pathname}`);
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(options.threads ?? []),
-    });
-  });
-
   await page.route("**/conversations", async (route) => {
-    calls.push(`${route.request().method()} ${new URL(route.request().url()).pathname}`);
+    const method = route.request().method();
+    calls.push(`${method} ${new URL(route.request().url()).pathname}`);
+    expect(route.request().headers()["x-agent-chat-user"]).toBeTruthy();
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ conversation_id: "conv-smoke", session_id: "conv-smoke" }),
+      body:
+        method === "GET"
+          ? JSON.stringify(options.threads ?? [])
+          : JSON.stringify({ conversation_id: "conv-smoke", session_id: "conv-smoke" }),
     });
   });
 

@@ -7,10 +7,10 @@ import {
   SquarePenIcon,
   XIcon,
 } from "lucide-react";
-import { type Ref, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type Ref, useCallback, useEffect, useRef, useState } from "react";
 
 import type { AgentChatClient } from "../api/AgentChatClient";
-import { getOrCreateUserId, getStoredConversationId } from "../storage/conversationStorage";
+import { getStoredConversationId } from "../storage/conversationStorage";
 import type {
   AgentChatAnswerDetail,
   AgentChatConfig,
@@ -54,17 +54,21 @@ const toEntry = (message: ChatMessage): MessageEntry => ({
 export interface AgentChatAppProps {
   client: AgentChatClient;
   config: AgentChatConfig;
+  userId: string;
   onAnswer: (detail: AgentChatAnswerDetail) => void;
   panelId: string;
   titleId: string;
 }
 
-export function AgentChatApp({ client, config, onAnswer, panelId, titleId }: AgentChatAppProps) {
+export function AgentChatApp({
+  client,
+  config,
+  userId,
+  onAnswer,
+  panelId,
+  titleId,
+}: AgentChatAppProps) {
   const inline = config.mode === "inline";
-  const userId = useMemo(
-    () => config.user || getOrCreateUserId(config.endpoint),
-    [config.user, config.endpoint],
-  );
   const conversation = useConversation(client, config.endpoint, userId);
   const [open, setOpen] = useState(inline);
   const [loaded, setLoaded] = useState(false);

@@ -52109,27 +52109,26 @@ var AgentChatHttpError = class extends Error {
   }
 };
 var AgentChatClient = class {
-  constructor(endpoint) {
+  /** `userId` identifies the caller on every request. It is not a credential —
+   * see `get_caller_id` on the server for how a deployment makes it one. */
+  constructor(endpoint, userId) {
     this.endpoint = endpoint;
+    this.headers = { "Content-Type": "application/json", "X-Agent-Chat-User": userId };
   }
-  async createConversation(userId) {
-    const response = await fetch(`${this.endpoint}/conversations`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_id: userId })
-    });
+  async request(path2, init) {
+    const response = await fetch(`${this.endpoint}${path2}`, { ...init, headers: this.headers });
     if (!response.ok) {
       throw new AgentChatHttpError(response.status);
     }
+    return response;
+  }
+  async createConversation() {
+    const response = await this.request("/conversations", { method: "POST", body: "{}" });
     const data = await response.json();
     return String(data.conversation_id);
   }
-  async listConversations(userId) {
-    const url = `${this.endpoint}/conversations?user_id=${encodeURIComponent(userId)}`;
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new AgentChatHttpError(response.status);
-    }
+  async listConversations() {
+    const response = await this.request("/conversations");
     const data = await response.json();
     if (!Array.isArray(data)) return [];
     return data.map((thread) => ({
@@ -52139,21 +52138,14 @@ var AgentChatClient = class {
     }));
   }
   async getMessages(conversationId) {
-    const response = await fetch(`${this.endpoint}/conversations/${conversationId}/messages`);
-    if (!response.ok) {
-      throw new AgentChatHttpError(response.status);
-    }
+    const response = await this.request(`/conversations/${conversationId}/messages`);
     return await response.json();
   }
   async sendMessage(conversationId, message) {
-    const response = await fetch(`${this.endpoint}/conversations/${conversationId}/messages`, {
+    const response = await this.request(`/conversations/${conversationId}/messages`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message })
     });
-    if (!response.ok) {
-      throw new AgentChatHttpError(response.status);
-    }
     const data = await response.json();
     return {
       answer: String(data.answer || ""),
@@ -52162,10 +52154,7 @@ var AgentChatClient = class {
     };
   }
   async getUsage(conversationId) {
-    const response = await fetch(`${this.endpoint}/conversations/${conversationId}/usage`);
-    if (!response.ok) {
-      throw new AgentChatHttpError(response.status);
-    }
+    const response = await this.request(`/conversations/${conversationId}/usage`);
     const data = await response.json();
     return {
       used_tokens: Number(data.used_tokens) || 0,
@@ -52175,14 +52164,10 @@ var AgentChatClient = class {
     };
   }
   async *streamMessage(conversationId, message) {
-    const response = await fetch(`${this.endpoint}/conversations/${conversationId}/messages/stream`, {
+    const response = await this.request(`/conversations/${conversationId}/messages/stream`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message })
     });
-    if (!response.ok) {
-      throw new AgentChatHttpError(response.status);
-    }
     if (!response.body) {
       throw new Error("Streaming response has no body");
     }
@@ -53068,7 +53053,7 @@ var import_react9 = __toESM(require_react(), 1);
 var isMissingConversation = (error) => error instanceof AgentChatHttpError && error.status === 404;
 function useConversation(client, endpoint, userId) {
   const startConversation = (0, import_react9.useCallback)(async () => {
-    const created = await client.createConversation(userId);
+    const created = await client.createConversation();
     setStoredConversationId(endpoint, userId, created);
     return created;
   }, [client, endpoint, userId]);
@@ -53121,10 +53106,7 @@ function useConversation(client, endpoint, userId) {
       return null;
     }
   }, [client, endpoint, userId]);
-  const listThreads = (0, import_react9.useCallback)(
-    () => client.listConversations(userId).catch(() => []),
-    [client, userId]
-  );
+  const listThreads = (0, import_react9.useCallback)(() => client.listConversations().catch(() => []), [client]);
   const switchTo = (0, import_react9.useCallback)(
     (conversationId) => setStoredConversationId(endpoint, userId, conversationId),
     [endpoint, userId]
@@ -53150,12 +53132,15 @@ var toEntry = (message) => ({
   role: message.role === "user" ? "user" : "ai",
   text: message.content
 });
-function AgentChatApp({ client, config, onAnswer, panelId, titleId }) {
+function AgentChatApp({
+  client,
+  config,
+  userId,
+  onAnswer,
+  panelId,
+  titleId
+}) {
   const inline = config.mode === "inline";
-  const userId = (0, import_react10.useMemo)(
-    () => config.user || getOrCreateUserId(config.endpoint),
-    [config.user, config.endpoint]
-  );
   const conversation = useConversation(client, config.endpoint, userId);
   const [open, setOpen] = (0, import_react10.useState)(inline);
   const [loaded, setLoaded] = (0, import_react10.useState)(false);
@@ -53797,7 +53782,8 @@ var AgentChatElement = class extends HTMLElement {
   }
   configure() {
     this.config = parseConfig(this, this.scriptOrigin);
-    this.client = new AgentChatClient(this.config.endpoint);
+    this.userId = this.config.user || getOrCreateUserId(this.config.endpoint);
+    this.client = new AgentChatClient(this.config.endpoint, this.userId);
   }
   render() {
     const root7 = this.shadowRoot || this.attachShadow({ mode: "open" });
@@ -53817,6 +53803,7 @@ var AgentChatElement = class extends HTMLElement {
         {
           client: this.client,
           config: this.config,
+          userId: this.userId,
           onAnswer: (detail) => this.emitAnswer(detail),
           panelId: this.panelId,
           titleId: this.titleId

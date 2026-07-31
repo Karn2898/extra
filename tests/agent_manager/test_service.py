@@ -73,8 +73,8 @@ async def test_unknown_conversation_raises() -> None:
 async def test_send_uses_stable_session_and_unique_run_id() -> None:
     service, engine = _service()
     cid = await service.create(user_id="u1", session_id="sess-1")
-    await service.send(cid, "first", user_id="u1")
-    await service.send(cid, "second", user_id="u1")
+    await service.send(cid, "first", caller_id="u1")
+    await service.send(cid, "second", caller_id="u1")
 
     contexts = [ctx for ctx in engine.contexts if ctx is not None]
     assert [ctx.conversation_id for ctx in contexts] == ["sess-1", "sess-1"]
@@ -84,26 +84,34 @@ async def test_send_uses_stable_session_and_unique_run_id() -> None:
     assert contexts[0].run_id != contexts[1].run_id
 
 
-async def test_turn_runs_as_the_session_owner_when_the_caller_sends_no_user_id() -> None:
-    """A client that only knows the conversation id must not run as nobody —
-    hooks and tools authorize on RunContext.user_id."""
-    service, engine = _service()
-    cid = await service.create(user_id="u1", session_id="sess-1")
-
-    await service.send(cid, "hi")
-
-    assert [ctx.user_id for ctx in engine.contexts if ctx] == ["u1"]
-
-
-async def test_turn_refuses_a_user_id_that_does_not_own_the_conversation() -> None:
+async def test_turn_refuses_a_caller_who_does_not_own_the_conversation() -> None:
+    """Knowing a conversation id must not confer its owner's identity — the turn
+    runs as the owner, and hooks and tools authorize on RunContext.user_id."""
     service, engine = _service()
     cid = await service.create(user_id="u1", session_id="sess-1")
 
     with pytest.raises(ConversationAccessDenied):
-        await service.send(cid, "hi", user_id="u2")
+        await service.send(cid, "hi", caller_id="u2")
+    with pytest.raises(ConversationAccessDenied):
+        await service.send(cid, "hi")
 
     assert engine.contexts == []
-    assert await service.history(cid) == []
+    assert await service.history(cid, caller_id="u1") == []
+
+
+async def test_reads_of_an_owned_conversation_refuse_other_callers() -> None:
+    service, _ = _service()
+    cid = await service.create(user_id="u1", session_id="sess-1")
+    await service.send(cid, "hi", caller_id="u1")
+
+    for caller in ("u2", None):
+        with pytest.raises(ConversationAccessDenied):
+            await service.history(cid, caller_id=caller)
+        with pytest.raises(ConversationAccessDenied):
+            await service.usage(cid, caller_id=caller)
+
+    assert await service.list_conversations("u2") == []
+    assert await service.list_conversations(None) == []
 
 
 async def test_service_creates_user_and_session_metadata() -> None:
