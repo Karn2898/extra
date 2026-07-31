@@ -2,15 +2,40 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 
 const history: Record<string, Array<{ role: string; content: string; created_at: string }>> = {};
 
-async function mockConversationApi(page: Page, options: { failSend?: boolean } = {}) {
+const ENDPOINT = "http://127.0.0.1:8123";
+const E2E_USER = "e2e-user";
+// Conversation storage is scoped by user, so a test that reads or seeds it has
+// to know which user the widget will pick. Pin the anonymous id it would
+// otherwise generate.
+const CONVERSATION_KEY = `agent-chat:${ENDPOINT}:${E2E_USER}`;
+
+async function pinUser(page: Page) {
+  await page.addInitScript(
+    ([endpoint, user]) => localStorage.setItem(`agent-chat:user:${endpoint}`, user),
+    [ENDPOINT, E2E_USER],
+  );
+}
+
+async function mockConversationApi(
+  page: Page,
+  options: {
+    failSend?: boolean;
+    threads?: Array<{ conversation_id: string; title: string | null; last_message_at: string | null }>;
+  } = {},
+) {
   const calls: string[] = [];
 
   await page.route("**/conversations", async (route) => {
-    calls.push(`${route.request().method()} ${new URL(route.request().url()).pathname}`);
+    const method = route.request().method();
+    calls.push(`${method} ${new URL(route.request().url()).pathname}`);
+    expect(route.request().headers()["x-agent-chat-user"]).toBeTruthy();
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ conversation_id: "conv-smoke", session_id: "conv-smoke" }),
+      body:
+        method === "GET"
+          ? JSON.stringify(options.threads ?? [])
+          : JSON.stringify({ conversation_id: "conv-smoke", session_id: "conv-smoke" }),
     });
   });
 
@@ -92,7 +117,7 @@ async function mockConversationApi(page: Page, options: { failSend?: boolean } =
   return calls;
 }
 
-async function mockConversationApiWithStaleConversation(page: Page) {
+async function mockConversationApiWithStaleConversation(page: Page, staleStatus = 404) {
   const calls: string[] = [];
   let created = false;
 
@@ -114,9 +139,9 @@ async function mockConversationApiWithStaleConversation(page: Page) {
 
     if (conversationId === "conv-stale") {
       await route.fulfill({
-        status: 404,
+        status: staleStatus,
         contentType: "application/json",
-        body: JSON.stringify({ detail: "conversation not found" }),
+        body: JSON.stringify({ detail: "unavailable" }),
       });
       return;
     }
@@ -151,9 +176,9 @@ async function mockConversationApiWithStaleConversation(page: Page) {
 
     if (conversationId === "conv-stale") {
       await route.fulfill({
-        status: 404,
+        status: staleStatus,
         contentType: "application/json",
-        body: JSON.stringify({ detail: "conversation not found" }),
+        body: JSON.stringify({ detail: "unavailable" }),
       });
       return;
     }
@@ -382,6 +407,7 @@ test("sending a message calls backend, renders assistant answer, stores conversa
   page,
 }) => {
   const calls = await mockConversationApi(page);
+  await pinUser(page);
   await page.goto("/widget-demo.html");
   await shadowClick(page, ".launcher");
   await shadowFill(page, ".input", "hello browser");
@@ -390,7 +416,7 @@ test("sending a message calls backend, renders assistant answer, stores conversa
   await expect.poll(() => shadowText(page, ".messages")).toContain("Echo: hello browser");
   await expect.poll(() => shadowActiveMatches(page, ".input")).toBe(true);
   await expect
-    .poll(() => page.evaluate(() => localStorage.getItem("agent-chat:http://127.0.0.1:8123")))
+    .poll(() => page.evaluate((key) => localStorage.getItem(key), CONVERSATION_KEY))
     .toBe("conv-smoke");
   expect(calls).toContain("POST /conversations");
   expect(calls).toContain("POST /conversations/conv-smoke/messages/stream");
@@ -476,10 +502,49 @@ test("budget meter stays hidden when no budget is configured", async ({ page }) 
   await expect.poll(() => shadowExists(page, ".budget-meter")).toBe(false);
 });
 
-test("stale stored conversation is replaced before sending to the agent", async ({ page }) => {
-  const calls = await mockConversationApiWithStaleConversation(page);
+test("thread drawer lists conversations, switches to one, and starts a new chat", async ({ page }) => {
+  await mockConversationApi(page, {
+    threads: [
+      { conversation_id: "conv-old", title: "Older chat", last_message_at: "2026-06-01T00:00:00Z" },
+    ],
+  });
+  await page.route("**/conversations/conv-old/messages", async (route: Route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        { role: "user", content: "old question", created_at: "2026-06-01T00:00:00Z" },
+        { role: "assistant", content: "old answer", created_at: "2026-06-01T00:00:00Z" },
+      ]),
+    });
+  });
+
   await page.goto("/widget-demo.html");
-  await page.evaluate(() => localStorage.setItem("agent-chat:http://127.0.0.1:8123", "conv-stale"));
+  await shadowClick(page, ".launcher");
+
+  await shadowClick(page, '.header-btn[aria-label="Conversations"]');
+  await expect.poll(() => shadowClassContains(page, ".thread-drawer", "open")).toBe(true);
+  await expect.poll(() => shadowText(page, ".thread-item")).toContain("Older chat");
+
+  await shadowClick(page, ".thread-item");
+  await expect.poll(() => shadowText(page, ".messages")).toContain("old answer");
+  await expect.poll(() => shadowClassContains(page, ".thread-drawer", "open")).toBe(false);
+
+  await shadowClick(page, '.header-btn[aria-label="New chat"]');
+  await expect.poll(() => shadowText(page, ".messages")).toContain("How can I help you today?");
+});
+
+test("a stored conversation owned by another caller is replaced, not retried forever", async ({
+  page,
+}) => {
+  // What a host app switching users looks like: the stored id outlives the
+  // identity that created it, so the server answers 403 and the widget has to
+  // start over rather than sit on an id it can never use.
+  const calls = await mockConversationApiWithStaleConversation(page, 403);
+  await pinUser(page);
+  await page.goto("/widget-demo.html");
+  await page.evaluate((key) => localStorage.setItem(key, "conv-stale"), CONVERSATION_KEY);
 
   await shadowClick(page, ".launcher");
   await shadowFill(page, ".input", "recover please");
@@ -487,7 +552,24 @@ test("stale stored conversation is replaced before sending to the agent", async 
 
   await expect.poll(() => shadowText(page, ".messages")).toContain("Recovered: recover please");
   await expect
-    .poll(() => page.evaluate(() => localStorage.getItem("agent-chat:http://127.0.0.1:8123")))
+    .poll(() => page.evaluate((key) => localStorage.getItem(key), CONVERSATION_KEY))
+    .toBe("conv-fresh");
+  expect(calls).toContain("POST /conversations/conv-fresh/messages/stream");
+});
+
+test("stale stored conversation is replaced before sending to the agent", async ({ page }) => {
+  const calls = await mockConversationApiWithStaleConversation(page);
+  await pinUser(page);
+  await page.goto("/widget-demo.html");
+  await page.evaluate((key) => localStorage.setItem(key, "conv-stale"), CONVERSATION_KEY);
+
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "recover please");
+  await shadowClick(page, ".send");
+
+  await expect.poll(() => shadowText(page, ".messages")).toContain("Recovered: recover please");
+  await expect
+    .poll(() => page.evaluate((key) => localStorage.getItem(key), CONVERSATION_KEY))
     .toBe("conv-fresh");
   expect(calls).toContain("GET /conversations/conv-stale/messages");
   expect(calls).toContain("POST /conversations");

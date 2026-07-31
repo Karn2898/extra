@@ -186,7 +186,7 @@ class ApprovalDemo:
             raise RuntimeError(f"Local MCP did not expose required tools: {', '.join(missing)}")
 
     async def invoke(self, user_message: str) -> RunResult:
-        messages_before = await self._conversations.history(self.session_id)
+        messages_before = await self._conversations.history(self.session_id, caller_id=USER_ID)
         print(
             f"[SESSION HISTORY] session_id={self.session_id} "
             f"messages_before_run={len(messages_before)}"
@@ -197,7 +197,7 @@ class ApprovalDemo:
         turn = await self._conversations.prepare_turn(
             self.session_id,
             user_message,
-            user_id=USER_ID,
+            caller_id=USER_ID,
         )
         print(f"[SESSION MESSAGE APPENDED] session_id={self.session_id} role=user")
         print(

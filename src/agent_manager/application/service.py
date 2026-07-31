@@ -19,15 +19,25 @@ from agent_engine.runtime.streaming import RunStreamEvent
 from agent_manager.application.context import build_history
 from agent_manager.domain import (
     ConversationMessage,
+    ConversationSession,
     Message,
     Repository,
     Role,
     TokenBudgetUsage,
+    thread_title,
 )
 
 
 class ConversationNotFound(Exception):
     """Raised when an operation targets a conversation id that does not exist."""
+
+
+class ConversationAccessDenied(Exception):
+    """Raised when a caller acts on a conversation owned by a different user."""
+
+
+class ConversationAlreadyExists(Exception):
+    """Raised when a caller asks to create a conversation id someone else owns."""
 
 
 class ConversationTokenBudgetExceeded(Exception):
@@ -68,6 +78,12 @@ class ConversationService:
         self._config_path = config_path
 
     async def create(self, *, user_id: str | None = None, session_id: str | None = None) -> str:
+        """Create a conversation, or return the caller's own existing one.
+
+        A caller-supplied `session_id` may already exist. Handing it back to its
+        owner keeps creation idempotent; handing it to anyone else would be a
+        takeover.
+        """
         if user_id:
             await self._repository.upsert_user(user_id)
         session = await self._repository.create_session(
@@ -76,21 +92,34 @@ class ConversationService:
             system_name=self._system_name,
             config_path=self._config_path,
         )
+        # Checked after the write, not before: a check first lets two callers
+        # racing for one id both pass it.
+        if session.user_id != user_id:
+            raise ConversationAlreadyExists(session.session_id)
         return session.session_id
 
-    async def history(self, conversation_id: str) -> list[Message]:
-        await self._require(conversation_id)
+    async def history(self, conversation_id: str, *, caller_id: str | None = None) -> list[Message]:
+        await self._authorize(conversation_id, caller_id)
         return await self._repository.list_messages(conversation_id)
 
-    async def usage(self, conversation_id: str) -> TokenBudgetUsage:
-        await self._require(conversation_id)
+    async def usage(
+        self, conversation_id: str, *, caller_id: str | None = None
+    ) -> TokenBudgetUsage:
+        await self._authorize(conversation_id, caller_id)
         used = await self._repository.get_token_usage(conversation_id)
         return TokenBudgetUsage.from_totals(used, self._max_tokens)
 
+    async def list_conversations(
+        self, user_id: str | None, *, limit: int = 50
+    ) -> list[ConversationSession]:
+        if not user_id:
+            return []
+        return await self._repository.list_sessions(user_id, limit=limit)
+
     async def send(
-        self, conversation_id: str, text: str, *, user_id: str | None = None
+        self, conversation_id: str, text: str, *, caller_id: str | None = None
     ) -> RunResult:
-        turn = await self.prepare_turn(conversation_id, text, user_id=user_id)
+        turn = await self.prepare_turn(conversation_id, text, caller_id=caller_id)
         result = await self._engine.run(
             turn.message,
             history=turn.history,
@@ -109,10 +138,11 @@ class ConversationService:
         conversation_id: str,
         text: str,
         *,
-        user_id: str | None = None,
+        caller_id: str | None = None,
     ) -> PreparedConversationTurn:
         """Persist a user message and return its isolated prior model context."""
-        await self._require(conversation_id)
+        session = await self._authorize(conversation_id, caller_id)
+        user_id = session.user_id
         if user_id:
             await self._repository.upsert_user(user_id)
 
@@ -127,6 +157,8 @@ class ConversationService:
             max_messages=self._window,
             max_chars=self._max_chars,
         )
+        if not prior_context.messages:
+            await self._repository.rename_session(conversation_id, thread_title(text))
         run_id = uuid.uuid4().hex
         now = datetime.now(UTC)
         await self._repository.append_message(
@@ -178,9 +210,9 @@ class ConversationService:
         )
 
     async def stream(
-        self, conversation_id: str, text: str, *, user_id: str | None = None
+        self, conversation_id: str, text: str, *, caller_id: str | None = None
     ) -> AsyncIterator[RunStreamEvent]:
-        turn = await self.prepare_turn(conversation_id, text, user_id=user_id)
+        turn = await self.prepare_turn(conversation_id, text, caller_id=caller_id)
 
         final: RunStreamEvent | None = None
         try:
@@ -220,6 +252,20 @@ class ConversationService:
                 snapshot_ttl_seconds=self._snapshot_ttl_seconds,
             )
 
-    async def _require(self, conversation_id: str) -> None:
-        if not await self._repository.conversation_exists(conversation_id):
+    async def _require(self, conversation_id: str) -> ConversationSession:
+        session = await self._repository.get_session(conversation_id)
+        if session is None:
             raise ConversationNotFound(conversation_id)
+        return session
+
+    async def _authorize(self, conversation_id: str, caller_id: str | None) -> ConversationSession:
+        """Resolve a conversation the caller owns.
+
+        A turn runs as the session owner and hooks and tools authorize on
+        `RunContext.user_id`, so knowing the conversation id must not be enough
+        to reach it.
+        """
+        session = await self._require(conversation_id)
+        if session.user_id != caller_id:
+            raise ConversationAccessDenied(conversation_id)
+        return session

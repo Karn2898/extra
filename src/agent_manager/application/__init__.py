@@ -1,6 +1,8 @@
 """Application layer: use cases orchestrating the domain and its ports."""
 
 from agent_manager.application.service import (
+    ConversationAccessDenied,
+    ConversationAlreadyExists,
     ConversationNotFound,
     ConversationService,
     ConversationTokenBudgetExceeded,
@@ -8,6 +10,8 @@ from agent_manager.application.service import (
 )
 
 __all__ = [
+    "ConversationAccessDenied",
+    "ConversationAlreadyExists",
     "ConversationNotFound",
     "ConversationService",
     "ConversationTokenBudgetExceeded",

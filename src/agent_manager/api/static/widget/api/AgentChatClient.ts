@@ -1,4 +1,10 @@
-import type { ChatMessage, TokenBudget, SendMessageResponse, StreamEvent } from "../types";
+import type {
+  ChatMessage,
+  TokenBudget,
+  SendMessageResponse,
+  StreamEvent,
+  ThreadSummary,
+} from "../types";
 
 export class AgentChatHttpError extends Error {
   constructor(readonly status: number) {
@@ -8,34 +14,52 @@ export class AgentChatHttpError extends Error {
 }
 
 export class AgentChatClient {
-  constructor(private readonly endpoint: string) {}
+  private readonly headers: Record<string, string>;
 
-  async createConversation(): Promise<string> {
-    const response = await fetch(`${this.endpoint}/conversations`, { method: "POST" });
+  /** `userId` identifies the caller on every request. It is not a credential —
+   * see `get_caller_id` on the server for how a deployment makes it one. */
+  constructor(
+    private readonly endpoint: string,
+    userId: string,
+  ) {
+    this.headers = { "Content-Type": "application/json", "X-Agent-Chat-User": userId };
+  }
+
+  private async request(path: string, init?: RequestInit): Promise<Response> {
+    const response = await fetch(`${this.endpoint}${path}`, { ...init, headers: this.headers });
     if (!response.ok) {
       throw new AgentChatHttpError(response.status);
     }
+    return response;
+  }
+
+  async createConversation(): Promise<string> {
+    const response = await this.request("/conversations", { method: "POST", body: "{}" });
     const data = await response.json();
     return String(data.conversation_id);
   }
 
+  async listConversations(): Promise<ThreadSummary[]> {
+    const response = await this.request("/conversations");
+    const data = await response.json();
+    if (!Array.isArray(data)) return [];
+    return data.map((thread) => ({
+      conversation_id: String(thread.conversation_id),
+      title: thread.title ?? null,
+      last_message_at: thread.last_message_at ?? null,
+    }));
+  }
+
   async getMessages(conversationId: string): Promise<ChatMessage[]> {
-    const response = await fetch(`${this.endpoint}/conversations/${conversationId}/messages`);
-    if (!response.ok) {
-      throw new AgentChatHttpError(response.status);
-    }
+    const response = await this.request(`/conversations/${conversationId}/messages`);
     return (await response.json()) as ChatMessage[];
   }
 
   async sendMessage(conversationId: string, message: string): Promise<SendMessageResponse> {
-    const response = await fetch(`${this.endpoint}/conversations/${conversationId}/messages`, {
+    const response = await this.request(`/conversations/${conversationId}/messages`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message }),
     });
-    if (!response.ok) {
-      throw new AgentChatHttpError(response.status);
-    }
     const data = await response.json();
     return {
       answer: String(data.answer || ""),
@@ -45,10 +69,7 @@ export class AgentChatClient {
   }
 
   async getUsage(conversationId: string): Promise<TokenBudget> {
-    const response = await fetch(`${this.endpoint}/conversations/${conversationId}/usage`);
-    if (!response.ok) {
-      throw new AgentChatHttpError(response.status);
-    }
+    const response = await this.request(`/conversations/${conversationId}/usage`);
     const data = await response.json();
     return {
       used_tokens: Number(data.used_tokens) || 0,
@@ -59,14 +80,10 @@ export class AgentChatClient {
   }
 
   async *streamMessage(conversationId: string, message: string): AsyncGenerator<StreamEvent> {
-    const response = await fetch(`${this.endpoint}/conversations/${conversationId}/messages/stream`, {
+    const response = await this.request(`/conversations/${conversationId}/messages/stream`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message }),
     });
-    if (!response.ok) {
-      throw new AgentChatHttpError(response.status);
-    }
     if (!response.body) {
       throw new Error("Streaming response has no body");
     }

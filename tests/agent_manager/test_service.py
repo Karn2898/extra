@@ -7,7 +7,12 @@ import asyncio
 import pytest
 
 from agent_engine.engine.types import ChatMessage, ChatRole
-from agent_manager.application import ConversationNotFound, ConversationService
+from agent_manager.application import (
+    ConversationAccessDenied,
+    ConversationAlreadyExists,
+    ConversationNotFound,
+    ConversationService,
+)
 from agent_manager.domain import Role
 from agent_manager.infrastructure.persistence.memory_repository import MemoryRepository
 from tests.agent_manager.conftest import RecordingEngine
@@ -69,8 +74,8 @@ async def test_unknown_conversation_raises() -> None:
 async def test_send_uses_stable_session_and_unique_run_id() -> None:
     service, engine = _service()
     cid = await service.create(user_id="u1", session_id="sess-1")
-    await service.send(cid, "first", user_id="u1")
-    await service.send(cid, "second", user_id="u1")
+    await service.send(cid, "first", caller_id="u1")
+    await service.send(cid, "second", caller_id="u1")
 
     contexts = [ctx for ctx in engine.contexts if ctx is not None]
     assert [ctx.conversation_id for ctx in contexts] == ["sess-1", "sess-1"]
@@ -78,6 +83,59 @@ async def test_send_uses_stable_session_and_unique_run_id() -> None:
     assert contexts[0].run_id is not None
     assert contexts[1].run_id is not None
     assert contexts[0].run_id != contexts[1].run_id
+
+
+async def test_turn_refuses_a_caller_who_does_not_own_the_conversation() -> None:
+    """Knowing a conversation id must not confer its owner's identity — the turn
+    runs as the owner, and hooks and tools authorize on RunContext.user_id."""
+    service, engine = _service()
+    cid = await service.create(user_id="u1", session_id="sess-1")
+
+    with pytest.raises(ConversationAccessDenied):
+        await service.send(cid, "hi", caller_id="u2")
+    with pytest.raises(ConversationAccessDenied):
+        await service.send(cid, "hi")
+
+    assert engine.contexts == []
+    assert await service.history(cid, caller_id="u1") == []
+
+
+async def test_reads_of_an_owned_conversation_refuse_other_callers() -> None:
+    service, _ = _service()
+    cid = await service.create(user_id="u1", session_id="sess-1")
+    await service.send(cid, "hi", caller_id="u1")
+
+    for caller in ("u2", None):
+        with pytest.raises(ConversationAccessDenied):
+            await service.history(cid, caller_id=caller)
+        with pytest.raises(ConversationAccessDenied):
+            await service.usage(cid, caller_id=caller)
+
+    assert await service.list_conversations("u2") == []
+    assert await service.list_conversations(None) == []
+
+
+async def test_create_refuses_a_session_id_owned_by_someone_else() -> None:
+    service, _ = _service()
+    await service.create(user_id="alice", session_id="sess-1")
+
+    with pytest.raises(ConversationAlreadyExists):
+        await service.create(user_id="bob", session_id="sess-1")
+    with pytest.raises(ConversationAlreadyExists):
+        await service.create(session_id="sess-1")
+
+    session = await service._repository.get_session("sess-1")
+    assert session is not None
+    assert session.user_id == "alice"
+
+
+async def test_create_is_idempotent_for_the_owner() -> None:
+    """agentctl reuses a --session id across runs, so the owner re-creating is
+    the normal path, not an attack."""
+    service, _ = _service()
+    first = await service.create(user_id="alice", session_id="sess-1")
+
+    assert await service.create(user_id="alice", session_id="sess-1") == first
 
 
 async def test_service_creates_user_and_session_metadata() -> None:

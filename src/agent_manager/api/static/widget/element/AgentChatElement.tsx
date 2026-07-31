@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { AgentChatClient } from "../api/AgentChatClient";
 import { parseConfig } from "../config/parseConfig";
 import { AgentChatApp } from "../react/AgentChatApp";
+import { getOrCreateUserId } from "../storage/conversationStorage";
 import { styles } from "../styles/styles";
 import type { AgentChatAnswerDetail, AgentChatConfig } from "../types";
 
@@ -10,10 +11,11 @@ let nextWidgetId = 0;
 
 export class AgentChatElement extends HTMLElement {
   static get observedAttributes(): string[] {
-    return ["endpoint", "title", "color", "greeting", "position", "avatar", "mode"];
+    return ["endpoint", "title", "color", "greeting", "position", "avatar", "mode", "user"];
   }
 
   private config!: AgentChatConfig;
+  private userId!: string;
   private client!: AgentChatClient;
   private connected = false;
   private reactRoot: Root | null = null;
@@ -49,7 +51,8 @@ export class AgentChatElement extends HTMLElement {
 
   private configure(): void {
     this.config = parseConfig(this, this.scriptOrigin);
-    this.client = new AgentChatClient(this.config.endpoint);
+    this.userId = this.config.user || getOrCreateUserId(this.config.endpoint);
+    this.client = new AgentChatClient(this.config.endpoint, this.userId);
   }
 
   private render(): void {
@@ -71,6 +74,7 @@ export class AgentChatElement extends HTMLElement {
         key={this.instanceKey}
         client={this.client}
         config={this.config}
+        userId={this.userId}
         onAnswer={(detail) => this.emitAnswer(detail)}
         panelId={this.panelId}
         titleId={this.titleId}

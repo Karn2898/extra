@@ -171,7 +171,7 @@ async def _complete_conversation_turn(
     *,
     approve_for_session: bool,
 ) -> tuple[RunResult, bool]:
-    turn = await conversations.prepare_turn(session_id, text, user_id="local-demo-user")
+    turn = await conversations.prepare_turn(session_id, text, caller_id="local-demo-user")
     result = await engine.run(
         turn.message,
         history=turn.history,
@@ -361,7 +361,7 @@ async def test_auto_mode_executes_initial_and_follow_up_tools_without_approval(
     assert "broader search" in second.answer
     assert [
         (message.role.value, message.content)
-        for message in await conversations.history(session_id)
+        for message in await conversations.history(session_id, caller_id="local-demo-user")
     ] == [
         (
             "user",
