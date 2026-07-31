@@ -78,11 +78,11 @@ class ConversationService:
         self._config_path = config_path
 
     async def create(self, *, user_id: str | None = None, session_id: str | None = None) -> str:
-        """Create a conversation, or return a caller's own existing one.
+        """Create a conversation, or return the caller's own existing one.
 
-        A caller-supplied `session_id` names a conversation that may already
-        exist. Handing it back to its owner keeps creation idempotent; handing
-        it to anyone else would be a takeover, so that is refused.
+        A caller-supplied `session_id` may already exist. Handing it back to its
+        owner keeps creation idempotent; handing it to anyone else would be a
+        takeover.
         """
         if user_id:
             await self._repository.upsert_user(user_id)
@@ -92,8 +92,8 @@ class ConversationService:
             system_name=self._system_name,
             config_path=self._config_path,
         )
-        # The repository decides, so two callers racing for the same id cannot
-        # both win: whoever did not create it is told the name is taken.
+        # Checked after the write, not before: a check first lets two callers
+        # racing for one id both pass it.
         if session.user_id != user_id:
             raise ConversationAlreadyExists(session.session_id)
         return session.session_id
@@ -261,10 +261,9 @@ class ConversationService:
     async def _authorize(self, conversation_id: str, caller_id: str | None) -> ConversationSession:
         """Resolve a conversation the caller owns.
 
-        Ownership is exact: an unowned conversation stays reachable only by an
-        unowned caller. A turn runs as the session owner and hooks and tools
-        authorize on `RunContext.user_id`, so a caller that merely knows the
-        conversation id must not reach it.
+        A turn runs as the session owner and hooks and tools authorize on
+        `RunContext.user_id`, so knowing the conversation id must not be enough
+        to reach it.
         """
         session = await self._require(conversation_id)
         if session.user_id != caller_id:

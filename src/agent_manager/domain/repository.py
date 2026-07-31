@@ -46,9 +46,8 @@ class Repository(ABC):
     ) -> ConversationSession:
         """Create the session, or return it unchanged if the id is taken.
 
-        `user_id` establishes ownership at creation and is never reassigned
-        afterwards — an existing session's owner is immutable, or naming a live
-        id would be enough to take it over.
+        `user_id` sets ownership at creation and is never reassigned: otherwise
+        naming a live id would be enough to take the conversation over.
         """
 
     @abstractmethod

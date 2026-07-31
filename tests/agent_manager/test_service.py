@@ -130,8 +130,6 @@ async def test_create_refuses_a_session_id_owned_by_someone_else() -> None:
 
 
 async def test_create_refuses_an_id_that_lost_the_race() -> None:
-    """The repository decides who created it, so a caller that did not is told
-    the name is taken rather than handed the winner's conversation."""
     service, _ = _service()
     await service._repository.create_session("sess-1", user_id="alice")
 

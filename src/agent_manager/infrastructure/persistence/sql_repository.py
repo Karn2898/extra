@@ -109,7 +109,7 @@ class SqlRepository(Repository):
                 value is not None
                 for value in (system_name, config_path, title, metadata, expires_at)
             ):
-                # row.user_id is deliberately absent: ownership is set once.
+                # No user_id here: ownership is set at creation and never moves.
                 row.system_name = system_name if system_name is not None else row.system_name
                 row.config_path = config_path if config_path is not None else row.config_path
                 row.title = title if title is not None else row.title
@@ -175,8 +175,7 @@ class SqlRepository(Repository):
                 )
                 session.add(session_row)
             else:
-                # Writing a message never claims the conversation: ownership is
-                # set at creation only (see create_session on the port).
+                # No user_id here: writing a message never claims a conversation.
                 session_row.updated_at = message.created_at
                 session_row.last_message_at = message.created_at
 

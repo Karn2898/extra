@@ -79,8 +79,6 @@ def test_another_caller_cannot_touch_a_conversation_it_does_not_own(client: Test
 def test_create_cannot_claim_a_conversation_id_owned_by_another_caller(
     client: TestClient,
 ) -> None:
-    """A stable session id is a name, not a claim: naming a live conversation
-    must not transfer it."""
     alice = {"X-Agent-Chat-User": "alice"}
     client.post("/conversations", json={"session_id": "sess-1"}, headers=alice)
     client.post("/conversations/sess-1/messages", json={"message": "secret"}, headers=alice)
@@ -94,8 +92,7 @@ def test_create_cannot_claim_a_conversation_id_owned_by_another_caller(
 
 
 def test_an_empty_caller_header_is_anonymous_not_an_identity(client: TestClient) -> None:
-    """An id of "" must not own anything: `list_conversations` treats it as no
-    caller, so such a conversation would exist but never be listed."""
+    """An id of "" would own conversations that no listing can reach."""
     empty = {"X-Agent-Chat-User": "   "}
     cid = client.post("/conversations", headers=empty).json()["conversation_id"]
 

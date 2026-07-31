@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import dataclasses
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
+from contextlib import contextmanager
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -36,16 +37,30 @@ router = APIRouter()
 Service = Annotated[ConversationService, Depends(get_service)]
 CallerId = Annotated[str | None, Depends(get_caller_id)]
 
+_HTTP_ERRORS: dict[type[Exception], tuple[int, str]] = {
+    ConversationNotFound: (404, "conversation not found"),
+    ConversationAccessDenied: (403, "conversation owned by another user"),
+    ConversationAlreadyExists: (409, "conversation id already taken"),
+    ConversationTokenBudgetExceeded: (429, "conversation token budget exceeded"),
+}
+
+
+@contextmanager
+def _as_http_error() -> Iterator[None]:
+    try:
+        yield
+    except tuple(_HTTP_ERRORS) as exc:
+        status, detail = _HTTP_ERRORS[type(exc)]
+        raise HTTPException(status_code=status, detail=detail) from None
+
 
 @router.post("/conversations", response_model=CreateConversationResponse)
 async def create_conversation(
     service: Service, caller_id: CallerId, body: CreateConversationRequest | None = None
 ) -> CreateConversationResponse:
     body = body or CreateConversationRequest()
-    try:
+    with _as_http_error():
         session_id = await service.create(user_id=caller_id, session_id=body.session_id)
-    except ConversationAlreadyExists:
-        raise HTTPException(status_code=409, detail="conversation id already taken") from None
     return CreateConversationResponse(conversation_id=session_id, session_id=session_id)
 
 
@@ -66,12 +81,8 @@ async def list_conversations(service: Service, caller_id: CallerId) -> list[Conv
 async def list_messages(
     conversation_id: str, service: Service, caller_id: CallerId
 ) -> list[MessageOut]:
-    try:
+    with _as_http_error():
         msgs = await service.history(conversation_id, caller_id=caller_id)
-    except ConversationNotFound as exc:
-        raise HTTPException(status_code=404, detail="conversation not found") from exc
-    except ConversationAccessDenied:
-        raise HTTPException(status_code=403, detail="conversation owned by another user") from None
     return [MessageOut(role=m.role, content=m.content, created_at=m.created_at) for m in msgs]
 
 
@@ -79,12 +90,8 @@ async def list_messages(
 async def get_usage(
     conversation_id: str, service: Service, caller_id: CallerId
 ) -> TokenBudgetResponse:
-    try:
+    with _as_http_error():
         usage = await service.usage(conversation_id, caller_id=caller_id)
-    except ConversationNotFound as exc:
-        raise HTTPException(status_code=404, detail="conversation not found") from exc
-    except ConversationAccessDenied:
-        raise HTTPException(status_code=403, detail="conversation owned by another user") from None
     return TokenBudgetResponse(
         used_tokens=usage.used_tokens,
         max_tokens=usage.max_tokens,
@@ -98,13 +105,10 @@ async def send_message(
     conversation_id: str, body: SendMessageRequest, service: Service, caller_id: CallerId
 ) -> SendMessageResponse:
     try:
-        result = await service.send(conversation_id, body.message, caller_id=caller_id)
-    except ConversationNotFound as exc:
-        raise HTTPException(status_code=404, detail="conversation not found") from exc
-    except ConversationAccessDenied:
-        raise HTTPException(status_code=403, detail="conversation owned by another user") from None
-    except ConversationTokenBudgetExceeded:
-        raise HTTPException(status_code=429, detail="conversation token budget exceeded") from None
+        with _as_http_error():
+            result = await service.send(conversation_id, body.message, caller_id=caller_id)
+    except HTTPException:
+        raise
     except Exception as exc:  # engine failure
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return SendMessageResponse(
@@ -140,15 +144,10 @@ async def stream_message(
     stream = service.stream(conversation_id, body.message, caller_id=caller_id)
 
     try:
-        first = await stream.__anext__()
+        with _as_http_error():
+            first = await stream.__anext__()
     except StopAsyncIteration:
         first = None
-    except ConversationNotFound as exc:
-        raise HTTPException(status_code=404, detail="conversation not found") from exc
-    except ConversationAccessDenied:
-        raise HTTPException(status_code=403, detail="conversation owned by another user") from None
-    except ConversationTokenBudgetExceeded:
-        raise HTTPException(status_code=429, detail="conversation token budget exceeded") from None
 
     async def event_source() -> AsyncIterator[str]:
         try:

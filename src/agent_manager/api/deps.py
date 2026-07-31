@@ -21,12 +21,11 @@ def get_caller_id(request: Request) -> str | None:
 
     Anonymous by default — the header is whatever the browser generated for
     itself, so it scopes conversations but proves nothing. Being the only source
-    of caller identity is what makes it replaceable: a deployment that needs a
-    real boundary overrides this dependency with a verified principal, and every
-    route tightens with it.
+    of caller identity is what makes it replaceable: override this dependency
+    with a verified principal and every route tightens with it.
 
-    An absent and an empty header both mean anonymous. They have to agree: an
-    id of "" would otherwise own conversations that no listing could reach.
+    Empty means anonymous, like an absent header: an id of "" would otherwise
+    own conversations that `list_conversations` can never reach.
     """
     caller_id = request.headers.get(CALLER_HEADER, "").strip()
     if len(caller_id) > MAX_CALLER_ID:
