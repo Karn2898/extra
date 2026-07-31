@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import delete
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -93,7 +94,7 @@ class SqlRepository(Repository):
         async with self._sessions() as session, session.begin():
             row = await session.get(ConversationSessionRow, sid)
             if row is None:
-                row = ConversationSessionRow(
+                created = ConversationSessionRow(
                     session_id=sid,
                     user_id=user_id,
                     system_name=system_name,
@@ -104,7 +105,20 @@ class SqlRepository(Repository):
                     updated_at=now,
                     expires_at=expires_at,
                 )
-                session.add(row)
+                try:
+                    # A savepoint, so losing the id to a concurrent creator
+                    # rolls back only this insert and leaves the transaction
+                    # usable.
+                    async with session.begin_nested():
+                        session.add(created)
+                    row = created
+                except IntegrityError:
+                    # Absorbed only if the id is now taken — then that caller
+                    # won and their row is the answer. Any other integrity
+                    # failure leaves nothing to find and stays the caller's.
+                    row = await session.get(ConversationSessionRow, sid)
+                    if row is None:
+                        raise
             elif any(
                 value is not None
                 for value in (system_name, config_path, title, metadata, expires_at)
