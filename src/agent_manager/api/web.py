@@ -29,8 +29,8 @@ def mount_web(app: FastAPI, settings: Settings) -> None:
     def widget_js() -> FileResponse:
         return FileResponse(STATIC_DIR / "widget.js", media_type="application/javascript")
 
-    @app.get("/demo")
-    def demo() -> FileResponse:
+    @app.get("/playground")
+    def playground() -> FileResponse:
         return FileResponse(STATIC_DIR / "demo.html", media_type="text/html")
 
     @app.get("/widget-demo.html")
