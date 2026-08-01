@@ -83,9 +83,9 @@ up: validate-image $(EXAMPLE)/.env ## Run the example in engine mode: API on htt
 	$(COMPOSE) --profile engine up -d
 	@echo "engine: http://localhost:8090/health"
 
-up-ui: validate-image $(EXAMPLE)/.env ## Run the example in manager mode: chat UI on http://localhost:8100/demo
+up-ui: validate-image $(EXAMPLE)/.env ## Run the example in manager mode: playground on http://localhost:8100/playground
 	$(COMPOSE) --profile ui up -d
-	@echo "chat UI: http://localhost:8100/demo"
+	@echo "playground: http://localhost:8100/playground"
 
 down: ## Stop the example stack.
 	$(COMPOSE) --profile engine --profile ui down
