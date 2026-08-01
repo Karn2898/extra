@@ -107,17 +107,20 @@ def _validate_unknown_keys(
 ) -> None:
     if not isinstance(data, dict):
         return
-    allowed_set = set(allowed)
-    for key in data:
-        if str(key) not in allowed_set:
-            err_path = f"{path}.{key}" if path else str(key)
-            allowed_str = ", ".join(sorted(allowed_set))
-            errors.append(
-                ValidationError(
-                    err_path,
-                    f"Unknown key '{key}'. Allowed: {allowed_str}",
-                )
+    allowed_set = allowed if isinstance(allowed, set) else set(allowed)
+    unknown = [k for k in data if str(k) not in allowed_set]
+    if not unknown:
+        return
+    allowed_str = ", ".join(sorted(allowed_set))
+    for key in unknown:
+        err_path = f"{path}.{key}" if path else str(key)
+        errors.append(
+            ValidationError(
+                err_path,
+                f"Unknown key '{key}'. Allowed: {allowed_str}",
             )
+        )
+
 
 
 def _validate_plugins(plugins: Any, errors: list[ValidationError]) -> None:
