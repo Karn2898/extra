@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1](https://github.com/extra-org/extra/compare/agent-engine-v0.4.0...agent-engine-v0.4.1) (2026-08-01)
+
+
+### Bug Fixes
+
+* **lint:** import Any and format import blocks ([a897dc1](https://github.com/extra-org/extra/commit/a897dc15f6151b2963ab87b4e85fa2c01ef6e3d4))
+* **widget:** show context-limit message on HTTP 429 token budget exceeded and disable composer ([e49e814](https://github.com/extra-org/extra/commit/e49e8144ca7990a4650b37d3c4157c7aa8694380))
+
 ## [0.4.0](https://github.com/extra-org/extra/compare/agent-engine-v0.3.1...agent-engine-v0.4.0) (2026-07-31)
 
 
