@@ -91,8 +91,6 @@ async def run_tool_loop(
     limiter = current_execution.get()
     response = await invoke_model(model, messages, state)
     while getattr(response, "tool_calls", None):
-        # Cap model→tools→model rounds for this node. On the limit, stop the loop
-        # gracefully and return the last response (no crash, no further tools).
         if limiter is not None:
             try:
                 limiter.register_iteration(node_path)

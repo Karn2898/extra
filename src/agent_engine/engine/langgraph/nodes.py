@@ -54,8 +54,7 @@ from agent_engine.runtime.tool_models import ToolProviderName, ToolUsageRecord
 
 logger = logging.getLogger(__name__)
 
-# Appended to every orchestrator system prompt.
-# Enforces the core design contract: agents are the source of truth, not the LLM.
+
 _ORCHESTRATOR_CONTRACT = """
 ## Instructions
 - You MUST use the available agent tools to answer requests. Never answer from general knowledge.
@@ -103,8 +102,6 @@ class DenyTool:
     message: str
 
 
-# A tagged result instead of ``str | None``: the caller branches on the type,
-# never on a magic ``None`` that secretly means "proceed".
 ToolGate = ExecuteTool | DenyTool
 
 
@@ -237,7 +234,6 @@ class AgentNode:
         gate = await self._gate_tool_call(call)
         if isinstance(gate, DenyTool):
             return gate.message
-        # gate is ExecuteTool — the gate is open; fall through to run the tool.
 
         cached = await self._cached_result(call, used_tools)
         if cached is not None:
