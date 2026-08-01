@@ -456,7 +456,7 @@ function AgentActivity({ route, tools = [] }: { route?: string[]; tools?: ToolRe
         <Tool key={`${tool.name}-${index}`} defaultOpen={tool.status === "failed"}>
           <ToolHeader
             state={toToolState(tool.status)}
-            title={tool.provider ? `${tool.name} · ${tool.provider}` : tool.name}
+            title={tool.name}
           />
           {tool.error ? (
             <ToolContent>

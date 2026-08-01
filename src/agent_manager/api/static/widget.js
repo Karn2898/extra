@@ -53487,7 +53487,7 @@ function AgentActivity({ route, tools = [] }) {
         ToolHeader,
         {
           state: toToolState(tool.status),
-          title: tool.provider ? `${tool.name} \xB7 ${tool.provider}` : tool.name
+          title: tool.name
         }
       ),
       tool.error ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(ToolContent, { children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(ToolOutput, { errorText: tool.error }) }) : null
