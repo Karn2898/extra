@@ -110,6 +110,13 @@ async def get_usage(
     )
 
 
+def _client_tool_record(t: Any) -> ToolRecord:
+    fields = dataclasses.asdict(t)
+    if fields.get("error"):
+        fields["error"] = "Tool execution failed"
+    return ToolRecord(**fields)
+
+
 @router.post("/conversations/{conversation_id}/messages", response_model=SendMessageResponse)
 async def send_message(
     conversation_id: str, body: SendMessageRequest, service: Service, caller_id: CallerId
@@ -125,7 +132,7 @@ async def send_message(
     return SendMessageResponse(
         answer=result.answer,
         visited=list(result.visited),
-        used_tools=[ToolRecord(**dataclasses.asdict(t)) for t in result.used_tools],
+        used_tools=[_client_tool_record(t) for t in result.used_tools],
     )
 
 
@@ -141,7 +148,7 @@ def _to_stream_event(event: RunStreamEvent) -> StreamEventOut:
         error=event.error,
         system_name=event.system_name,
         used_tools=(
-            [ToolRecord(**dataclasses.asdict(tool)) for tool in event.used_tools]
+            [_client_tool_record(tool) for tool in event.used_tools]
             if event.used_tools
             else None
         ),
