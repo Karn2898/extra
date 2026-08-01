@@ -21,6 +21,7 @@ async function mockConversationApi(
   options: {
     failSend?: boolean;
     threads?: Array<{ conversation_id: string; title: string | null; last_message_at: string | null }>;
+    usedTools?: Array<{ name: string; provider: string; status: string }>;
   } = {},
 ) {
   const calls: string[] = [];
@@ -77,7 +78,7 @@ async function mockConversationApi(
       body: [
         `event: answer_delta\ndata: ${JSON.stringify({ type: "answer_delta", content: "Echo: " })}`,
         `event: answer_delta\ndata: ${JSON.stringify({ type: "answer_delta", content: body.message || "" })}`,
-        `event: final\ndata: ${JSON.stringify({ type: "final", content: `Echo: ${body.message || ""}`, route: [], used_tools: [] })}`,
+        `event: final\ndata: ${JSON.stringify({ type: "final", content: `Echo: ${body.message || ""}`, route: [], used_tools: options.usedTools ?? [] })}`,
         "event: done\ndata: [DONE]",
         "",
       ].join("\n\n"),
@@ -446,6 +447,20 @@ test("sending a message calls backend, renders assistant answer, stores conversa
   await expect.poll(() => shadowText(page, ".messages")).toContain("hello browser");
   await expect.poll(() => shadowText(page, ".messages")).toContain("Echo: hello browser");
   expect(calls).toContain("GET /conversations/conv-smoke/messages");
+});
+
+test("tool activity shows the tool name without its internal provider", async ({ page }) => {
+  await mockConversationApi(page, {
+    usedTools: [{ name: "search_docs", provider: "mcp", status: "succeeded" }],
+  });
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "find the docs");
+  await page.keyboard.press("Enter");
+
+  await expect.poll(() => shadowText(page, ".messages")).toContain("Echo: find the docs");
+  await expect.poll(() => shadowText(page, ".tool-title")).toBe("search_docs");
+  await expect.poll(() => shadowText(page, ".tool-title")).not.toContain("mcp");
 });
 
 test("Shift+Enter inserts a newline and Enter sends", async ({ page }) => {
