@@ -125,11 +125,11 @@ def _client_tool_record(t: Any) -> ToolRecord:
     return ToolRecord(**fields)
 
 
-
 class PendingApprovalModel(BaseModel):
     """Sanitized pending-approval payload returned to the client/UI."""
 
     run_id: str
+
     approval_id: str
     agent_id: str
     tool_name: str

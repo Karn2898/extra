@@ -136,7 +136,6 @@ async def send_message(
     )
 
 
-
 def _to_stream_event(event: RunStreamEvent) -> StreamEventOut:
     return StreamEventOut(
         type=event.type,
@@ -154,7 +153,6 @@ def _to_stream_event(event: RunStreamEvent) -> StreamEventOut:
             else None
         ),
     )
-
 
 
 @router.post("/conversations/{conversation_id}/messages/stream")

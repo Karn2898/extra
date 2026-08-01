@@ -391,9 +391,9 @@ class _ToolErrorEngine(RecordingEngine):
         yield RunStreamEvent(type="final", content="done", used_tools=(tool_err,))
 
 
-
 def test_tool_error_text_is_sanitized_in_send_message() -> None:
     """Raw tool exception details must be sanitized to generic text in API responses."""
+
     app = FastAPI()
     service = ConversationService(_ToolErrorEngine(), MemoryRepository())
     app.state.service = service
