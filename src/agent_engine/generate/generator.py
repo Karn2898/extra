@@ -15,6 +15,7 @@ from agent_engine.generate.manifest import (
 class GenerateResult:
     created: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    ignored: list[str] = field(default_factory=list)
 
 
 class Generator:
@@ -37,6 +38,7 @@ class Generator:
             has_protected,
             mcp_plugin_ids,
         ) = _collect(spec.graph)
+        result.ignored.extend(tool.id for tool in spec.tools if tool.id not in tool_ids)
 
         tools_dir = base_dir / "plugins" / "tools"
         tools_dir.mkdir(parents=True, exist_ok=True)
