@@ -52,6 +52,73 @@ _CREDENTIAL_SHAPES = re.compile(
 )
 _SUPPORTED_MODEL_PROVIDERS = ("anthropic", "bedrock", "gemini", "openai")
 
+_TOP_LEVEL_KEYS = {
+    "system",
+    "defaults",
+    "orchestrators",
+    "agents",
+    "tools",
+    "resolvers",
+    "mcps",
+    "graph",
+    "hooks",
+    "plugins",
+    "execution",
+}
+_SYSTEM_KEYS = {"name", "description"}
+_DEFAULTS_KEYS = {"model"}
+_ORCHESTRATOR_KEYS = {"name", "description", "model", "resolvers", "protected", "prompts"}
+_ORCHESTRATOR_PROMPT_KEYS = {"orchestrator", "system", "user"}
+_AGENT_KEYS = {
+    "name",
+    "description",
+    "model",
+    "resolvers",
+    "protected",
+    "prompts",
+    "tools",
+    "mcps",
+    "auto",
+    "auto_mode",
+}
+_AGENT_PROMPT_KEYS = {"system", "user"}
+_MODEL_KEYS = {"provider", "name", "temperature", "region", "max_tokens", "top_p", "fallback"}
+_FALLBACK_MODEL_KEYS = {"provider", "name", "temperature", "region", "max_tokens", "top_p"}
+_TOOL_KEYS = {"description"}
+_RESOLVER_KEYS = {"scope"}
+_MCP_KEYS = {"url", "auth", "tool_tags", "tool_tag_transport"}
+_MCP_TRANSPORT_KEYS = {"type", "header_name", "param_name"}
+_EXECUTION_KEYS = {
+    "max_iterations",
+    "max_tool_calls",
+    "max_tool_calls_per_agent",
+    "max_child_agent_calls",
+    "allow_duplicate_tool_calls",
+}
+_PLUGINS_KEYS = {"import_roots"}
+_HOOK_ENTRY_KEYS = {"ref", "plugin", "method", "failure_policy"}
+
+
+def _validate_unknown_keys(
+    path: str,
+    data: Any,
+    allowed: Iterable[str],
+    errors: list[ValidationError],
+) -> None:
+    if not isinstance(data, dict):
+        return
+    allowed_set = set(allowed)
+    for key in data:
+        if str(key) not in allowed_set:
+            err_path = f"{path}.{key}" if path else str(key)
+            allowed_str = ", ".join(sorted(allowed_set))
+            errors.append(
+                ValidationError(
+                    err_path,
+                    f"Unknown key '{key}'. Allowed: {allowed_str}",
+                )
+            )
+
 
 def _validate_plugins(plugins: Any, errors: list[ValidationError]) -> None:
     if plugins is None:
@@ -59,6 +126,8 @@ def _validate_plugins(plugins: Any, errors: list[ValidationError]) -> None:
     if not isinstance(plugins, dict):
         errors.append(ValidationError("plugins", "Must be a mapping"))
         return
+    _validate_unknown_keys("plugins", plugins, _PLUGINS_KEYS, errors)
+
     roots = plugins.get("import_roots")
     if roots is None:
         return
@@ -189,6 +258,8 @@ def _validate_execution(raw: Any, errors: list[ValidationError]) -> None:
     if not isinstance(raw, dict):
         errors.append(ValidationError("execution", "Must be a mapping"))
         return
+    _validate_unknown_keys("execution", raw, _EXECUTION_KEYS, errors)
+
     for name in EXECUTION_INT_FIELDS:
         if name not in raw:
             continue
@@ -209,6 +280,8 @@ def _validate_hook_entry(point: str, index: int, entry: Any, errors: list[Valida
             ValidationError(base, "Must be a mapping with either 'ref' or 'plugin' + 'method'")
         )
         return
+    _validate_unknown_keys(base, entry, _HOOK_ENTRY_KEYS | {"config"}, errors)
+
     ref = entry.get("ref")
     plugin = entry.get("plugin")
     method = entry.get("method")
@@ -328,7 +401,16 @@ def _validate_mcps(mcps: dict[str, Any], errors: list[ValidationError]) -> None:
     for mcp_id, raw in mcps.items():
         if not isinstance(raw, dict):
             continue
+        _validate_unknown_keys(f"mcps.{mcp_id}", raw, _MCP_KEYS, errors)
+        if isinstance(raw.get("tool_tag_transport"), dict):
+            _validate_unknown_keys(
+                f"mcps.{mcp_id}.tool_tag_transport",
+                raw["tool_tag_transport"],
+                _MCP_TRANSPORT_KEYS,
+                errors,
+            )
         _validate_mcp_tool_tags(mcp_id, raw, errors)
+
 
 
 def _validate_model(
@@ -339,6 +421,10 @@ def _validate_model(
     if not isinstance(raw, dict):
         errors.append(ValidationError(path, "Must be a mapping"))
         return
+    _validate_unknown_keys(
+        path, raw, _FALLBACK_MODEL_KEYS if is_fallback else _MODEL_KEYS, errors
+    )
+
 
     provider = raw.get("provider")
     if not isinstance(provider, str) or not provider.strip():
@@ -434,17 +520,61 @@ class YAMLParser(Parser):
         elif "system" in data and "name" not in data["system"]:
             errors.append(ValidationError("system.name", "Required field 'name' is missing"))
 
-        if errors:
-            return errors
+        _validate_unknown_keys("", data, _TOP_LEVEL_KEYS, errors)
+
+        if "system" in data and isinstance(data["system"], dict):
+            _validate_unknown_keys("system", data["system"], _SYSTEM_KEYS, errors)
+
+        if "defaults" in data and isinstance(data["defaults"], dict):
+            _validate_unknown_keys("defaults", data["defaults"], _DEFAULTS_KEYS, errors)
 
         orchestrators: dict[str, Any] = data.get("orchestrators", {}) or {}
         agents: dict[str, Any] = data.get("agents", {}) or {}
+
+        if isinstance(data.get("orchestrators"), dict):
+            for node_id, raw in orchestrators.items():
+                if isinstance(raw, dict):
+                    _validate_unknown_keys(
+                        f"orchestrators.{node_id}", raw, _ORCHESTRATOR_KEYS, errors
+                    )
+
+                    if "prompts" in raw and isinstance(raw["prompts"], dict):
+                        _validate_unknown_keys(
+                            f"orchestrators.{node_id}.prompts",
+                            raw["prompts"],
+                            _ORCHESTRATOR_PROMPT_KEYS,
+                            errors,
+                        )
+
+        if isinstance(data.get("agents"), dict):
+            for node_id, raw in agents.items():
+                if isinstance(raw, dict):
+                    _validate_unknown_keys(f"agents.{node_id}", raw, _AGENT_KEYS, errors)
+                    if "prompts" in raw and isinstance(raw["prompts"], dict):
+                        _validate_unknown_keys(
+                            f"agents.{node_id}.prompts",
+                            raw["prompts"],
+                            _AGENT_PROMPT_KEYS,
+                            errors,
+                        )
+
+        if isinstance(data.get("tools"), dict):
+            for tool_id, raw in data["tools"].items():
+                if isinstance(raw, dict):
+                    _validate_unknown_keys(f"tools.{tool_id}", raw, _TOOL_KEYS, errors)
+
+        if isinstance(data.get("resolvers"), dict):
+            for res_id, raw in data["resolvers"].items():
+                if isinstance(raw, dict):
+                    _validate_unknown_keys(f"resolvers.{res_id}", raw, _RESOLVER_KEYS, errors)
+
         declared_ids = set(orchestrators) | set(agents)
         resolvers: dict[str, Any] = self._normalize_resolvers(data.get("resolvers", {}))
         tools: dict[str, Any] = data.get("tools", {}) or {}
         mcps: dict[str, Any] = data.get("mcps", {}) or {}
 
-        self._validate_graph(data["graph"], declared_ids, errors)
+        if "graph" in data:
+            self._validate_graph(data["graph"], declared_ids, errors)
         _validate_models(data.get("defaults"), orchestrators, agents, errors)
         _validate_node_refs(orchestrators, agents, resolvers, tools, mcps, errors)
         _validate_mcps(mcps, errors)
@@ -454,6 +584,7 @@ class YAMLParser(Parser):
         self._validate_no_secrets(data, errors)
 
         return errors
+
 
     def _validate_graph(
         self,
