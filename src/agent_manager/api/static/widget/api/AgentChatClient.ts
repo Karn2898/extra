@@ -7,10 +7,29 @@ import type {
 } from "../types";
 
 export class AgentChatHttpError extends Error {
-  constructor(readonly status: number) {
-    super(`HTTP ${status}`);
+  constructor(
+    readonly status: number,
+    readonly errorType?: string,
+    message?: string,
+  ) {
+    super(message || `HTTP ${status}`);
     this.name = "AgentChatHttpError";
   }
+}
+
+async function handleHttpError(response: Response): Promise<never> {
+  let errorType: string | undefined;
+  let message: string | undefined;
+  try {
+    const body = await response.json();
+    if (typeof body.detail === "object" && body.detail !== null) {
+      errorType = body.detail.error_type;
+      message = body.detail.message;
+    } else if (typeof body.detail === "string") {
+      message = body.detail;
+    }
+  } catch {}
+  throw new AgentChatHttpError(response.status, errorType, message);
 }
 
 export class AgentChatClient {
@@ -27,8 +46,9 @@ export class AgentChatClient {
 
   private async request(path: string, init?: RequestInit): Promise<Response> {
     const response = await fetch(`${this.endpoint}${path}`, { ...init, headers: this.headers });
+
     if (!response.ok) {
-      throw new AgentChatHttpError(response.status);
+      await handleHttpError(response);
     }
     return response;
   }
@@ -41,6 +61,7 @@ export class AgentChatClient {
 
   async listConversations(): Promise<ThreadSummary[]> {
     const response = await this.request("/conversations");
+
     const data = await response.json();
     if (!Array.isArray(data)) return [];
     return data.map((thread) => ({
@@ -52,6 +73,7 @@ export class AgentChatClient {
 
   async getMessages(conversationId: string): Promise<ChatMessage[]> {
     const response = await this.request(`/conversations/${conversationId}/messages`);
+
     return (await response.json()) as ChatMessage[];
   }
 
@@ -60,6 +82,7 @@ export class AgentChatClient {
       method: "POST",
       body: JSON.stringify({ message }),
     });
+
     const data = await response.json();
     return {
       answer: String(data.answer || ""),
@@ -84,6 +107,7 @@ export class AgentChatClient {
       method: "POST",
       body: JSON.stringify({ message }),
     });
+
     if (!response.body) {
       throw new Error("Streaming response has no body");
     }

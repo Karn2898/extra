@@ -25,6 +25,15 @@ async function mockConversationApi(
 ) {
   const calls: string[] = [];
 
+  await page.route(/\/conversations\?/, async (route) => {
+    calls.push(`GET ${new URL(route.request().url()).pathname}`);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(options.threads ?? []),
+    });
+  });
+
   await page.route("**/conversations", async (route) => {
     const method = route.request().method();
     calls.push(`${method} ${new URL(route.request().url()).pathname}`);
@@ -264,6 +273,17 @@ async function shadowClick(page: Page, selector: string, index = 0) {
     const target = element.shadowRoot?.querySelector<HTMLElement>(selector);
     target?.click();
   }, selector);
+}
+
+async function shadowClickText(page: Page, selector: string, text: string, index = 0) {
+  const handle = await widget(page, index);
+  await handle.evaluate(
+    (element, { selector, text }) => {
+      const targets = Array.from(element.shadowRoot?.querySelectorAll<HTMLElement>(selector) ?? []);
+      targets.find((node) => node.textContent?.includes(text))?.click();
+    },
+    { selector, text },
+  );
 }
 
 async function shadowFocus(page: Page, selector: string, index = 0) {
@@ -535,6 +555,193 @@ test("thread drawer lists conversations, switches to one, and starts a new chat"
   await expect.poll(() => shadowText(page, ".messages")).toContain("How can I help you today?");
 });
 
+test("thinking dots persist when switching away from an in-flight thread and back", async ({
+  page,
+}) => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  await mockConversationApi(page, {
+    threads: [
+      { conversation_id: "conv-other", title: "Other chat", last_message_at: "2026-06-01T00:00:00Z" },
+      { conversation_id: "conv-smoke", title: "Current chat", last_message_at: "2026-06-28T00:00:00Z" },
+    ],
+  });
+  await page.route("**/conversations/conv-other/messages", async (route: Route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/conversations/conv-smoke/messages/stream", async (route: Route) => {
+    await pending;
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: [
+        `event: final\ndata: ${JSON.stringify({ type: "final", content: "done", route: [], used_tools: [] })}`,
+        "event: done\ndata: [DONE]",
+        "",
+      ].join("\n\n"),
+    });
+  });
+
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "hello");
+  await shadowClick(page, ".send");
+
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(true);
+
+  await shadowClick(page, '.header-btn[aria-label="Conversations"]');
+  await shadowClickText(page, ".thread-item", "Other chat");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(false);
+
+  await shadowClick(page, '.header-btn[aria-label="Conversations"]');
+  await shadowClickText(page, ".thread-item", "Current chat");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(true);
+
+  release();
+  await expect.poll(() => shadowText(page, ".messages")).toContain("done");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(false);
+});
+
+test("a turn stays on its own conversation when the user switches threads mid-request", async ({
+  page,
+}) => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const usageCalls: string[] = [];
+
+  const calls = await mockConversationApi(page, {
+    threads: [
+      { conversation_id: "conv-other", title: "Other chat", last_message_at: "2026-06-01T00:00:00Z" },
+      { conversation_id: "conv-smoke", title: "Current chat", last_message_at: "2026-06-28T00:00:00Z" },
+    ],
+  });
+  await page.route("**/conversations/*/usage", async (route: Route) => {
+    usageCalls.push(new URL(route.request().url()).pathname);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ used_tokens: 0, max_tokens: null, percent: 0, severity: "normal" }),
+    });
+  });
+  // Hold the stream open until the user has switched away, then fail it: the
+  // widget retries the turn without streaming, and that retry must still go to
+  // the conversation the turn started in.
+  await page.route("**/conversations/conv-smoke/messages/stream", async (route: Route) => {
+    await pending;
+    await route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "stream unavailable" }),
+    });
+  });
+  await page.route("**/conversations/conv-other/messages", async (route: Route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "hello");
+  await shadowClick(page, ".send");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(true);
+
+  await shadowClick(page, '.header-btn[aria-label="Conversations"]');
+  await shadowClickText(page, ".thread-item", "Other chat");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(false);
+
+  release();
+
+  await expect.poll(() => calls).toContain("POST /conversations/conv-smoke/messages");
+  expect(calls).not.toContain("POST /conversations/conv-other/messages");
+  await expect
+    .poll(() => usageCalls[usageCalls.length - 1])
+    .toBe("/conversations/conv-smoke/usage");
+});
+
+async function mockConversationApiWithTokenBudgetExceeded(page: Page) {
+  const calls: string[] = [];
+
+  await page.route("**/conversations", async (route) => {
+    calls.push(`${route.request().method()} ${new URL(route.request().url()).pathname}`);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ conversation_id: "conv-budget", session_id: "conv-budget" }),
+    });
+  });
+
+  await page.route("**/conversations/*/messages/stream", async (route: Route) => {
+    calls.push(`${route.request().method()} ${new URL(route.request().url()).pathname}`);
+    await route.fulfill({
+      status: 429,
+      contentType: "application/json",
+      body: JSON.stringify({
+        detail: {
+          error_type: "context_limit_exceeded",
+          message: "This conversation has reached its context limit. Start a new chat to continue.",
+        },
+      }),
+    });
+  });
+
+  await page.route("**/conversations/*/messages", async (route: Route) => {
+    calls.push(`${route.request().method()} ${new URL(route.request().url()).pathname}`);
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([]),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 429,
+      contentType: "application/json",
+      body: JSON.stringify({
+        detail: {
+          error_type: "context_limit_exceeded",
+          message: "This conversation has reached its context limit. Start a new chat to continue.",
+        },
+      }),
+    });
+  });
+
+  return calls;
+}
+
+test("token budget exceeded shows context-limit message instead of generic error", async ({
+  page,
+}) => {
+  const calls = await mockConversationApiWithTokenBudgetExceeded(page);
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "one more message");
+  await shadowClick(page, ".send");
+
+  await expect
+    .poll(() => shadowText(page, ".messages"))
+    .toContain("This conversation has reached its context limit. Start a new chat to continue.");
+  const text = await shadowText(page, ".messages");
+  expect(text).not.toContain("Something went wrong. Please try again.");
+  expect(calls).toContain("POST /conversations/conv-budget/messages/stream");
+  expect(calls).not.toContain("POST /conversations/conv-budget/messages");
+
+  const inputEl = page.locator("agent-chat");
+  const isDisabled = await inputEl.evaluate(
+    (el) => !!el.shadowRoot?.querySelector(".input")?.hasAttribute("disabled"),
+  );
+  expect(isDisabled).toBe(true);
+
+  const placeholder = await shadowAttribute(page, ".input", "placeholder");
+  expect(placeholder).toBe("Context limit reached.");
+});
+
 test("a stored conversation owned by another caller is replaced, not retried forever", async ({
   page,
 }) => {
@@ -558,6 +765,7 @@ test("a stored conversation owned by another caller is replaced, not retried for
 });
 
 test("stale stored conversation is replaced before sending to the agent", async ({ page }) => {
+
   const calls = await mockConversationApiWithStaleConversation(page);
   await pinUser(page);
   await page.goto("/widget-demo.html");

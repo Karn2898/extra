@@ -7,10 +7,11 @@ import {
   SquarePenIcon,
   XIcon,
 } from "lucide-react";
-import { type Ref, useCallback, useEffect, useRef, useState } from "react";
+import { type Ref, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { AgentChatClient } from "../api/AgentChatClient";
+import { AgentChatHttpError, type AgentChatClient } from "../api/AgentChatClient";
 import { getStoredConversationId } from "../storage/conversationStorage";
+
 import type {
   AgentChatAnswerDetail,
   AgentChatConfig,
@@ -69,28 +70,61 @@ export function AgentChatApp({
   titleId,
 }: AgentChatAppProps) {
   const inline = config.mode === "inline";
-  const conversation = useConversation(client, config.endpoint, userId);
   const [open, setOpen] = useState(inline);
   const [loaded, setLoaded] = useState(false);
   const [sending, setSending] = useState(false);
-  const [entries, setEntries] = useState<MessageEntry[]>([]);
-  const [usage, setUsage] = useState<TokenBudget | null>(null);
+  const [budgetExceeded, setBudgetExceeded] = useState(false);
+  const [entriesById, setEntriesById] = useState<Record<string, MessageEntry[]>>({});
+  const [usageById, setUsageById] = useState<Record<string, TokenBudget | null>>({});
+  const [activeId, setActiveId] = useState("");
+  const entries = entriesById[activeId] ?? [];
+  const usage = usageById[activeId] ?? null;
+
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [threadsOpen, setThreadsOpen] = useState(false);
   const launcherRef = useRef<HTMLButtonElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
-  const refreshUsage = useCallback(async () => {
-    setUsage(await conversation.loadUsage());
-  }, [conversation]);
+  // A vanished conversation is replaced mid-turn; carry its messages onto the
+  // id the turn actually ran under so the view does not go blank.
+  const onReplaced = useCallback((staleId: string, freshId: string) => {
+    setEntriesById(({ [staleId]: moved = [], ...rest }) => ({ ...rest, [freshId]: moved }));
+    setActiveId((current) => (current === staleId ? freshId : current));
+  }, []);
+
+  const conversation = useConversation(client, config.endpoint, userId, onReplaced);
+
+  const refreshUsage = useCallback(
+    async (cid: string) => {
+      const next = await conversation.loadUsage(cid);
+      setUsageById((prev) => ({ ...prev, [cid]: next }));
+    },
+    [conversation],
+  );
+
+  const putEntries = useCallback(
+    (cid: string, update: (prev: MessageEntry[]) => MessageEntry[]) =>
+      setEntriesById((prev) => ({ ...prev, [cid]: update(prev[cid] ?? []) })),
+    [],
+  );
+
+  const loadThread = useCallback(
+    async (cid: string) => {
+      const history = await conversation.loadHistory(cid);
+      putEntries(cid, () => history.map(toEntry));
+    },
+    [conversation, putEntries],
+  );
 
   const loadHistory = useCallback(async () => {
     if (loaded) return;
     setLoaded(true);
-    const history = await conversation.loadHistory();
-    if (history.length) setEntries(history.map(toEntry));
-    await refreshUsage();
-  }, [conversation, loaded, refreshUsage]);
+    const cid = conversation.peekId();
+    if (!cid) return;
+    setActiveId(cid);
+    await loadThread(cid);
+    await refreshUsage(cid);
+  }, [conversation, loaded, loadThread, refreshUsage]);
 
   useEffect(() => {
     if (inline) void loadHistory();
@@ -121,31 +155,35 @@ export function AgentChatApp({
     async (conversationId: string) => {
       conversation.switchTo(conversationId);
       setThreadsOpen(false);
-      const history = await conversation.loadHistory();
-      setEntries(history.map(toEntry));
-      await refreshUsage();
+      setActiveId(conversationId);
+      // ponytail: in-session map owns in-flight streams, so only cold-load a thread we haven't opened yet.
+      if (!(conversationId in entriesById)) await loadThread(conversationId);
+      await refreshUsage(conversationId);
       inputRef.current?.focus({ preventScroll: true });
     },
-    [conversation, refreshUsage],
+    [conversation, entriesById, loadThread, refreshUsage],
+
   );
 
   const startNewThread = useCallback(() => {
     conversation.startNew();
     setThreadsOpen(false);
-    setEntries([]);
-    setUsage(null);
+    setActiveId("");
     inputRef.current?.focus({ preventScroll: true });
   }, [conversation]);
 
-  const replaceEntry = useCallback((id: string, entry: MessageEntry) => {
-    setEntries((prev) => prev.map((current) => (current.id === id ? entry : current)));
-  }, []);
+  const replaceEntry = useCallback(
+    (cid: string, id: string, entry: MessageEntry) =>
+      putEntries(cid, (prev) => prev.map((current) => (current.id === id ? entry : current))),
+    [putEntries],
+  );
+
 
   const sendWithoutStreaming = useCallback(
-    async (text: string, entryId: string) => {
+    async (cid: string, text: string, entryId: string) => {
       try {
-        const answer = await conversation.send(text);
-        replaceEntry(entryId, {
+        const answer = await conversation.send(cid, text);
+        replaceEntry(cid, entryId, {
           id: entryId,
           role: "ai",
           text: answer.answer,
@@ -153,8 +191,13 @@ export function AgentChatApp({
           tools: answer.used_tools,
         });
         onAnswer({ visited: answer.visited ?? [], used_tools: answer.used_tools ?? [] });
-      } catch {
-        replaceEntry(entryId, { id: entryId, role: "ai", text: GENERIC_ERROR, error: true });
+      } catch (error) {
+        const is4xx = error instanceof AgentChatHttpError && error.status >= 400 && error.status < 500;
+        if (error instanceof AgentChatHttpError && error.errorType === "context_limit_exceeded") {
+          setBudgetExceeded(true);
+        }
+        const errorMessage = is4xx ? error.message : GENERIC_ERROR;
+        replaceEntry(cid, entryId, { id: entryId, role: "ai", text: errorMessage, error: true });
       }
     },
     [conversation, onAnswer, replaceEntry],
@@ -162,25 +205,35 @@ export function AgentChatApp({
 
   const submit = useCallback(
     async (text: string) => {
+      const cid = await conversation.ensureId();
+      setActiveId(cid);
       const pending: MessageEntry = { id: newId(), role: "ai", text: "", typing: true };
-      setEntries((prev) => [...prev, { id: newId(), role: "user", text }, pending]);
+      putEntries(cid, (prev) => [...prev, { id: newId(), role: "user", text }, pending]);
       setSending(true);
       try {
         let entry = pending;
-        for await (const event of conversation.stream(text)) {
+        for await (const event of conversation.stream(cid, text)) {
           entry = reduceStreamEvent(entry, event);
-          replaceEntry(pending.id, entry);
+          replaceEntry(cid, pending.id, entry);
         }
-        replaceEntry(pending.id, { ...entry, typing: false });
+        replaceEntry(cid, pending.id, { ...entry, typing: false });
         onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
-      } catch {
-        await sendWithoutStreaming(text, pending.id);
+      } catch (error) {
+        const is4xx = error instanceof AgentChatHttpError && error.status >= 400 && error.status < 500;
+        if (error instanceof AgentChatHttpError && error.errorType === "context_limit_exceeded") {
+          setBudgetExceeded(true);
+        }
+        if (is4xx) {
+          replaceEntry(cid, pending.id, { id: pending.id, role: "ai", text: error.message, error: true });
+        } else {
+          await sendWithoutStreaming(cid, text, pending.id);
+        }
       } finally {
         setSending(false);
-        void refreshUsage();
+        void refreshUsage(cid);
       }
     },
-    [conversation, onAnswer, refreshUsage, replaceEntry, sendWithoutStreaming],
+    [conversation, onAnswer, putEntries, refreshUsage, replaceEntry, sendWithoutStreaming],
   );
 
   const toggle = () => void (open ? closeChat() : openChat());
@@ -258,17 +311,17 @@ export function AgentChatApp({
           <PromptInput onSubmit={(message) => void submit(message.text)}>
             <PromptInputTextarea
               aria-label="Message"
-              disabled={false}
+              disabled={sending || budgetExceeded}
               inputRef={inputRef}
               onSubmit={() => inputRef.current?.form?.requestSubmit()}
-              placeholder="Message..."
+              placeholder={budgetExceeded ? "Context limit reached." : "Message..."}
             />
             <PromptInputFooter>
               <div className="footer-start">
                 {usage ? <BudgetMeter usage={usage} /> : null}
                 <span className="prompt-hint">Enter to send · Shift+Enter for a new line</span>
               </div>
-              <PromptInputSubmit disabled={sending} />
+              <PromptInputSubmit disabled={sending || budgetExceeded} />
             </PromptInputFooter>
           </PromptInput>
           <div className="powered">Powered by Extra</div>
@@ -314,14 +367,6 @@ function Launcher({
 function ChatMessage({ entry }: { entry: MessageEntry }) {
   const from = entry.role === "user" ? "user" : "assistant";
 
-  if (entry.typing) {
-    return (
-      <Message from={from} typing>
-        ...
-      </Message>
-    );
-  }
-
   if (entry.error) {
     return (
       <Message from={from}>
@@ -340,14 +385,32 @@ function ChatMessage({ entry }: { entry: MessageEntry }) {
     );
   }
 
+  const thinking = Boolean(entry.typing) && !entry.text.trim();
+
   return (
-    <Message from="assistant">
+    <Message from="assistant" typing={thinking}>
       <AgentActivity route={entry.route} tools={entry.tools} />
-      <MessageContent>
-        <MessageResponse>{entry.text}</MessageResponse>
-      </MessageContent>
-      {entry.text.trim() ? <MessageActions text={entry.text} /> : null}
+      {thinking ? (
+        <ThinkingDots />
+      ) : (
+        <>
+          <MessageContent>
+            <MessageResponse>{entry.text}</MessageResponse>
+          </MessageContent>
+          {entry.text.trim() ? <MessageActions text={entry.text} /> : null}
+        </>
+      )}
     </Message>
+  );
+}
+
+function ThinkingDots() {
+  return (
+    <span className="thinking" aria-hidden>
+      <span className="thinking-dot" />
+      <span className="thinking-dot" />
+      <span className="thinking-dot" />
+    </span>
   );
 }
 

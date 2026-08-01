@@ -6,7 +6,7 @@ import dataclasses
 import json
 from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -37,11 +37,19 @@ router = APIRouter()
 Service = Annotated[ConversationService, Depends(get_service)]
 CallerId = Annotated[str | None, Depends(get_caller_id)]
 
-_HTTP_ERRORS: dict[type[Exception], tuple[int, str]] = {
+_BUDGET_EXCEEDED_DETAIL = {
+    "error_type": "context_limit_exceeded",
+    "message": (
+        "This conversation has reached its context limit."
+        " Start a new chat to continue."
+    ),
+}
+
+_HTTP_ERRORS: dict[type[Exception], tuple[int, Any]] = {
     ConversationNotFound: (404, "conversation not found"),
     ConversationAccessDenied: (403, "conversation owned by another user"),
     ConversationAlreadyExists: (409, "conversation id already taken"),
-    ConversationTokenBudgetExceeded: (429, "conversation token budget exceeded"),
+    ConversationTokenBudgetExceeded: (429, _BUDGET_EXCEEDED_DETAIL),
 }
 
 
@@ -52,6 +60,7 @@ def _as_http_error() -> Iterator[None]:
     except tuple(_HTTP_ERRORS) as exc:
         status, detail = _HTTP_ERRORS[type(exc)]
         raise HTTPException(status_code=status, detail=detail) from None
+
 
 
 @router.post("/conversations", response_model=CreateConversationResponse)
@@ -67,6 +76,7 @@ async def create_conversation(
 @router.get("/conversations", response_model=list[ConversationSummary])
 async def list_conversations(service: Service, caller_id: CallerId) -> list[ConversationSummary]:
     sessions = await service.list_conversations(caller_id)
+
     return [
         ConversationSummary(
             conversation_id=s.session_id,
@@ -109,6 +119,7 @@ async def send_message(
             result = await service.send(conversation_id, body.message, caller_id=caller_id)
     except HTTPException:
         raise
+
     except Exception as exc:  # engine failure
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return SendMessageResponse(
@@ -148,6 +159,7 @@ async def stream_message(
             first = await stream.__anext__()
     except StopAsyncIteration:
         first = None
+
 
     async def event_source() -> AsyncIterator[str]:
         try:
