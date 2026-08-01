@@ -36,13 +36,20 @@ def configure_logging(level: str | None = None) -> None:
     name = (level or os.getenv("LOG_LEVEL") or "INFO").upper()
     resolved = getattr(logging, name, logging.INFO)
     root = logging.getLogger()
-    if not root.handlers:
-        handler = logging.StreamHandler()
-        handler.setFormatter(StructuredFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-        root.addHandler(handler)
+    root.handlers.clear()
+    handler = logging.StreamHandler()
+    handler.setFormatter(StructuredFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    root.addHandler(handler)
     root.setLevel(resolved)
     for noisy in _NOISY:
         logging.getLogger(noisy).setLevel(logging.WARNING)
+    # Any logger a library already configured (e.g. uvicorn) gets its own
+    # handlers stripped and routed through ours, so every log line shares
+    # one format regardless of which library emitted it.
+    for existing in logging.Logger.manager.loggerDict.values():
+        if isinstance(existing, logging.Logger):
+            existing.handlers.clear()
+            existing.propagate = True
 
 
 def current_request_id() -> str:
