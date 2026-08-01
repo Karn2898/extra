@@ -1,6 +1,6 @@
 services:
   mcp:
-    image: extra:local
+    image: ghcr.io/extra-org/extra:local
     entrypoint: ["python", "-m", "mcps.bank.server"]
     volumes:
       - .:/workspace
@@ -9,7 +9,7 @@ services:
       - "8100:8100"
 
   engine:
-    image: extra:local
+    image: ghcr.io/extra-org/extra:local
     profiles: ["engine"]
     command: ["serve", "--config", "/workspace/${CONFIG:-agents.yaml}", "--host", "0.0.0.0", "--port", "8090"]
     volumes:
@@ -21,7 +21,7 @@ services:
       - mcp
 
   manager:
-    image: extra:local
+    image: ghcr.io/extra-org/extra:local
     profiles: ["ui"]
     command: ["agent-manager", "--config", "/workspace/${CONFIG:-agents.yaml}", "--host", "0.0.0.0", "--port", "8100"]
     volumes:
