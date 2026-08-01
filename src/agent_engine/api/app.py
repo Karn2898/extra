@@ -118,6 +118,14 @@ class ToolRecord(BaseModel):
     error: str | None = None
 
 
+def _client_tool_record(t: Any) -> ToolRecord:
+    fields = dataclasses.asdict(t)
+    if fields.get("error"):
+        fields["error"] = "Tool execution failed"
+    return ToolRecord(**fields)
+
+
+
 class PendingApprovalModel(BaseModel):
     """Sanitized pending-approval payload returned to the client/UI."""
 
@@ -255,7 +263,8 @@ def create_app(
             system_name=result.system_name,
             answer=result.answer,
             visited=result.visited,
-            used_tools=[ToolRecord(**dataclasses.asdict(t)) for t in result.used_tools],
+            used_tools=[_client_tool_record(t) for t in result.used_tools],
+
             run_id=run_id,
             status=result.status,
             pending_approval=_pending_model(result.pending_approval),
@@ -334,7 +343,8 @@ def create_app(
             system_name=result.system_name,
             answer=result.answer,
             visited=result.visited,
-            used_tools=[ToolRecord(**dataclasses.asdict(t)) for t in result.used_tools],
+            used_tools=[_client_tool_record(t) for t in result.used_tools],
+
             run_id=run_id,
             status=result.status,
             pending_approval=_pending_model(result.pending_approval),

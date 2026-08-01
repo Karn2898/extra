@@ -13,6 +13,7 @@ from agent_engine.engine.engine import Engine
 from agent_engine.engine.types import ChatMessage, RunResult
 from agent_engine.runtime.hooks.models import RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
+from agent_engine.runtime.tool_models import ToolUsageRecord
 from agent_manager.api.routes import router
 from agent_manager.application import ConversationService
 from agent_manager.domain import TokenBudgetUsage, thread_title
@@ -347,4 +348,83 @@ def test_stream_returns_429_when_token_budget_exceeded() -> None:
         detail["message"]
         == "This conversation has reached its context limit. Start a new chat to continue."
     )
+
+
+class _ToolErrorEngine(RecordingEngine):
+    async def run(
+        self,
+        message: str,
+        *,
+        history: Sequence[ChatMessage] = (),
+        context: RunContext | None = None,
+    ) -> RunResult:
+        res = await super().run(message, history=history, context=context)
+        err_msg = (
+            "HTTPConnectionPool(host='localhost', port=3000): "
+            "Max retries exceeded with url: /api/v1/auths/add"
+        )
+        tool_err = ToolUsageRecord(
+            name="add_new_user",
+            provider="local",
+            status="failed",
+            error=err_msg,
+        )
+        return dataclasses.replace(res, used_tools=(tool_err,))
+
+    async def stream(
+        self,
+        message: str,
+        *,
+        history: Sequence[ChatMessage] = (),
+        context: RunContext | None = None,
+    ) -> AsyncIterator[RunStreamEvent]:
+        err_msg = (
+            "HTTPConnectionPool(host='localhost', port=3000): "
+            "Max retries exceeded with url: /api/v1/auths/add"
+        )
+        tool_err = ToolUsageRecord(
+            name="add_new_user",
+            provider="local",
+            status="failed",
+            error=err_msg,
+        )
+        yield RunStreamEvent(type="final", content="done", used_tools=(tool_err,))
+
+
+
+def test_tool_error_text_is_sanitized_in_send_message() -> None:
+    """Raw tool exception details must be sanitized to generic text in API responses."""
+    app = FastAPI()
+    service = ConversationService(_ToolErrorEngine(), MemoryRepository())
+    app.state.service = service
+    app.include_router(router)
+    client = TestClient(app)
+
+    cid = client.post("/conversations").json()["conversation_id"]
+    response = client.post(f"/conversations/{cid}/messages", json={"message": "trigger tool"})
+
+    assert response.status_code == 200
+    used_tools = response.json()["used_tools"]
+    assert len(used_tools) == 1
+    assert used_tools[0]["error"] == "Tool execution failed"
+    assert "localhost" not in used_tools[0]["error"]
+
+
+def test_tool_error_text_is_sanitized_in_stream_message() -> None:
+    """Raw tool exception details must be sanitized to generic text in stream SSE events."""
+    app = FastAPI()
+    service = ConversationService(_ToolErrorEngine(), MemoryRepository())
+    app.state.service = service
+    app.include_router(router)
+    client = TestClient(app)
+
+    cid = client.post("/conversations").json()["conversation_id"]
+    url = f"/conversations/{cid}/messages/stream"
+    response = client.post(url, json={"message": "trigger tool"})
+
+    assert response.status_code == 200
+    assert "Tool execution failed" in response.text
+    assert "localhost" not in response.text
+
+
 

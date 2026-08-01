@@ -351,7 +351,8 @@ class AgentNode:
         """
         error = str(exc)[:200]
         used_tools.append(self._usage(call, "failed", error=error))
-        self._log_call(logging.WARNING, "tool call failed", call, ms=latency_ms)
+        self._log_call(logging.WARNING, "tool call failed", call, ms=latency_ms, error=error)
+
         await self._hook_manager.run_on_tool_error(
             current_run_context.get(),
             self._call_context(call, "failed", latency_ms, error=error),
