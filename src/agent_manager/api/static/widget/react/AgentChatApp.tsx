@@ -10,6 +10,7 @@ import {
 import { type Ref, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AgentChatHttpError, type AgentChatClient } from "../api/AgentChatClient";
+import { randomId } from "../id";
 import { getStoredConversationId } from "../storage/conversationStorage";
 
 import type {
@@ -44,7 +45,7 @@ const DEFAULT_GREETING = "How can I help you today?";
 const GENERIC_ERROR = "Something went wrong. Please try again.";
 const COPIED_RESET_MS = 2000;
 
-const newId = () => crypto.randomUUID();
+const newId = randomId;
 
 const toEntry = (message: ChatMessage): MessageEntry => ({
   id: newId(),

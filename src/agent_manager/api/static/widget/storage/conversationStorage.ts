@@ -5,6 +5,8 @@
  * Keyed by endpoint alone, the next user would resume the previous user's
  * conversation.
  */
+import { randomId } from "../id";
+
 export function conversationStorageKey(endpoint: string, userId: string): string {
   return `agent-chat:${endpoint}:${userId}`;
 }
@@ -38,7 +40,7 @@ export function getOrCreateUserId(endpoint: string, storage: Storage = localStor
   const key = `agent-chat:user:${endpoint}`;
   let id = storage.getItem(key);
   if (!id) {
-    id = crypto.randomUUID();
+    id = randomId();
     storage.setItem(key, id);
   }
   return id;

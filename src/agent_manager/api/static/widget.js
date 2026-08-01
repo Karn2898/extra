@@ -52423,6 +52423,16 @@ var X = createLucideIcon("x", __iconNode12);
 // src/agent_manager/api/static/widget/react/AgentChatApp.tsx
 var import_react10 = __toESM(require_react(), 1);
 
+// src/agent_manager/api/static/widget/id.ts
+function randomId() {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = bytes[6] & 15 | 64;
+  bytes[8] = bytes[8] & 63 | 128;
+  const hex = Array.from(bytes, (b3) => b3.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 // src/agent_manager/api/static/widget/storage/conversationStorage.ts
 function conversationStorageKey(endpoint, userId) {
   return `agent-chat:${endpoint}:${userId}`;
@@ -52440,7 +52450,7 @@ function getOrCreateUserId(endpoint, storage = localStorage) {
   const key = `agent-chat:user:${endpoint}`;
   let id = storage.getItem(key);
   if (!id) {
-    id = crypto.randomUUID();
+    id = randomId();
     storage.setItem(key, id);
   }
   return id;
@@ -53161,7 +53171,7 @@ var import_jsx_runtime4 = __toESM(require_jsx_runtime(), 1);
 var DEFAULT_GREETING = "How can I help you today?";
 var GENERIC_ERROR = "Something went wrong. Please try again.";
 var COPIED_RESET_MS = 2e3;
-var newId = () => crypto.randomUUID();
+var newId = randomId;
 var toEntry = (message) => ({
   id: newId(),
   role: message.role === "user" ? "user" : "ai",
