@@ -201,8 +201,14 @@ def serve(config: str, host: str, port: int, env: str | None) -> None:
     import uvicorn
 
     from agent_engine.api.app import create_app
+    from agentctl.diagnostics import format_validation_report, validate_spec
 
     load_env(config, env)
+
+    validation = validate_spec(config)
+    if not validation.ok:
+        click.echo(format_validation_report(validation), err=True)
+        sys.exit(1)
 
     app = create_app(config)
     uvicorn.run(app, host=host, port=port)
