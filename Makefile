@@ -17,7 +17,7 @@ FLAGSHIP := $(EXAMPLE)/$(CONFIG)
 # Every example must stay offline-valid — `make validate` checks them all.
 EXAMPLES := examples/starter examples/enterprise-knowledge-assistant
 
-IMAGE := extra:local
+IMAGE := ghcr.io/extra-org/extra:local
 COMPOSE := CONFIG=$(CONFIG) docker compose -f $(EXAMPLE)/docker-compose.yml
 
 .DEFAULT_GOAL := help
@@ -72,7 +72,7 @@ validate: ## Validate every example offline (no LLM calls, no network, no API ke
 inspect: ## Inspect the flagship example offline (agents, MCPs, hooks, plugins, tags).
 	agentctl inspect $(FLAGSHIP)
 
-build: ## Build the container image, tagged extra:local.
+build: ## Build the container image, tagged ghcr.io/extra-org/extra:local.
 	docker build -t $(IMAGE) .
 
 # Validate inside the image so only Docker is required, not a local install.
