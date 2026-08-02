@@ -168,3 +168,4 @@ class SystemSpec:
     hooks: HooksConfig = field(default_factory=HooksConfig)
     plugins: PluginsConfig = field(default_factory=PluginsConfig)
     execution: ExecutionPolicy = field(default_factory=ExecutionPolicy)
+    tools: tuple[ToolSpec, ...] = field(default_factory=tuple)

@@ -72,9 +72,13 @@ def generate(config: str) -> None:
         click.echo(f"  create  {name}")
     for name in result.skipped:
         click.echo(f"  skip    {name}")
+    for name in result.ignored:
+        click.echo(f"  ignore  {name}  (declared but not referenced by any agent)")
 
     if result.created:
         click.echo(f"\n✓ Created {len(result.created)} stub(s). Fill in the method bodies.")
+    elif result.ignored:
+        click.echo("✓ Nothing to generate — no referenced stubs are missing.")
     else:
         click.echo("✓ Nothing to generate — all stubs already exist.")
 

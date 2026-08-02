@@ -655,6 +655,10 @@ class YAMLParser(Parser):
             meta=SystemMeta(name=data["system"]["name"]),
             defaults=defaults,
             graph=graph,
+            tools=tuple(
+                ToolSpec(id=tool_id, description=raw.get("description", ""))
+                for tool_id, raw in tools.items()
+            ),
             hooks=_build_hooks(data.get("hooks")),
             plugins=_build_plugins(data.get("plugins")),
             execution=_build_execution(data.get("execution")),
