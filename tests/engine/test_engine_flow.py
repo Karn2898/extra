@@ -538,3 +538,121 @@ async def test_orchestrator_fallback_model_execution(tmp_path: Path, model_facto
 
     result = await run_message(spec, tmp_path, model_factory, "hello child")
     assert result.visited == ["root", "root/child"]
+
+
+async def test_orchestrator_loads_both_prompts(tmp_path: Path) -> None:
+    from langchain_core.messages import AIMessage
+
+    from agent_engine.core.spec import OrchestratorPromptSet, OrchestratorSpec
+    from agent_engine.engine.langgraph.nodes import _ORCHESTRATOR_CONTRACT, OrchestratorNode
+
+    # Write prompt files
+    sys_path = tmp_path / "system.md"
+    orch_path = tmp_path / "orchestrator.md"
+    sys_path.write_text("System persona content", encoding="utf-8")
+    orch_path.write_text("Orchestrator routing content", encoding="utf-8")
+
+    class CapturingModel:
+        def __init__(self) -> None:
+            self.captured_prompt = None
+
+        def bind_tools(self, tools: list[Any]) -> Any:
+            return self
+
+        async def ainvoke(self, messages: list[Any]) -> AIMessage:
+            self.captured_prompt = messages[0].content
+            return AIMessage(content="done")
+
+    # 1. Test both prompts loaded
+    spec_both = OrchestratorSpec(
+        id="orch",
+        name="orch",
+        description="orch desc",
+        model=_MODEL,
+        prompts=OrchestratorPromptSet(
+            system="system.md",
+            orchestrator="orchestrator.md",
+        ),
+    )
+    model_both = CapturingModel()
+    node_both = OrchestratorNode(
+        spec=spec_both,
+        node_path="root",
+        model=cast(Any, model_both),
+        children=[],
+        filters=[],
+        base_dir=tmp_path,
+    )
+    await node_both({"message": "hi", "visited": [], "used_tools": []})
+    expected_both = (
+        f"System persona content\n\nOrchestrator routing content\n{_ORCHESTRATOR_CONTRACT}"
+    )
+    assert model_both.captured_prompt == expected_both
+
+    # 2. Test system prompt only (no orchestrator) — uses system as the base prompt.
+    spec_sys = OrchestratorSpec(
+        id="orch",
+        name="orch",
+        description="orch desc",
+        model=_MODEL,
+        prompts=OrchestratorPromptSet(
+            system="system.md",
+        ),
+    )
+    model_sys = CapturingModel()
+    node_sys = OrchestratorNode(
+        spec=spec_sys,
+        node_path="root",
+        model=cast(Any, model_sys),
+        children=[],
+        filters=[],
+        base_dir=tmp_path,
+    )
+    await node_sys({"message": "hi", "visited": [], "used_tools": []})
+    expected_sys = f"System persona content\n\n\n{_ORCHESTRATOR_CONTRACT}"
+    assert model_sys.captured_prompt == expected_sys
+
+    # 3. Test orchestrator prompt only (no system) —
+    # description is used as base, then orchestrator is appended.
+    spec_orch = OrchestratorSpec(
+        id="orch",
+        name="orch",
+        description="orch desc",
+        model=_MODEL,
+        prompts=OrchestratorPromptSet(
+            orchestrator="orchestrator.md",
+        ),
+    )
+    model_orch = CapturingModel()
+    node_orch = OrchestratorNode(
+        spec=spec_orch,
+        node_path="root",
+        model=cast(Any, model_orch),
+        children=[],
+        filters=[],
+        base_dir=tmp_path,
+    )
+    await node_orch({"message": "hi", "visited": [], "used_tools": []})
+    expected_orch = f"orch desc\n\nOrchestrator routing content\n{_ORCHESTRATOR_CONTRACT}"
+    assert model_orch.captured_prompt == expected_orch
+
+    # 4. Test fallback to description
+    spec_desc = OrchestratorSpec(
+        id="orch",
+        name="orch",
+        description="orch desc",
+        model=_MODEL,
+        prompts=OrchestratorPromptSet(),
+    )
+    model_desc = CapturingModel()
+    node_desc = OrchestratorNode(
+        spec=spec_desc,
+        node_path="root",
+        model=cast(Any, model_desc),
+        children=[],
+        filters=[],
+        base_dir=tmp_path,
+    )
+    await node_desc({"message": "hi", "visited": [], "used_tools": []})
+    expected_desc = f"orch desc\n\n\n{_ORCHESTRATOR_CONTRACT}"
+    assert model_desc.captured_prompt == expected_desc

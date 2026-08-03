@@ -15,6 +15,7 @@ from agent_engine.generate.manifest import (
 class GenerateResult:
     created: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    ignored: list[str] = field(default_factory=list)
 
 
 class Generator:
@@ -37,6 +38,7 @@ class Generator:
             has_protected,
             mcp_plugin_ids,
         ) = _collect(spec.graph)
+        result.ignored.extend(tool.id for tool in spec.tools if tool.id not in tool_ids)
 
         tools_dir = base_dir / "plugins" / "tools"
         tools_dir.mkdir(parents=True, exist_ok=True)
@@ -126,8 +128,13 @@ class Generator:
         hook plugin classes. The runtime reads only [hooks.plugins] to resolve
         managed hook ids; other sections are documentation/generation metadata.
         """
-        manifest_path, created = ensure_plugins_manifest_exists(plugins_root)
-        pkg = manifest_package(manifest_path)
+        # The runtime imports plugin refs relative to plugins.import_roots, so
+        # the manifest's package prefix must be derived from the same roots.
+        import_roots = _resolved_import_roots(spec, plugins_root.parent)
+        manifest_path, created = ensure_plugins_manifest_exists(
+            plugins_root, import_roots=import_roots
+        )
+        pkg = manifest_package(manifest_path, import_roots)
 
         resolver_refs: dict[str, str] = {}
         if shared_ids:
@@ -352,3 +359,18 @@ def _collect_prompts(node: GraphNode) -> list[str]:
 
     walk(node)
     return paths
+
+
+def _resolved_import_roots(spec: SystemSpec, base_dir: Path) -> list[Path]:
+    """Resolve the spec's declared import roots, ignoring unusable ones.
+
+    Generation must not fail because a root does not exist yet — the directory
+    may be about to be scaffolded. An unresolvable root simply does not
+    contribute to the package prefix.
+    """
+    roots: list[Path] = []
+    for root in spec.plugins.import_roots:
+        candidate = (base_dir / root).resolve()
+        if candidate.is_dir():
+            roots.append(candidate)
+    return roots

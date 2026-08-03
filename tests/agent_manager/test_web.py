@@ -24,11 +24,15 @@ def test_widget_js_served_as_javascript(client: TestClient) -> None:
     assert "agent-chat" in r.text
 
 
-def test_demo_page_served_as_html(client: TestClient) -> None:
-    r = client.get("/demo")
+def test_playground_page_served_as_html(client: TestClient) -> None:
+    r = client.get("/playground")
     assert r.status_code == 200
     assert "text/html" in r.headers["content-type"]
     assert "<agent-chat" in r.text
+
+
+def test_old_demo_route_is_not_served(client: TestClient) -> None:
+    assert client.get("/demo").status_code == 404
 
 
 @pytest.mark.parametrize(

@@ -43,10 +43,25 @@ class Repository(ABC):
         title: str | None = None,
         metadata: dict[str, Any] | None = None,
         expires_at: datetime | None = None,
-    ) -> ConversationSession: ...
+    ) -> ConversationSession:
+        """Create the session, or return it untouched if the id is taken.
+
+        Every field here describes a session being born, so a taken id writes
+        nothing at all — not the owner, and not the title, config or expiry.
+        Otherwise naming a live id would be enough to take a conversation over,
+        or to rebind someone else's to another system. Later changes go through
+        the explicit operations, `rename_session` and the rest.
+        """
 
     @abstractmethod
     async def get_session(self, session_id: str) -> ConversationSession | None: ...
+
+    @abstractmethod
+    async def list_sessions(self, user_id: str, *, limit: int = 50) -> list[ConversationSession]:
+        """A user's sessions, most-recently-active first."""
+
+    @abstractmethod
+    async def rename_session(self, session_id: str, title: str) -> None: ...
 
     @abstractmethod
     async def append_message(

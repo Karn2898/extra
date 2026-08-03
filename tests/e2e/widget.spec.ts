@@ -2,15 +2,50 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 
 const history: Record<string, Array<{ role: string; content: string; created_at: string }>> = {};
 
-async function mockConversationApi(page: Page, options: { failSend?: boolean } = {}) {
+const ENDPOINT = "http://127.0.0.1:8123";
+const E2E_USER = "e2e-user";
+// Conversation storage is scoped by user, so a test that reads or seeds it has
+// to know which user the widget will pick. Pin the anonymous id it would
+// otherwise generate.
+const CONVERSATION_KEY = `agent-chat:${ENDPOINT}:${E2E_USER}`;
+
+async function pinUser(page: Page) {
+  await page.addInitScript(
+    ([endpoint, user]) => localStorage.setItem(`agent-chat:user:${endpoint}`, user),
+    [ENDPOINT, E2E_USER],
+  );
+}
+
+async function mockConversationApi(
+  page: Page,
+  options: {
+    failSend?: boolean;
+    threads?: Array<{ conversation_id: string; title: string | null; last_message_at: string | null }>;
+    usedTools?: Array<{ name: string; provider: string; status: string }>;
+  } = {},
+) {
   const calls: string[] = [];
 
-  await page.route("**/conversations", async (route) => {
-    calls.push(`${route.request().method()} ${new URL(route.request().url()).pathname}`);
+  await page.route(/\/conversations\?/, async (route) => {
+    calls.push(`GET ${new URL(route.request().url()).pathname}`);
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ conversation_id: "conv-smoke", session_id: "conv-smoke" }),
+      body: JSON.stringify(options.threads ?? []),
+    });
+  });
+
+  await page.route("**/conversations", async (route) => {
+    const method = route.request().method();
+    calls.push(`${method} ${new URL(route.request().url()).pathname}`);
+    expect(route.request().headers()["x-agent-chat-user"]).toBeTruthy();
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body:
+        method === "GET"
+          ? JSON.stringify(options.threads ?? [])
+          : JSON.stringify({ conversation_id: "conv-smoke", session_id: "conv-smoke" }),
     });
   });
 
@@ -43,7 +78,7 @@ async function mockConversationApi(page: Page, options: { failSend?: boolean } =
       body: [
         `event: answer_delta\ndata: ${JSON.stringify({ type: "answer_delta", content: "Echo: " })}`,
         `event: answer_delta\ndata: ${JSON.stringify({ type: "answer_delta", content: body.message || "" })}`,
-        `event: final\ndata: ${JSON.stringify({ type: "final", content: `Echo: ${body.message || ""}`, route: [], used_tools: [] })}`,
+        `event: final\ndata: ${JSON.stringify({ type: "final", content: `Echo: ${body.message || ""}`, route: [], used_tools: options.usedTools ?? [] })}`,
         "event: done\ndata: [DONE]",
         "",
       ].join("\n\n"),
@@ -92,7 +127,7 @@ async function mockConversationApi(page: Page, options: { failSend?: boolean } =
   return calls;
 }
 
-async function mockConversationApiWithStaleConversation(page: Page) {
+async function mockConversationApiWithStaleConversation(page: Page, staleStatus = 404) {
   const calls: string[] = [];
   let created = false;
 
@@ -114,9 +149,9 @@ async function mockConversationApiWithStaleConversation(page: Page) {
 
     if (conversationId === "conv-stale") {
       await route.fulfill({
-        status: 404,
+        status: staleStatus,
         contentType: "application/json",
-        body: JSON.stringify({ detail: "conversation not found" }),
+        body: JSON.stringify({ detail: "unavailable" }),
       });
       return;
     }
@@ -151,9 +186,9 @@ async function mockConversationApiWithStaleConversation(page: Page) {
 
     if (conversationId === "conv-stale") {
       await route.fulfill({
-        status: 404,
+        status: staleStatus,
         contentType: "application/json",
-        body: JSON.stringify({ detail: "conversation not found" }),
+        body: JSON.stringify({ detail: "unavailable" }),
       });
       return;
     }
@@ -241,6 +276,17 @@ async function shadowClick(page: Page, selector: string, index = 0) {
   }, selector);
 }
 
+async function shadowClickText(page: Page, selector: string, text: string, index = 0) {
+  const handle = await widget(page, index);
+  await handle.evaluate(
+    (element, { selector, text }) => {
+      const targets = Array.from(element.shadowRoot?.querySelectorAll<HTMLElement>(selector) ?? []);
+      targets.find((node) => node.textContent?.includes(text))?.click();
+    },
+    { selector, text },
+  );
+}
+
 async function shadowFocus(page: Page, selector: string, index = 0) {
   const handle = await widget(page, index);
   await handle.evaluate((element, selector) => {
@@ -291,7 +337,7 @@ test("floating widget loads, registers, opens, closes, and shows greeting", asyn
   await expect.poll(() => page.evaluate(() => Boolean(customElements.get("agent-chat")))).toBe(true);
   await expect.poll(async () => (await widget(page)).evaluate((element) => Boolean(element.shadowRoot))).toBe(true);
   await expect.poll(() => shadowExists(page, ".launcher")).toBe(true);
-  await expect.poll(() => shadowAttribute(page, ".launcher", "aria-label")).toBe("Open chat");
+  await expect.poll(() => shadowAttribute(page, ".launcher", "aria-label")).toBe("Open Assistant");
   await expect.poll(() => shadowAttribute(page, ".launcher", "aria-expanded")).toBe("false");
   await expect.poll(() => shadowAttribute(page, ".launcher", "aria-controls")).not.toBe("");
   await expect.poll(() => shadowAttribute(page, ".panel", "role")).toBe("dialog");
@@ -302,7 +348,7 @@ test("floating widget loads, registers, opens, closes, and shows greeting", asyn
   await expect.poll(() => shadowClassContains(page, ".panel", "open")).toBe(true);
   await expect.poll(() => shadowAttribute(page, ".launcher", "aria-expanded")).toBe("true");
   await expect.poll(() => shadowActiveMatches(page, ".input")).toBe(true);
-  await expect.poll(() => shadowText(page, ".messages")).toContain("Hi! How can I help?");
+  await expect.poll(() => shadowText(page, ".messages")).toContain("How can I help you today?");
 
   await shadowClick(page, ".close");
   await expect.poll(() => shadowClassContains(page, ".panel", "open")).toBe(false);
@@ -382,6 +428,7 @@ test("sending a message calls backend, renders assistant answer, stores conversa
   page,
 }) => {
   const calls = await mockConversationApi(page);
+  await pinUser(page);
   await page.goto("/widget-demo.html");
   await shadowClick(page, ".launcher");
   await shadowFill(page, ".input", "hello browser");
@@ -390,7 +437,7 @@ test("sending a message calls backend, renders assistant answer, stores conversa
   await expect.poll(() => shadowText(page, ".messages")).toContain("Echo: hello browser");
   await expect.poll(() => shadowActiveMatches(page, ".input")).toBe(true);
   await expect
-    .poll(() => page.evaluate(() => localStorage.getItem("agent-chat:http://127.0.0.1:8123")))
+    .poll(() => page.evaluate((key) => localStorage.getItem(key), CONVERSATION_KEY))
     .toBe("conv-smoke");
   expect(calls).toContain("POST /conversations");
   expect(calls).toContain("POST /conversations/conv-smoke/messages/stream");
@@ -400,6 +447,20 @@ test("sending a message calls backend, renders assistant answer, stores conversa
   await expect.poll(() => shadowText(page, ".messages")).toContain("hello browser");
   await expect.poll(() => shadowText(page, ".messages")).toContain("Echo: hello browser");
   expect(calls).toContain("GET /conversations/conv-smoke/messages");
+});
+
+test("tool activity shows the tool name without its internal provider", async ({ page }) => {
+  await mockConversationApi(page, {
+    usedTools: [{ name: "search_docs", provider: "mcp", status: "succeeded" }],
+  });
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "find the docs");
+  await page.keyboard.press("Enter");
+
+  await expect.poll(() => shadowText(page, ".messages")).toContain("Echo: find the docs");
+  await expect.poll(() => shadowText(page, ".tool-title")).toBe("search_docs");
+  await expect.poll(() => shadowText(page, ".tool-title")).not.toContain("mcp");
 });
 
 test("Shift+Enter inserts a newline and Enter sends", async ({ page }) => {
@@ -432,10 +493,280 @@ test("backend error renders a user-friendly message", async ({ page }) => {
   await expect.poll(() => shadowText(page, ".messages")).toContain("Something went wrong. Please try again.");
 });
 
-test("stale stored conversation is replaced before sending to the agent", async ({ page }) => {
-  const calls = await mockConversationApiWithStaleConversation(page);
+test("budget meter shows cumulative token usage against the budget after a turn", async ({ page }) => {
+  await mockConversationApi(page);
+  await page.route("**/conversations/*/usage", async (route: Route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        used_tokens: 900,
+        max_tokens: 1000,
+        percent: 90,
+        severity: "critical",
+      }),
+    });
+  });
   await page.goto("/widget-demo.html");
-  await page.evaluate(() => localStorage.setItem("agent-chat:http://127.0.0.1:8123", "conv-stale"));
+  await shadowClick(page, ".launcher");
+
+  await shadowFill(page, ".input", "hello");
+  await page.keyboard.press("Enter");
+
+  await expect.poll(() => shadowText(page, ".messages")).toContain("Echo: hello");
+  await expect.poll(() => shadowExists(page, ".budget-meter")).toBe(true);
+  await expect.poll(() => shadowText(page, ".budget-percent")).toBe("90%");
+  await expect.poll(() => shadowClassContains(page, ".budget-meter", "critical")).toBe(true);
+});
+
+test("budget meter stays hidden when no budget is configured", async ({ page }) => {
+  await mockConversationApi(page);
+  await page.route("**/conversations/*/usage", async (route: Route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ used_tokens: 0, max_tokens: null, percent: 0, severity: "normal" }),
+    });
+  });
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "hello");
+  await page.keyboard.press("Enter");
+
+  await expect.poll(() => shadowText(page, ".messages")).toContain("Echo: hello");
+  await expect.poll(() => shadowExists(page, ".budget-meter")).toBe(false);
+});
+
+test("thread drawer lists conversations, switches to one, and starts a new chat", async ({ page }) => {
+  await mockConversationApi(page, {
+    threads: [
+      { conversation_id: "conv-old", title: "Older chat", last_message_at: "2026-06-01T00:00:00Z" },
+    ],
+  });
+  await page.route("**/conversations/conv-old/messages", async (route: Route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        { role: "user", content: "old question", created_at: "2026-06-01T00:00:00Z" },
+        { role: "assistant", content: "old answer", created_at: "2026-06-01T00:00:00Z" },
+      ]),
+    });
+  });
+
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+
+  await shadowClick(page, '.header-btn[aria-label="Conversations"]');
+  await expect.poll(() => shadowClassContains(page, ".thread-drawer", "open")).toBe(true);
+  await expect.poll(() => shadowText(page, ".thread-item")).toContain("Older chat");
+
+  await shadowClick(page, ".thread-item");
+  await expect.poll(() => shadowText(page, ".messages")).toContain("old answer");
+  await expect.poll(() => shadowClassContains(page, ".thread-drawer", "open")).toBe(false);
+
+  await shadowClick(page, '.header-btn[aria-label="New chat"]');
+  await expect.poll(() => shadowText(page, ".messages")).toContain("How can I help you today?");
+});
+
+test("thinking dots persist when switching away from an in-flight thread and back", async ({
+  page,
+}) => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  await mockConversationApi(page, {
+    threads: [
+      { conversation_id: "conv-other", title: "Other chat", last_message_at: "2026-06-01T00:00:00Z" },
+      { conversation_id: "conv-smoke", title: "Current chat", last_message_at: "2026-06-28T00:00:00Z" },
+    ],
+  });
+  await page.route("**/conversations/conv-other/messages", async (route: Route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.route("**/conversations/conv-smoke/messages/stream", async (route: Route) => {
+    await pending;
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: [
+        `event: final\ndata: ${JSON.stringify({ type: "final", content: "done", route: [], used_tools: [] })}`,
+        "event: done\ndata: [DONE]",
+        "",
+      ].join("\n\n"),
+    });
+  });
+
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "hello");
+  await shadowClick(page, ".send");
+
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(true);
+
+  await shadowClick(page, '.header-btn[aria-label="Conversations"]');
+  await shadowClickText(page, ".thread-item", "Other chat");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(false);
+
+  await shadowClick(page, '.header-btn[aria-label="Conversations"]');
+  await shadowClickText(page, ".thread-item", "Current chat");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(true);
+
+  release();
+  await expect.poll(() => shadowText(page, ".messages")).toContain("done");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(false);
+});
+
+test("a turn stays on its own conversation when the user switches threads mid-request", async ({
+  page,
+}) => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const usageCalls: string[] = [];
+
+  const calls = await mockConversationApi(page, {
+    threads: [
+      { conversation_id: "conv-other", title: "Other chat", last_message_at: "2026-06-01T00:00:00Z" },
+      { conversation_id: "conv-smoke", title: "Current chat", last_message_at: "2026-06-28T00:00:00Z" },
+    ],
+  });
+  await page.route("**/conversations/*/usage", async (route: Route) => {
+    usageCalls.push(new URL(route.request().url()).pathname);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ used_tokens: 0, max_tokens: null, percent: 0, severity: "normal" }),
+    });
+  });
+  // Hold the stream open until the user has switched away, then fail it: the
+  // widget retries the turn without streaming, and that retry must still go to
+  // the conversation the turn started in.
+  await page.route("**/conversations/conv-smoke/messages/stream", async (route: Route) => {
+    await pending;
+    await route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ detail: "stream unavailable" }),
+    });
+  });
+  await page.route("**/conversations/conv-other/messages", async (route: Route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "hello");
+  await shadowClick(page, ".send");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(true);
+
+  await shadowClick(page, '.header-btn[aria-label="Conversations"]');
+  await shadowClickText(page, ".thread-item", "Other chat");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(false);
+
+  release();
+
+  await expect.poll(() => calls).toContain("POST /conversations/conv-smoke/messages");
+  expect(calls).not.toContain("POST /conversations/conv-other/messages");
+  await expect
+    .poll(() => usageCalls[usageCalls.length - 1])
+    .toBe("/conversations/conv-smoke/usage");
+});
+
+async function mockConversationApiWithTokenBudgetExceeded(page: Page) {
+  const calls: string[] = [];
+
+  await page.route("**/conversations", async (route) => {
+    calls.push(`${route.request().method()} ${new URL(route.request().url()).pathname}`);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ conversation_id: "conv-budget", session_id: "conv-budget" }),
+    });
+  });
+
+  await page.route("**/conversations/*/messages/stream", async (route: Route) => {
+    calls.push(`${route.request().method()} ${new URL(route.request().url()).pathname}`);
+    await route.fulfill({
+      status: 429,
+      contentType: "application/json",
+      body: JSON.stringify({
+        detail: {
+          error_type: "context_limit_exceeded",
+          message: "This conversation has reached its context limit. Start a new chat to continue.",
+        },
+      }),
+    });
+  });
+
+  await page.route("**/conversations/*/messages", async (route: Route) => {
+    calls.push(`${route.request().method()} ${new URL(route.request().url()).pathname}`);
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([]),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 429,
+      contentType: "application/json",
+      body: JSON.stringify({
+        detail: {
+          error_type: "context_limit_exceeded",
+          message: "This conversation has reached its context limit. Start a new chat to continue.",
+        },
+      }),
+    });
+  });
+
+  return calls;
+}
+
+test("token budget exceeded shows context-limit message instead of generic error", async ({
+  page,
+}) => {
+  const calls = await mockConversationApiWithTokenBudgetExceeded(page);
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "one more message");
+  await shadowClick(page, ".send");
+
+  await expect
+    .poll(() => shadowText(page, ".messages"))
+    .toContain("This conversation has reached its context limit. Start a new chat to continue.");
+  const text = await shadowText(page, ".messages");
+  expect(text).not.toContain("Something went wrong. Please try again.");
+  expect(calls).toContain("POST /conversations/conv-budget/messages/stream");
+  expect(calls).not.toContain("POST /conversations/conv-budget/messages");
+
+  const inputEl = page.locator("agent-chat");
+  const isDisabled = await inputEl.evaluate(
+    (el) => !!el.shadowRoot?.querySelector(".input")?.hasAttribute("disabled"),
+  );
+  expect(isDisabled).toBe(true);
+
+  const placeholder = await shadowAttribute(page, ".input", "placeholder");
+  expect(placeholder).toBe("Context limit reached.");
+});
+
+test("a stored conversation owned by another caller is replaced, not retried forever", async ({
+  page,
+}) => {
+  // What a host app switching users looks like: the stored id outlives the
+  // identity that created it, so the server answers 403 and the widget has to
+  // start over rather than sit on an id it can never use.
+  const calls = await mockConversationApiWithStaleConversation(page, 403);
+  await pinUser(page);
+  await page.goto("/widget-demo.html");
+  await page.evaluate((key) => localStorage.setItem(key, "conv-stale"), CONVERSATION_KEY);
 
   await shadowClick(page, ".launcher");
   await shadowFill(page, ".input", "recover please");
@@ -443,7 +774,25 @@ test("stale stored conversation is replaced before sending to the agent", async 
 
   await expect.poll(() => shadowText(page, ".messages")).toContain("Recovered: recover please");
   await expect
-    .poll(() => page.evaluate(() => localStorage.getItem("agent-chat:http://127.0.0.1:8123")))
+    .poll(() => page.evaluate((key) => localStorage.getItem(key), CONVERSATION_KEY))
+    .toBe("conv-fresh");
+  expect(calls).toContain("POST /conversations/conv-fresh/messages/stream");
+});
+
+test("stale stored conversation is replaced before sending to the agent", async ({ page }) => {
+
+  const calls = await mockConversationApiWithStaleConversation(page);
+  await pinUser(page);
+  await page.goto("/widget-demo.html");
+  await page.evaluate((key) => localStorage.setItem(key, "conv-stale"), CONVERSATION_KEY);
+
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "recover please");
+  await shadowClick(page, ".send");
+
+  await expect.poll(() => shadowText(page, ".messages")).toContain("Recovered: recover please");
+  await expect
+    .poll(() => page.evaluate((key) => localStorage.getItem(key), CONVERSATION_KEY))
     .toBe("conv-fresh");
   expect(calls).toContain("GET /conversations/conv-stale/messages");
   expect(calls).toContain("POST /conversations");

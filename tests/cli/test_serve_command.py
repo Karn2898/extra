@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 from click.testing import CliRunner
 
+from agentctl.diagnostics import ValidationResult
 from agentctl.main import cli
 
 DEFAULT_PORT = 8090
@@ -25,8 +26,15 @@ def captured_run(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
         captured["host"] = host
         captured["port"] = port
 
+    def fake_create_app(config: str) -> object:
+        captured["app_created"] = config
+        return object()
+
     monkeypatch.setattr("agentctl.main.load_env", lambda config, env: None)
-    monkeypatch.setattr("agent_engine.api.app.create_app", lambda config: object())
+    monkeypatch.setattr(
+        "agentctl.diagnostics.validate_spec", lambda config: ValidationResult(ok=True)
+    )
+    monkeypatch.setattr("agent_engine.api.app.create_app", fake_create_app)
     monkeypatch.setattr(uvicorn, "run", fake_run)
     return captured
 
@@ -44,8 +52,31 @@ def test_serve_port_flag_overrides_default(captured_run: dict[str, object]) -> N
 
 
 def test_serve_port_env_var_overrides_default(captured_run: dict[str, object]) -> None:
-    res = CliRunner().invoke(
-        cli, ["serve", "--config", "agents.yml"], env={"PORT": "9000"}
-    )
+    res = CliRunner().invoke(cli, ["serve", "--config", "agents.yml"], env={"PORT": "9000"})
     assert res.exit_code == 0, res.output
     assert captured_run["port"] == 9000
+
+
+def test_serve_rejects_invalid_config_before_startup(
+    captured_run: dict[str, object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "agentctl.diagnostics.validate_spec",
+        lambda config: ValidationResult(
+            ok=False,
+            errors=[
+                "[openwebui.prompts.system] prompt is not implemented",
+                "[tools.add_new_user] tool is not implemented",
+            ],
+        ),
+    )
+
+    res = CliRunner().invoke(cli, ["serve", "--config", "agents.yml"])
+
+    assert res.exit_code == 1
+    assert "Validation failed:" in res.output
+    assert "[openwebui.prompts.system] prompt is not implemented" in res.output
+    assert "[tools.add_new_user] tool is not implemented" in res.output
+    assert "Traceback" not in res.output
+    assert "app_created" not in captured_run
+    assert "host" not in captured_run

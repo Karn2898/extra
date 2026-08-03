@@ -72,9 +72,13 @@ def generate(config: str) -> None:
         click.echo(f"  create  {name}")
     for name in result.skipped:
         click.echo(f"  skip    {name}")
+    for name in result.ignored:
+        click.echo(f"  ignore  {name}  (declared but not referenced by any agent)")
 
     if result.created:
         click.echo(f"\n✓ Created {len(result.created)} stub(s). Fill in the method bodies.")
+    elif result.ignored:
+        click.echo("✓ Nothing to generate — no referenced stubs are missing.")
     else:
         click.echo("✓ Nothing to generate — all stubs already exist.")
 
@@ -165,7 +169,7 @@ async def _run_async(
             await service.create(user_id=effective_user_id, session_id=effective_session_id)
             if stream:
                 async for event in service.stream(
-                    effective_session_id, message, user_id=effective_user_id
+                    effective_session_id, message, caller_id=effective_user_id
                 ):
                     if event.type == "route" and event.route:
                         click.echo(f"  route  : {' → '.join(event.route)}", err=True)
@@ -175,7 +179,7 @@ async def _run_async(
                 sys.stdout.write("\n")
             else:
                 result = await service.send(
-                    effective_session_id, message, user_id=effective_user_id
+                    effective_session_id, message, caller_id=effective_user_id
                 )
                 click.echo(f"  route  : {' → '.join(result.visited)}", err=True)
                 click.echo("")
@@ -201,8 +205,14 @@ def serve(config: str, host: str, port: int, env: str | None) -> None:
     import uvicorn
 
     from agent_engine.api.app import create_app
+    from agentctl.diagnostics import format_validation_report, validate_spec
 
     load_env(config, env)
+
+    validation = validate_spec(config)
+    if not validation.ok:
+        click.echo(format_validation_report(validation), err=True)
+        sys.exit(1)
 
     app = create_app(config)
     uvicorn.run(app, host=host, port=port)

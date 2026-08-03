@@ -7,6 +7,9 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
+BUDGET_WARNING_PERCENT = 65.0
+BUDGET_CRITICAL_PERCENT = 85.0
+
 
 class Role(StrEnum):
     USER = "user"
@@ -94,3 +97,47 @@ class ConversationContext:
     message_count: int
     source: str
     snapshot: ConversationSnapshot | None = None
+
+
+def thread_title(content: str, *, limit: int = 48) -> str:
+    text = " ".join(content.split())
+    if not text:
+        return "New chat"
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+class BudgetSeverity(StrEnum):
+    NORMAL = "normal"
+    WARNING = "warning"
+    CRITICAL = "critical"
+
+
+@dataclass(frozen=True)
+class TokenBudgetUsage:
+    """How much of a conversation's lifetime token budget has been spent.
+
+    This is cumulative consumption — every turn's input + output tokens summed
+    over the whole conversation — measured against `context_max_tokens`, the
+    budget the service enforces (see `ConversationTokenBudgetExceeded`). It is
+    deliberately *not* the size of the context window currently sent to the
+    model: history is re-sent each turn, so the same message is counted again
+    every time it is included.
+    """
+
+    used_tokens: int
+    max_tokens: int | None
+    percent: float
+    severity: BudgetSeverity
+
+    @classmethod
+    def from_totals(cls, used_tokens: int, max_tokens: int | None) -> TokenBudgetUsage:
+        if not max_tokens:
+            return cls(used_tokens, max_tokens, 0.0, BudgetSeverity.NORMAL)
+        percent = min(used_tokens / max_tokens * 100, 100.0)
+        if percent >= BUDGET_CRITICAL_PERCENT:
+            severity = BudgetSeverity.CRITICAL
+        elif percent >= BUDGET_WARNING_PERCENT:
+            severity = BudgetSeverity.WARNING
+        else:
+            severity = BudgetSeverity.NORMAL
+        return cls(used_tokens, max_tokens, percent, severity)

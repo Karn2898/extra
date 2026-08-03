@@ -54,8 +54,7 @@ from agent_engine.runtime.tool_models import ToolProviderName, ToolUsageRecord
 
 logger = logging.getLogger(__name__)
 
-# Appended to every orchestrator system prompt.
-# Enforces the core design contract: agents are the source of truth, not the LLM.
+
 _ORCHESTRATOR_CONTRACT = """
 ## Instructions
 - You MUST use the available agent tools to answer requests. Never answer from general knowledge.
@@ -103,8 +102,6 @@ class DenyTool:
     message: str
 
 
-# A tagged result instead of ``str | None``: the caller branches on the type,
-# never on a magic ``None`` that secretly means "proceed".
 ToolGate = ExecuteTool | DenyTool
 
 
@@ -237,7 +234,6 @@ class AgentNode:
         gate = await self._gate_tool_call(call)
         if isinstance(gate, DenyTool):
             return gate.message
-        # gate is ExecuteTool — the gate is open; fall through to run the tool.
 
         cached = await self._cached_result(call, used_tools)
         if cached is not None:
@@ -351,7 +347,8 @@ class AgentNode:
         """
         error = str(exc)[:200]
         used_tools.append(self._usage(call, "failed", error=error))
-        self._log_call(logging.WARNING, "tool call failed", call, ms=latency_ms)
+        self._log_call(logging.WARNING, "tool call failed", call, ms=latency_ms, error=error)
+
         await self._hook_manager.run_on_tool_error(
             current_run_context.get(),
             self._call_context(call, "failed", latency_ms, error=error),
@@ -536,6 +533,8 @@ class OrchestratorNode:
     async def __call__(self, state: GraphState) -> dict[str, object]:
         candidates = self._filter_children(state)
         base_prompt = load_file(self._base_dir, self._spec.prompts.system) or self._spec.description
+        orchestrator_content = load_file(self._base_dir, self._spec.prompts.orchestrator)
+        base_prompt = f"{base_prompt}\n\n{orchestrator_content}"
         system_prompt = f"{base_prompt}\n{_ORCHESTRATOR_CONTRACT}"
         return await self._run(system_prompt, candidates, state)
 

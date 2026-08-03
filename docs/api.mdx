@@ -86,15 +86,46 @@ Base URL: `http://localhost:8100`
 
 Manages multi-turn conversations with history persisted in SQLite (or Postgres via `DATABASE_URL`).
 
+### Caller identity
+
+Every conversation route identifies its caller by the `X-Agent-Chat-User`
+header, and a conversation can only be listed, read, or written by the caller
+that owns it — the conversation id alone grants nothing. A missing or empty
+header means anonymous; ids longer than 64 characters are rejected with `400`.
+
+<Warning>
+Out of the box the header is unverified: the widget generates a random id and
+stores it in `localStorage`, which scopes conversations but proves nothing. It
+is the single source of caller identity, so a deployment that needs a real
+boundary overrides one dependency and derives the principal from a verified
+credential instead:
+
+```python
+from agent_manager.api.deps import get_caller_id
+
+app.dependency_overrides[get_caller_id] = my_authenticated_principal
+```
+
+Until that override is in place, treat these routes as an anonymous API and do
+not put private data behind them.
+</Warning>
+
 ### `POST /conversations`
 
-Create a new conversation. The body is optional; `session_id` and `user_id`
-may be supplied.
+Create a new conversation, owned by the calling user. The body is optional; a
+`session_id` may be supplied to give the conversation a stable, caller-chosen
+id.
+
+A supplied id is a name, not a claim. Re-creating an id you already own returns
+it unchanged, which keeps creation idempotent; asking for one owned by someone
+else returns `409` and never transfers ownership. A conversation's owner is
+fixed at creation.
 
 ```bash
 curl -X POST http://localhost:8100/conversations \
   -H "Content-Type: application/json" \
-  -d '{ "user_id": "user-123" }'
+  -H "X-Agent-Chat-User: user-123" \
+  -d '{}'
 ```
 
 Response:
@@ -103,6 +134,8 @@ Response:
 { "conversation_id": "0d5a…", "session_id": "0d5a…" }
 ```
 
+Errors: `409` the supplied `session_id` belongs to another user.
+
 ### `POST /conversations/{id}/messages`
 
 Send a message. Prior history is assembled automatically.
@@ -110,6 +143,7 @@ Send a message. Prior history is assembled automatically.
 ```bash
 curl -X POST http://localhost:8100/conversations/0d5a…/messages \
   -H "Content-Type: application/json" \
+  -H "X-Agent-Chat-User: user-123" \
   -d '{ "message": "Where is my order?" }'
 ```
 
@@ -125,7 +159,8 @@ Response:
 }
 ```
 
-Errors: `404` unknown conversation, `429` conversation token budget exceeded.
+Errors: `404` unknown conversation, `403` conversation owned by another user,
+`429` conversation token budget exceeded.
 
 ### `POST /conversations/{id}/messages/stream`
 
@@ -135,6 +170,7 @@ an `event:` name matching its `type`; `null` fields are omitted.
 ```bash
 curl -X POST http://localhost:8100/conversations/0d5a…/messages/stream \
   -H "Content-Type: application/json" \
+  -H "X-Agent-Chat-User: user-123" \
   -d '{ "message": "Where is my order?" }'
 ```
 
@@ -167,7 +203,8 @@ The event schema also declares `tool_started` / `tool_succeeded` /
 Retrieve message history for a conversation.
 
 ```bash
-curl http://localhost:8100/conversations/0d5a…/messages
+curl http://localhost:8100/conversations/0d5a…/messages \
+  -H "X-Agent-Chat-User: user-123"
 ```
 
 Response:
@@ -188,8 +225,9 @@ context into the run:
 
 - `X-Session-ID` (Engine API) becomes the run's conversation id, visible to
   tracing.
-- `user_id` (Conversation API request bodies) is attached to the run context
-  and persisted with the conversation.
+- `X-Agent-Chat-User` (Conversation API) identifies the caller; the owner
+  recorded on the conversation becomes `run_context.user_id` and is persisted
+  with each message.
 
 Populating `run_context.auth_context` (scopes, roles, inbound access token)
 from request headers is part of the security/context gate that is not wired
