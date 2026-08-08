@@ -48,7 +48,9 @@ It works with the APIs, business logic, and workflows you already have — witho
 
 ## Quick Start
 
-You need Docker and an API key for your model provider.
+You need Docker and a language model.
+
+Use a supported cloud provider with an API key, or run open-source models locally with Ollama.
 
 Create `agents.yml` — an orchestrator that routes to two focused agents:
 
