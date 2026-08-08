@@ -73,7 +73,7 @@ class LoadedHook:
 
 
 async def _invoke(
-        hook: LoadedHook,
+    hook: LoadedHook,
     *,
     payload: object,
     positional: tuple[Any, ...],
