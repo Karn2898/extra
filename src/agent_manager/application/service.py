@@ -257,6 +257,7 @@ class ConversationService:
         if session is None:
             raise ConversationNotFound(conversation_id)
         return session
+
     async def _authorize(self, conversation_id: str, caller_id: str | None) -> ConversationSession:
         """Resolve a conversation the caller owns.
 

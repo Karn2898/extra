@@ -425,6 +425,3 @@ def test_tool_error_text_is_sanitized_in_stream_message() -> None:
     assert response.status_code == 200
     assert "Tool execution failed" in response.text
     assert "localhost" not in response.text
-
-
-

@@ -44,9 +44,7 @@ async def test_orchestrator_routes_to_echo_and_calls_tool() -> None:
     async with FakeEngine() as engine:
         result = await engine.run("echo_agent echo test")
         assert "root_router/echo_agent" in result.visited
-        echo_record = next(
-            record for record in result.used_tools if record.name == "echo_tool"
-        )
+        echo_record = next(record for record in result.used_tools if record.name == "echo_tool")
         assert echo_record.status == "succeeded"
         assert echo_record.error is None
         assert result.answer

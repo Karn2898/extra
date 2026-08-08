@@ -1,4 +1,5 @@
 """Tests for `agentctl generate`: artifacts are created, and a second run skips."""
+
 from __future__ import annotations
 
 from pathlib import Path
