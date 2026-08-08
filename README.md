@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-<h1 align="center">Make your product queryable.</h1>
+<h1 align="center">Add AI to the product you already built.</h1>
 
 <p align="center">
   Turn the APIs, tools, and business logic you already have into a secure AI
@@ -28,13 +28,13 @@
 
 ---
 
-Your users shouldn't have to learn your UI to get an answer out of it.
+Your users shouldn't have to learn your UI to get an answer out of it. Extra
+lets them ask questions and trigger actions using the APIs and business logic
+you already built.
 
-Extra lets them ask questions and trigger actions using the APIs and business
-logic you already built.
-
-Define the system in YAML. Extra handles routing, orchestration, and access
-boundaries while your logic and credentials stay in your backend.
+Define and deploy your agentic system from YAML. Extra handles routing,
+orchestration, and access boundaries while your logic and credentials stay in
+your backend.
 
 ## Why Extra
 
@@ -47,75 +47,119 @@ already have.
 **Keep access control outside the model.** Authorization runs in trusted code —
 the model cannot grant itself access to protected capabilities.
 
-**Avoid model lock-in.** Switch model providers through configuration rather
-than rewriting your product.
+**Graph-based orchestration.** Extra routes requests through an explicit graph
+of orchestrators and focused agents, keeping execution predictable, observable,
+easy to debug, and easy to extend.
 
-**Embed it in your product.** Serve the system as an API or as an embeddable
-chat component.
+**Add it to your product.** Embed the system as a chat widget or expose it
+through an API.
 
 ## Quick Start
 
 You need Docker and an API key for your model provider.
 
-Create `agents.yml` — a single agent is a complete system:
+Create `agents.yml` — an orchestrator that routes to two focused agents:
 
 ```yaml
 system:
-  name: "Support Bot"
+  name: "Support Assistant"
 
 defaults:
   model:
     provider: anthropic
     name: claude-sonnet-4-6
 
-agents:
-  support_agent:
-    description: "Answers questions about orders and returns."
+orchestrators:
+  support_router:
+    description: "Routes each request to the agent that owns it."
     prompts:
-      system: "prompts/support.md"
+      orchestrator: prompts/support_router/orchestrator.md
 
+agents:
+  orders_agent:
+    description: "Answers questions about orders, shipping, and returns."
+    prompts:
+      system: prompts/orders_agent/system.md
+
+  billing_agent:
+    description: "Answers questions about invoices, plans, and refunds."
+    prompts:
+      system: prompts/billing_agent/system.md
+
+# Indentation is the hierarchy: the orchestrator routes to both agents.
 graph:
-  support_agent:
+  support_router:
+    orders_agent:
+    billing_agent:
 ```
 
-Write the prompt it references, in `prompts/support.md`:
-
-```markdown
-You are a support agent for an online store. Answer questions about orders
-and returns.
-```
-
-Run it:
+Scaffold the prompt and plugin stubs the YAML references. It never overwrites a
+file you already wrote:
 
 ```bash
-docker run -p 8090:8090 -v "$(pwd):/workspace" -w /workspace \
-  -e ANTHROPIC_API_KEY=sk-... \
-  ghcr.io/extra-org/extra:latest serve --config agents.yml
+agentctl generate --config agents.yml
+
+# or via the Docker image, which supplies the `agentctl` prefix for you:
+docker run --rm -v "$(pwd):/workspace" -w /workspace \
+  ghcr.io/extra-org/extra:latest generate --config agents.yml
 ```
 
-Your system is live at `http://localhost:8090` — send it a message with
-`POST /invoke`.
+Fill in the three prompt stubs it created:
 
-Tools, MCP servers, routing between agents, conversation history, and the chat
-widget are covered in the
+```markdown
+<!-- prompts/support_router/orchestrator.md -->
+Route orders, shipping, and returns to orders_agent.
+Route invoices, plans, and refunds to billing_agent.
+
+<!-- prompts/orders_agent/system.md -->
+You answer questions about orders, shipping, and returns.
+
+<!-- prompts/billing_agent/system.md -->
+You answer questions about invoices, plans, and refunds.
+```
+
+Run it with Agent Manager, which serves the conversation API, history, and the
+chat widget:
+
+```bash
+docker run -p 8100:8100 -v "$(pwd):/workspace" -w /workspace \
+  -e ANTHROPIC_API_KEY=sk-... \
+  ghcr.io/extra-org/extra:latest \
+  agent-manager --config agents.yml --port 8100
+```
+
+Talk to it in the browser at **http://localhost:8100/playground**, or over the
+API — create a conversation with an id you choose, then send it a message:
+
+```bash
+curl -X POST http://localhost:8100/conversations \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"readme-demo"}'
+
+curl -X POST http://localhost:8100/conversations/readme-demo/messages \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Tell me about my system"}'
+```
+
+Tools, MCP servers, deeper routing, per-node authorization, and embedding the
+chat widget are covered in the
 [Quickstart](https://docs.extra-ai.co/docs/quickstart).
 
 ## Features
 
 - YAML-defined agents and routing
 - Local Python tools and remote MCP servers
-- Per-node authorization
-- Human-in-the-loop tool approvals
+- Per-node authorization and human-in-the-loop tool approvals
 - Anthropic, OpenAI, Gemini, and Bedrock
-- Streaming API
+- Streaming API and embeddable web component
 - Structured logs and Langfuse tracing
-- Embeddable web component
 
 ## Architecture
 
-An orchestrator routes each request; focused agents do the domain work. Each
-agent is scoped to its own prompt, tools, and domain data, which keeps answers
-grounded in the right part of your business.
+Extra is built around an explicit graph you declare in YAML. Orchestrators route
+each request to focused agents, and every agent owns its own prompts, tools, MCP
+servers, and boundaries. Nothing routes implicitly — which keeps answers grounded
+in the right part of your business, and every run predictable and traceable.
 
 ```mermaid
 flowchart TD
@@ -143,20 +187,13 @@ tools, access checks, and the values resolved into prompts.
 
 ## Who is Extra for?
 
-Extra is built for teams adding an AI interface to:
+Teams adding an AI interface to existing SaaS products, internal enterprise
+systems, customer support workflows, or multi-tenant products with strict access
+boundaries.
 
-- Existing SaaS products
-- Internal enterprise systems
-- Customer support workflows
-- Multi-step business operations
-- Multi-tenant products with strict access boundaries
-
-### Extra may be unnecessary if
-
-- You need a single prompt with a few simple tools.
-- You are building a chatbot with no product or backend integration.
-- You need full low-level control over the orchestration runtime.
-- Your workload is primarily batch or offline processing.
+It may be unnecessary if you need a single prompt with a few tools, a chatbot
+with no backend integration, low-level control over the orchestration runtime,
+or batch processing.
 
 ## Contributing
 
