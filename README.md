@@ -5,10 +5,10 @@
   </picture>
 </p>
 
-<h1 align="center">Turn your product into an AI-powered assistant that understands your business.</h1>
+<h1 align="center">Turn your product into an AI-powered assistant.</h1>
 
 <p align="center">
-  Extra lets you build AI-powered assistants that understand your workflows, use your existing APIs and business logic, and delegate work to AI specialists.
+  Extra turns your existing APIs, business logic, and workflows into an AI-powered assistant. Users can ask, act, and get things done through a single interface.
 </p>
 
 <p align="center">
@@ -27,27 +27,21 @@
 ---
 Instead of navigating complex UIs, users simply ask.
 
-Extra translates those requests into your existing APIs, business logic,
-and workflows.
+Extra routes each request to the right AI specialist and executes the workflow through your existing backend.
 
 
 ## Why Extra
 
-Most AI frameworks start with prompts.
+**Not just a chatbot.** Extra doesn't stop at answering questions. It can execute real product workflows using your existing APIs and tools.
 
-Extra starts with your product.
+* **Specialized by design.** Each AI specialist owns a specific part of your business.
 
-It connects your existing backend to a network of focused AI specialists.
+* **Your backend stays in control.** Business logic, data, credentials, and authorization remain in trusted code.
 
-* **Specialized by design.** Each specialist understands one part of your business.
+* **Explicit orchestration.** Work moves between specialists through predictable and inspectable execution paths.
 
-* **Built on your backend.** Your existing APIs, tools, and services remain the source of truth.
+* **Built for your product.** Expose Extra through an API or embed the assistant directly into your application.
 
-* **Explicit workflows.** Requests move through predictable, inspectable execution paths.
-
-* **Authorization outside the model.** Access decisions stay in trusted code.
-
-* **Easy to embed.** Expose Extra through an API or add it directly to your product.
 
 
 ## Quick Start
@@ -73,12 +67,12 @@ orchestrators:
 
 agents:
   orders_agent:
-    description: "Answers questions about orders, shipping, and returns."
+    description: "Handles order status, shipping changes, and returns."
     prompts:
       system: prompts/orders_agent/system.md
 
   billing_agent:
-    description: "Answers questions about invoices, plans, and refunds."
+    description: "Handles invoices, subscriptions, and refunds."
     prompts:
       system: prompts/billing_agent/system.md
 
@@ -108,10 +102,10 @@ Route orders, shipping, and returns to orders_agent.
 Route invoices, plans, and refunds to billing_agent.
 
 <!-- prompts/orders_agent/system.md -->
-You answer questions about orders, shipping, and returns.
+Handle order status, shipping changes, and returns using the available tools.
 
 <!-- prompts/billing_agent/system.md -->
-You answer questions about invoices, plans, and refunds.
+Handle invoices, subscriptions, and refunds using the available tools.
 ```
 
 Run it with Agent Manager, which serves the conversation API, history, and the
@@ -145,8 +139,8 @@ chat widget are covered in the
 
 - AI specialists
 - Workflow orchestration
-- Local tools and MCP
 - Authorization outside the LLM
+- Local tools and MCP
 - Human approvals
 - Streaming API
 - Embeddable chat widget
@@ -155,7 +149,7 @@ chat widget are covered in the
 
 ## Architecture
 
-Extra executes an explicit graph.
+Extra executes an explicit orchestration graph.
 
 Orchestrators route requests to AI specialists. Each specialist owns its own prompts, tools, MCP servers, and authorization.
 
@@ -163,18 +157,19 @@ Your business logic stays in your backend. Extra only orchestrates execution.
 
 ```mermaid
 flowchart TD
-    U([User request]) --> R{{Orchestrator<br/>routes by domain}}
-    R -->|billing| A1[Billing agent]
-    R -->|orders| A2[Orders agent]
-    R -->|docs| A3[Docs agent]
+    U([User request]) --> R{{Orchestrator}}
 
-    A1 --- P1[/prompt · tools · MCP · auth/]
-    A2 --- P2[/prompt · tools · MCP · auth/]
-    A3 --- P3[/prompt · tools · MCP · auth/]
+    R --> A1[Billing specialist]
+    R --> A2[Orders specialist]
+    R --> A3[Docs specialist]
 
-    A1 --> RESP([Grounded response])
-    A2 --> RESP
-    A3 --> RESP
+    A1 --> T1[Business logic / APIs]
+    A2 --> T2[Business logic / APIs]
+    A3 --> T3[Business logic / APIs]
+
+    T1 --> RESP([Response])
+    T2 --> RESP
+    T3 --> RESP
 ```
 
 Extra runs the graph. Your project's plugins hold the trusted business logic —
