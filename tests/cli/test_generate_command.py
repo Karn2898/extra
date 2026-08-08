@@ -6,10 +6,9 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from agentctl.main import cli
-from tests.fixtures.utils import FIXTURE_DIR
+from tests.fixtures.utils import fixture_path
 
-
-FIXTURE_YAML = FIXTURE_DIR / "test_system" / "agents.yaml"
+FIXTURE_YAML = fixture_path("test_system", "agents.yaml")
 
 
 def test_generate_reports_unused_declared_tools(tmp_path: Path) -> None:
