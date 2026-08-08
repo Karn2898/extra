@@ -50,17 +50,18 @@ class RunLifecycle:
         return ctx
 
     async def _register(self, ctx: RunContext) -> None:
-        """Record the run as ``RUNNING`` unless the registry already knows it."""
+        """Record the run as ``RUNNING``. ``register_run`` is itself
+        create-if-absent, so a concurrent caller for the same ``run_id`` cannot
+        clobber a record another caller already wrote."""
         assert ctx.run_id is not None
-        if await self._runs.get_run_or_none(ctx.run_id) is None:
-            await self._runs.register_run(
-                RunRecord(
-                    run_id=ctx.run_id,
-                    thread_id=ctx.run_id,
-                    system_name=self._system_name,
-                    status=RunStatus.RUNNING,
-                )
+        await self._runs.register_run(
+            RunRecord(
+                run_id=ctx.run_id,
+                thread_id=ctx.run_id,
+                system_name=self._system_name,
+                status=RunStatus.RUNNING,
             )
+        )
 
     async def succeed(
         self,
