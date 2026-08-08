@@ -8,7 +8,7 @@
 <h1 align="center">Turn your product into an AI-powered assistant.</h1>
 
 <p align="center">
-  Give your users an AI-powered way to use your product.
+  Give your users an AI-powered way to use your product—with zero backend rewrites.
 </p>
 
 <p align="center">
@@ -30,9 +30,10 @@
 
 Extra gives your customers an AI-powered way to use your product.
 
-It routes each request to the right AI specialist and executes real workflows through your existing backend.
+It works with the APIs, business logic, and workflows you already have — without requiring you to redesign your product around AI.
 
-**Not just a chatbot.** Extra doesn't stop at answering questions. It can execute real product workflows using your existing APIs and tools.
+
+* **No backend rewrite.** Keep your existing APIs, services, and business logic as they are.
 
 * **Specialized by design.** Each AI specialist owns a specific part of your business.
 
@@ -42,6 +43,7 @@ It routes each request to the right AI specialist and executes real workflows th
 
 * **Built for your product.** Expose Extra through an API or embed the assistant directly into your application.
 
+**Not just a chatbot.** Extra doesn't stop at answering questions. It can execute real product workflows using your existing APIs and tools.
 
 
 ## Quick Start
