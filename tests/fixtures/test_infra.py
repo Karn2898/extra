@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterator
 
 import pytest
 from tests.fixtures.utils import FakeEngine, load_test_system
 
 
 @pytest.fixture(autouse=True)
-def _cleanup_shared() -> None:
+def _cleanup_shared() -> Iterator[None]:
     yield
     sys.modules.pop("shared", None)
 
