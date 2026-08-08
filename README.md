@@ -5,11 +5,10 @@
   </picture>
 </p>
 
-<h1 align="center">Add AI to the product you already built.</h1>
+<h1 align="center">Turn your product into an AI-powered assistant that understands your business.</h1>
 
 <p align="center">
-  Turn the APIs, tools, and business logic you already have into a secure AI
-  interface inside your product.
+  Extra lets you build AI-powered assistants that understand your workflows, use your existing APIs and business logic, and delegate work to AI specialists.
 </p>
 
 <p align="center">
@@ -21,38 +20,35 @@
 <p align="center">
   <a href="#quick-start">Quick Start</a> ·
   <a href="#why-extra">Why Extra</a> ·
-  <a href="#who-is-extra-for">Who it's for</a> ·
   <a href="https://docs.extra-ai.co/docs/introduction">Documentation</a> ·
   <a href="#contributing">Contributing</a>
 </p>
 
 ---
+Instead of navigating complex UIs, users simply ask.
 
-Your users shouldn't have to learn your UI to get an answer out of it. Extra
-lets them ask questions and trigger actions using the APIs and business logic
-you already built.
+Extra translates those requests into your existing APIs, business logic,
+and workflows.
 
-Define and deploy your agentic system from YAML. Extra handles routing,
-orchestration, and access boundaries while your logic and credentials stay in
-your backend.
 
 ## Why Extra
 
-**Ship faster.** Define your agent system instead of rebuilding routing,
-streaming, tool execution, and tracing.
+Most AI frameworks start with prompts.
 
-**Reuse your backend.** Connect the APIs, services, and business logic you
-already have.
+Extra starts with your product.
 
-**Keep access control outside the model.** Authorization runs in trusted code —
-the model cannot grant itself access to protected capabilities.
+It connects your existing backend to a network of focused AI specialists.
 
-**Graph-based orchestration.** Extra routes requests through an explicit graph
-of orchestrators and focused agents, keeping execution predictable, observable,
-easy to debug, and easy to extend.
+* **Specialized by design.** Each specialist understands one part of your business.
 
-**Add it to your product.** Embed the system as a chat widget or expose it
-through an API.
+* **Built on your backend.** Your existing APIs, tools, and services remain the source of truth.
+
+* **Explicit workflows.** Requests move through predictable, inspectable execution paths.
+
+* **Authorization outside the model.** Access decisions stay in trusted code.
+
+* **Easy to embed.** Expose Extra through an API or add it directly to your product.
+
 
 ## Quick Start
 
@@ -147,19 +143,23 @@ chat widget are covered in the
 
 ## Features
 
-- YAML-defined agents and routing
-- Local Python tools and remote MCP servers
-- Per-node authorization and human-in-the-loop tool approvals
+- AI specialists
+- Workflow orchestration
+- Local tools and MCP
+- Authorization outside the LLM
+- Human approvals
+- Streaming API
+- Embeddable chat widget
 - Anthropic, OpenAI, Gemini, and Bedrock
-- Streaming API and embeddable web component
-- Structured logs and Langfuse tracing
+- Langfuse tracing
 
 ## Architecture
 
-Extra is built around an explicit graph you declare in YAML. Orchestrators route
-each request to focused agents, and every agent owns its own prompts, tools, MCP
-servers, and boundaries. Nothing routes implicitly — which keeps answers grounded
-in the right part of your business, and every run predictable and traceable.
+Extra executes an explicit graph.
+
+Orchestrators route requests to AI specialists. Each specialist owns its own prompts, tools, MCP servers, and authorization.
+
+Your business logic stays in your backend. Extra only orchestrates execution.
 
 ```mermaid
 flowchart TD
@@ -185,15 +185,6 @@ tools, access checks, and the values resolved into prompts.
 - **[Architecture](https://docs.extra-ai.co/docs/architecture)** — how routing and execution work.
 - **[`examples/`](examples/)** — runnable specs, including an enterprise knowledge assistant.
 
-## Who is Extra for?
-
-Teams adding an AI interface to existing SaaS products, internal enterprise
-systems, customer support workflows, or multi-tenant products with strict access
-boundaries.
-
-It may be unnecessary if you need a single prompt with a few tools, a chatbot
-with no backend integration, low-level control over the orchestration runtime,
-or batch processing.
 
 ## Contributing
 
