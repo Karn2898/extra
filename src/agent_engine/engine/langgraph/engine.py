@@ -4,7 +4,7 @@ import asyncio
 import inspect
 import logging
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any, cast
 
@@ -362,10 +362,16 @@ class LangGraphEngine(Engine):
         try:
             yield
         finally:
+            # An async generator may be finalized in a context other than the
+            # consumer's. Tokens cannot be reset from that foreign context; in
+            # that case there is no ambient value here to restore.
             if stream_token is not None:
-                current_streams.reset(stream_token)
-            current_execution.reset(exec_token)
-            current_run_context.reset(ctx_token)
+                with suppress(ValueError):
+                    current_streams.reset(stream_token)
+            with suppress(ValueError):
+                current_execution.reset(exec_token)
+            with suppress(ValueError):
+                current_run_context.reset(ctx_token)
 
     async def _invoke_graph(
         self, app: RunGraph, ctx: RunContext, graph_input: Any
@@ -548,9 +554,26 @@ class LangGraphEngine(Engine):
             task = asyncio.create_task(
                 self._stream_graph(app, lifecycle, ctx, state, channel=channel, tokens=tokens)
             )
-            async for event in channel.events():
-                yield event
+            try:
+                async for event in channel.events():
+                    yield event
+                await task
+            finally:
+                await self._stop_abandoned_stream(task, lifecycle, ctx)
+
+    @staticmethod
+    async def _stop_abandoned_stream(
+        task: asyncio.Task[None],
+        lifecycle: RunLifecycle,
+        ctx: RunContext,
+    ) -> None:
+        """Stop a graph producer when its stream is closed before completion."""
+        if task.done():
+            return
+        task.cancel()
+        with suppress(asyncio.CancelledError):
             await task
+        await asyncio.shield(lifecycle.cancel(ctx))
 
     async def _stream_graph(
         self,

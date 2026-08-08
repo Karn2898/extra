@@ -15,6 +15,7 @@ class RunStatus(StrEnum):
     RESUMING = "resuming"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class ApprovalStatus(StrEnum):
@@ -26,14 +27,26 @@ class ApprovalStatus(StrEnum):
 
 _RUN_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
     RunStatus.RUNNING: frozenset(
-        {RunStatus.PENDING_APPROVAL, RunStatus.COMPLETED, RunStatus.FAILED}
+        {
+            RunStatus.PENDING_APPROVAL,
+            RunStatus.COMPLETED,
+            RunStatus.FAILED,
+            RunStatus.CANCELLED,
+        }
     ),
     RunStatus.PENDING_APPROVAL: frozenset({RunStatus.RESUMING, RunStatus.FAILED}),
     RunStatus.RESUMING: frozenset(
-        {RunStatus.RUNNING, RunStatus.PENDING_APPROVAL, RunStatus.COMPLETED, RunStatus.FAILED}
+        {
+            RunStatus.RUNNING,
+            RunStatus.PENDING_APPROVAL,
+            RunStatus.COMPLETED,
+            RunStatus.FAILED,
+            RunStatus.CANCELLED,
+        }
     ),
     RunStatus.COMPLETED: frozenset(),
     RunStatus.FAILED: frozenset(),
+    RunStatus.CANCELLED: frozenset(),
 }
 
 _APPROVAL_TRANSITIONS: dict[ApprovalStatus, frozenset[ApprovalStatus]] = {

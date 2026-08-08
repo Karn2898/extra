@@ -11,13 +11,14 @@ Models are faked through the engine's ``model_factory`` seam; no LLM, no network
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 from langchain_core.messages.tool import ToolCall
 
 from agent_engine.core.spec import (
@@ -76,6 +77,27 @@ class BrokenModel:
     async def astream(self, messages: list[Any]) -> AsyncIterator[AIMessage]:
         raise RuntimeError("model down")
         yield  # pragma: no cover
+
+
+class BlockingModel:
+    """Emit one chunk, then block so the stream can be abandoned mid-run."""
+
+    def __init__(self) -> None:
+        self.released = asyncio.Event()
+        self.resumed = False
+
+    def bind_tools(self, tools: list[Any]) -> BlockingModel:
+        return self
+
+    async def ainvoke(self, messages: list[Any]) -> AIMessage:
+        await self.released.wait()
+        return AIMessage(content="first second")
+
+    async def astream(self, messages: list[Any]) -> AsyncIterator[AIMessageChunk]:
+        yield AIMessageChunk(content="first")
+        await self.released.wait()
+        self.resumed = True
+        yield AIMessageChunk(content=" second")
 
 
 def _factory(*_: Any, **__: Any) -> BaseChatModel:
@@ -276,3 +298,27 @@ async def test_context_vars_are_restored_when_the_consumer_walks_away(tmp_path: 
             assert current_execution.get() is None
     finally:
         current_streams.reset(token)
+
+
+async def test_abandoned_stream_stops_the_graph_and_cancels_the_run(tmp_path: Path) -> None:
+    model = BlockingModel()
+
+    def factory(*_: Any, **__: Any) -> BaseChatModel:
+        return cast(BaseChatModel, cast(object, model))
+
+    async with LangGraphEngine(tmp_path, model_factory=factory) as engine:
+        await engine.build(_spec())
+        events = cast(
+            AsyncGenerator[RunStreamEvent, None],
+            engine.stream("hello", context=RunContext(run_id="run-abandoned")),
+        )
+        async for event in events:
+            if event.type == "answer_delta":
+                break
+        await events.aclose()
+
+        model.released.set()
+        await asyncio.sleep(0)
+
+        assert model.resumed is False
+        assert await engine.get_run_status("run-abandoned") == "cancelled"

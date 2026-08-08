@@ -98,11 +98,30 @@ class RunLifecycle:
         await self._mark(ctx.run_id, RunStatus.FAILED)
         await self._hooks.run_run_error(ctx, error)
 
-    async def _mark(self, run_id: str | None, target: RunStatus) -> None:
+    async def cancel(self, ctx: RunContext) -> None:
+        """Close an in-flight run whose streaming consumer went away.
+
+        A suspended run remains pending because its checkpoint is durable and
+        can still be resumed from another connection. Completed and failed runs
+        are terminal already, so cancellation leaves them unchanged too.
+        """
+        if await self._mark(ctx.run_id, RunStatus.CANCELLED):
+            log(
+                logger,
+                logging.INFO,
+                "run cancelled",
+                run_id=ctx.run_id,
+                system=self._system_name,
+                reason="consumer abandoned stream",
+            )
+
+    async def _mark(self, run_id: str | None, target: RunStatus) -> bool:
         """Move a run to ``target`` if the state machine allows it, else leave it."""
         run = await self._registered(run_id)
         if run is not None and can_run_transition(run.status, target):
             await self._runs.mark_run(run.run_id, target)
+            return True
+        return False
 
     async def _registered(self, run_id: str | None) -> RunRecord | None:
         """The registry's record for a run, if it has one."""
