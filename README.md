@@ -8,8 +8,8 @@
 <h1 align="center">Add AI to the product you already built.</h1>
 
 <p align="center">
-  Turn the APIs, tools, and business logic you already have into a secure AI
-  interface inside your product.
+  Turn the APIs, tools, and business logic you already have into an AI-powered
+  assistant — a team of AI specialists inside your product.
 </p>
 
 <p align="center">
@@ -20,6 +20,7 @@
 
 <p align="center">
   <a href="#quick-start">Quick Start</a> ·
+  <a href="#why-not-just-use-a-chatbot">Why not a chatbot</a> ·
   <a href="#why-extra">Why Extra</a> ·
   <a href="#who-is-extra-for">Who it's for</a> ·
   <a href="https://docs.extra-ai.co/docs/introduction">Documentation</a> ·
@@ -29,12 +30,50 @@
 ---
 
 Your users shouldn't have to learn your UI to get an answer out of it. Extra
-lets them ask questions and trigger actions using the APIs and business logic
-you already built.
+lets them ask questions, trigger actions, and complete multi-step workflows
+using the APIs and business logic you already built.
 
 Define and deploy your agentic system from YAML. Extra handles routing,
 orchestration, and access boundaries while your logic and credentials stay in
 your backend.
+
+## Why not just use a chatbot?
+
+A chatbot is usually one general-purpose model with one prompt and one set of
+tools. It can answer questions *about* your product. It doesn't *use* your
+product.
+
+Extra turns your product into a team of AI specialists. Instead of one AI trying
+to understand your entire product, you build focused agents that each own a
+specific domain — a billing specialist, a support specialist, an account
+specialist, a technical specialist, a sales specialist — and an orchestrator that
+reads the user's intent and routes each request to the right one.
+
+Each specialist has its own prompt and instructions, tools, APIs, MCP servers,
+business context, and permissions and access boundaries. It gets exactly what its
+domain needs, and nothing else.
+
+The result is an AI-powered assistant that doesn't only answer questions. It can:
+
+- understand the user's intent
+- route the request to the right specialist
+- use your product's APIs and tools
+- access the right business context
+- perform actions and carry multi-step workflows through to the end
+- return a focused answer or decision
+
+```
+Regular chatbot
+  User → General AI → Answer
+
+Extra
+  User → AI-powered assistant → Orchestrator → Specialist AI
+       → tools / APIs / MCP / business data → decision, action, or answer
+```
+
+Users feel like they're talking to a product-aware specialist inside your
+product, not a generic chatbot — one with the domain expertise to help them make
+faster, better-informed decisions.
 
 ## Why Extra
 
@@ -149,7 +188,7 @@ chat widget are covered in the
 
 - YAML-defined agents and routing
 - Local Python tools and remote MCP servers
-- Per-node authorization and human-in-the-loop tool approvals
+- Per-node authorization and human-in-the-loop approval workflows
 - Anthropic, OpenAI, Gemini, and Bedrock
 - Streaming API and embeddable web component
 - Structured logs and Langfuse tracing
@@ -188,8 +227,8 @@ tools, access checks, and the values resolved into prompts.
 ## Who is Extra for?
 
 Teams adding an AI interface to existing SaaS products, internal enterprise
-systems, customer support workflows, or multi-tenant products with strict access
-boundaries.
+systems, customer support and multi-step business workflows, or multi-tenant
+products with strict access boundaries.
 
 It may be unnecessary if you need a single prompt with a few tools, a chatbot
 with no backend integration, low-level control over the orchestration runtime,
