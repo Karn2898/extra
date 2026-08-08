@@ -91,9 +91,6 @@ Scaffold the prompt and plugin stubs the YAML references. It never overwrites a
 file you already wrote:
 
 ```bash
-agentctl generate --config agents.yml
-
-# or via the Docker image, which supplies the `agentctl` prefix for you:
 docker run --rm -v "$(pwd):/workspace" -w /workspace \
   ghcr.io/extra-org/extra:latest generate --config agents.yml
 ```
