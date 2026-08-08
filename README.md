@@ -8,7 +8,7 @@
 <h1 align="center">Turn your product into an AI-powered assistant.</h1>
 
 <p align="center">
-  Extra turns your existing APIs, business logic, and workflows into an AI-powered assistant. Users can ask, act, and get things done through a single interface.
+  Give your users an AI-powered way to use your product.
 </p>
 
 <p align="center">
@@ -25,12 +25,12 @@
 </p>
 
 ---
-Instead of navigating complex UIs, users simply ask.
-
-Extra routes each request to the right AI specialist and executes the workflow through your existing backend.
-
 
 ## Why Extra
+
+Extra gives your customers an AI-powered way to use your product.
+
+It routes each request to the right AI specialist and executes real workflows through your existing backend.
 
 **Not just a chatbot.** Extra doesn't stop at answering questions. It can execute real product workflows using your existing APIs and tools.
 
