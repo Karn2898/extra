@@ -18,7 +18,7 @@ make format        # ruff format
 make lint          # ruff check
 make typecheck     # mypy
 make test          # pytest
-make check         # lint + typecheck + test — must pass before finishing a task
+make check         # format-check + lint + typecheck + test + generated-stub check
 ```
 
 ## Guardrails

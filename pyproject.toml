@@ -70,7 +70,7 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
-    "ruff>=0.6",
+    "ruff>=0.16.2,<0.17.0",
     "mypy>=1.10",
     # numpy is only a transitive dependency (via langchain-aws), but numpy >= 2.2
     # ships stubs that use PEP 695 `type` statements, which mypy rejects under
@@ -125,8 +125,3 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 addopts = "-q"
 asyncio_mode = "auto"
-
-[dependency-groups]
-dev = [
-    "ruff (>=0.16.2,<0.17.0)"
-]

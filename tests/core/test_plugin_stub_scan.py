@@ -7,6 +7,7 @@ tests write real plugin files into tmp_path and assert on the errors returned.
 from __future__ import annotations
 
 from pathlib import Path
+from textwrap import dedent
 
 from agent_engine.core.plugin_stubs import scan_unimplemented_plugins
 from agent_engine.core.spec import (
@@ -70,8 +71,12 @@ def write(base: Path, rel: str, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-STUB_TOOL = (
-    'def {name}(input: dict) -> str:\n    """Does a thing."""\n    raise NotImplementedError\n'
+STUB_TOOL = dedent(
+    '''\
+    def {name}(input: dict) -> str:
+        """Does a thing."""
+        raise NotImplementedError
+    '''
 )
 REAL_TOOL = "def {name}(input: dict) -> str:\n    return 'done'\n"
 
@@ -148,12 +153,25 @@ def test_resolver_implemented_in_shared_base_passes(tmp_path: Path) -> None:
     write(
         tmp_path,
         "plugins/resolvers/shared.py",
-        "class SharedResolver:\n    def user_name(self, ctx: dict) -> str:\n        return 'guy'\n",
+        dedent(
+            """\
+            class SharedResolver:
+                def user_name(self, ctx: dict) -> str:
+                    return "guy"
+            """
+        ),
     )
     write(
         tmp_path,
         "plugins/resolvers/a.py",
-        "from shared import SharedResolver\n\nclass Resolver(SharedResolver):\n    pass\n",
+        dedent(
+            """\
+            from shared import SharedResolver
+
+            class Resolver(SharedResolver):
+                pass
+            """
+        ),
     )
     spec = system(agent("a", resolvers=(ResolverSpec(id="user_name", scope="shared"),)))
 
@@ -171,7 +189,14 @@ def test_stub_resolver_in_shared_base_is_reported(tmp_path: Path) -> None:
     write(
         tmp_path,
         "plugins/resolvers/a.py",
-        "from shared import SharedResolver\n\nclass Resolver(SharedResolver):\n    pass\n",
+        dedent(
+            """\
+            from shared import SharedResolver
+
+            class Resolver(SharedResolver):
+                pass
+            """
+        ),
     )
     spec = system(agent("a", resolvers=(ResolverSpec(id="user_name", scope="shared"),)))
 
@@ -195,7 +220,14 @@ def test_unknown_method_is_skipped_not_flagged(tmp_path: Path) -> None:
     write(
         tmp_path,
         "plugins/resolvers/a.py",
-        "from mylib import CustomBase\n\nclass Resolver(CustomBase):\n    pass\n",
+        dedent(
+            """\
+            from mylib import CustomBase
+
+            class Resolver(CustomBase):
+                pass
+            """
+        ),
     )
     spec = system(agent("a", resolvers=(ResolverSpec(id="user_name", scope="agent"),)))
 

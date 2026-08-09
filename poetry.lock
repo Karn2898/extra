@@ -3050,9 +3050,10 @@ files = [
 name = "ruff"
 version = "0.16.2"
 description = "An extremely fast Python linter and code formatter, written in Rust."
-optional = false
+optional = true
 python-versions = ">=3.7"
-groups = ["main", "dev"]
+groups = ["main"]
+markers = "extra == \"dev\""
 files = [
     {file = "ruff-0.16.2-py3-none-linux_armv6l.whl", hash = "sha256:3c8de4cf2181f01d57946d87d777aa52916976fc09942aed89938fab5e013318"},
     {file = "ruff-0.16.2-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:9a48cc05c6fbc811ca81b5d7ba95375affea6582d1b8024e455e41afbbf55344"},
@@ -3073,7 +3074,6 @@ files = [
     {file = "ruff-0.16.2-py3-none-win_arm64.whl", hash = "sha256:d614e95cedf38a2053fd351c55b103ba30d017d61688fdbfd40ee0412852a99f"},
     {file = "ruff-0.16.2.tar.gz", hash = "sha256:c3d7828d12e8927a6fc65fe38e2c2541b9e762d360a1786d752cb1b8883b3c9c"},
 ]
-markers = {main = "extra == \"dev\""}
 
 [[package]]
 name = "s3transfer"
@@ -4092,4 +4092,4 @@ dev = ["mypy", "numpy", "pytest", "pytest-asyncio", "ruff"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<4.0"
-content-hash = "6c49e478f296c33e7fa13288e2e636cca15e5175af10c52232967e290001d51f"
+content-hash = "bfd8c5b697ee203b2c6074bbe5879ff0aa7f31f2fc63c0533c737f82f48ce72b"

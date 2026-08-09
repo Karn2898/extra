@@ -149,7 +149,6 @@ including different hook points. Hook methods receive a single
 import os
 from agent_engine.runtime.hooks import HookInvocation, McpRequestContext
 
-
 class McpAuthHook:
     _REQUIRED_ENV = ("INTERNAL_MCP_BEARER", "INTERNAL_MCP_TENANT")
 
@@ -300,24 +299,23 @@ Explicit refs keep the historical positional signatures:
 ```python
 def on_engine_start(context: EngineContext) -> None: ...
 
-
 def on_run_start(context: RunContext) -> RunContext | None: ...
-
 
 def before_mcp_request(
     context: RunContext | None, request: McpRequestContext
 ) -> McpRequestContext | None: ...
 
-
-def after_tool_call(context: RunContext | None, call: ToolCallContext) -> None: ...
-
+def after_tool_call(
+    context: RunContext | None, call: ToolCallContext
+) -> None: ...
 
 def transform_tool_result(
     context: RunContext | None, result: ToolResultContext
 ) -> ToolResultContext | None: ...
 
-
-def on_run_error(context: RunContext | None, error: BaseException) -> None: ...
+def on_run_error(
+    context: RunContext | None, error: BaseException
+) -> None: ...
 ```
 
 Return values are interpreted by hook point: `on_run_start` may return an
@@ -388,7 +386,6 @@ core needs no per-server code.**
 import os
 from agent_engine.runtime.hooks import HookInvocation, McpRequestContext
 
-
 class McpAuthHook:
     async def before_mcp_request(self, event: HookInvocation) -> McpRequestContext:
         request = event.payload_as(McpRequestContext)
@@ -418,7 +415,6 @@ class McpAuthHook:
 
 ```python
 import hashlib, hmac, os, time
-
 
 def sign_mcp_request(context, request):
     secret = os.environ["INTERNAL_MCP_HMAC_KEY"].encode()
