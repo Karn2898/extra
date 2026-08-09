@@ -73,20 +73,8 @@ _APPROVAL_TRANSITIONS: dict[ApprovalStatus, frozenset[ApprovalStatus]] = {
 }
 
 
-def can_run_transition(current: RunStatus, target: RunStatus) -> bool:
-    """Whether a run may legally move from ``current`` to ``target``.
-
-    The non-raising counterpart of :func:`ensure_run_transition`, for callers
-    that close a run *opportunistically* — a run that already reached a terminal
-    state, or that is suspended awaiting a decision, is left alone rather than
-    treated as an error. Asking here keeps the allowed transitions in this table
-    only, instead of being restated as status checks at each call site.
-    """
-    return target in _RUN_TRANSITIONS[current]
-
-
 def ensure_run_transition(current: RunStatus, target: RunStatus) -> None:
-    if not can_run_transition(current, target):
+    if target not in _RUN_TRANSITIONS[current]:
         raise InvalidStateTransition("run", current.value, target.value)
 
 
