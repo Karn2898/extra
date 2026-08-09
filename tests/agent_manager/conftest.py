@@ -11,6 +11,7 @@ from agent_engine.engine.engine import Engine
 from agent_engine.engine.types import ChatMessage, RunResult
 from agent_engine.runtime.hooks.models import RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
+from agent_manager.api.deps import CallerIdentity
 from agent_manager.api.routes import router
 from agent_manager.application import ConversationService
 from agent_manager.composition import build_identity_resolver
@@ -26,10 +27,12 @@ def build_test_app(service: ConversationService, **settings: Any) -> FastAPI:
     """A manager app wired like `create_app`, minus the engine lifespan."""
     app = FastAPI()
     app.state.service = service
-    app.state.settings = Settings.from_values(
+    config = Settings.from_values(
         **{"agent_auth_mode": AuthMode.MINT, "agent_auth_secret": AUTH_SECRET, **settings}
     )
-    app.state.identity_resolver = build_identity_resolver(app.state.settings)
+    app.state.caller_identity = CallerIdentity(
+        resolver=build_identity_resolver(config), cookie_name=config.agent_auth_cookie
+    )
     app.include_router(router)
     return app
 

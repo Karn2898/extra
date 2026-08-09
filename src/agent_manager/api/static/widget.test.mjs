@@ -442,6 +442,25 @@ assert.equal(
   "a handed-over pass is not offered twice",
 );
 
+// Parallel requests share one resolution: one token fetch, one hand-over.
+resetPage();
+calls = [];
+localStorage.setItem(visitorPassKey("https://api.example"), "old-pass");
+globalThis.fetch = async (url, options = {}) => {
+  calls.push({ url, options });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  if (url === "/agent-chat/token") return jsonResponse({ token: "host-token" });
+  if (url.endsWith("/auth/link")) return jsonResponse({ conversations_moved: 1 });
+  return jsonResponse({ conversation_id: "conv-parallel" });
+};
+const shared = new AgentChatClient(
+  "https://api.example",
+  new TokenSource("https://api.example", "/agent-chat/token"),
+);
+await Promise.all([shared.createConversation(), shared.createConversation()]);
+assert.equal(calls.filter((c) => c.url === "/agent-chat/token").length, 1);
+assert.equal(calls.filter((c) => c.url.endsWith("/auth/link")).length, 1);
+
 // A server that never answered keeps the pass, so the next load retries.
 resetPage();
 localStorage.setItem(visitorPassKey("https://api.example"), "kept-pass");

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from fastapi import HTTPException, Request
 
 from agent_manager.application import ConversationService
@@ -12,12 +14,21 @@ BEARER_PREFIX = "Bearer "
 UNAUTHENTICATED_DETAIL = "a verified identity is required"
 
 
+@dataclass(frozen=True)
+class CallerIdentity:
+    """Everything the HTTP edge needs to name a caller: where a token may be
+    found, and who can verify it."""
+
+    resolver: IdentityResolver
+    cookie_name: str | None = None
+
+
 def get_service(request: Request) -> ConversationService:
     return request.app.state.service
 
 
-def get_identity_resolver(request: Request) -> IdentityResolver:
-    return request.app.state.identity_resolver
+def get_caller_identity(request: Request) -> CallerIdentity:
+    return request.app.state.caller_identity
 
 
 def get_principal(request: Request) -> Principal:
@@ -28,11 +39,12 @@ def get_principal(request: Request) -> Principal:
     requests cannot read a JSON response, and the widget's `application/json`
     writes are preflighted against a CORS allowlist that denies by default.
     """
-    token = _bearer_token(request) or _cookie_token(request)
+    identity = get_caller_identity(request)
+    token = _bearer_token(request) or _cookie_token(request, identity.cookie_name)
     if token is None:
         raise HTTPException(status_code=401, detail=UNAUTHENTICATED_DETAIL)
     try:
-        return get_identity_resolver(request).resolve(token)
+        return identity.resolver.resolve(token)
     except TokenError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from None
 
@@ -44,6 +56,5 @@ def _bearer_token(request: Request) -> str | None:
     return header.removeprefix(BEARER_PREFIX).strip() or None
 
 
-def _cookie_token(request: Request) -> str | None:
-    cookie_name = request.app.state.settings.agent_auth_cookie
+def _cookie_token(request: Request, cookie_name: str | None) -> str | None:
     return request.cookies.get(cookie_name) if cookie_name else None

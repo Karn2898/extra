@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
 from agent_engine.runtime.streaming import RunStreamEvent
-from agent_manager.api.deps import get_identity_resolver, get_principal, get_service
+from agent_manager.api.deps import CallerIdentity, get_caller_identity, get_principal, get_service
 from agent_manager.api.schemas import (
     AnonymousPassResponse,
     ConversationSummary,
@@ -37,14 +37,14 @@ from agent_manager.application import (
     ConversationTokenBudgetExceeded,
 )
 from agent_manager.domain import Principal
-from agent_manager.infrastructure.auth import IdentityResolver, TokenError
+from agent_manager.infrastructure.auth import TokenError
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 Service = Annotated[ConversationService, Depends(get_service)]
 Caller = Annotated[Principal, Depends(get_principal)]
-Identity = Annotated[IdentityResolver, Depends(get_identity_resolver)]
+Identity = Annotated[CallerIdentity, Depends(get_caller_identity)]
 
 _BUDGET_EXCEEDED_DETAIL = {
     "error_type": "context_limit_exceeded",
@@ -74,7 +74,7 @@ def _as_http_error() -> Iterator[None]:
 async def issue_anonymous_pass(identity: Identity) -> AnonymousPassResponse:
     """The only route without a caller. The pass is signed, so one visitor
     cannot reach another's conversations by guessing an id."""
-    issued = identity.anonymous.issue()
+    issued = identity.resolver.anonymous.issue()
     return AnonymousPassResponse(token=issued.token, expires_at=issued.expires_at)
 
 
@@ -89,7 +89,7 @@ async def link_anonymous_conversations(
     replayed pass moves nothing.
     """
     try:
-        visitor = identity.anonymous.resolve(body.anonymous_token)
+        visitor = identity.resolver.anonymous.resolve(body.anonymous_token)
     except TokenError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from None
     with _as_http_error():

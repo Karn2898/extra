@@ -52242,20 +52242,33 @@ var TokenSource = class {
     this.provider = provider;
     this.storage = storage;
     this.cached = null;
+    this.pending = null;
   }
   async current() {
-    if (!this.cached) this.cached = await this.hostToken() ?? this.storedPass();
+    if (!this.cached) await this.resolve(() => this.storedPass());
     return this.cached;
   }
   /** After a 401: whatever we sent is no good, so get another. */
   async renew() {
-    this.cached = await this.hostToken() ?? await this.issuePass();
-    return this.cached;
+    return this.resolve(() => this.issuePass());
   }
   /** Drop this browser's identity — a host app signing its user out. */
   forget() {
     this.cached = null;
     this.clearPass();
+  }
+  /** Concurrent callers share one resolution. Without this, parallel requests
+   *  each fetch a token and each hand over the visitor pass. */
+  resolve(fallback) {
+    this.pending ?? (this.pending = (async () => {
+      try {
+        this.cached = await this.hostToken() ?? await fallback();
+        return this.cached;
+      } finally {
+        this.pending = null;
+      }
+    })());
+    return this.pending;
   }
   /** A host token, plus the one-time hand-off of whatever this browser chatted
    *  about before signing in. */

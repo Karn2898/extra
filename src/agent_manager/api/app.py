@@ -17,6 +17,7 @@ from agent_engine.core.validator import SystemSpecValidator
 from agent_engine.engine.langgraph.engine import LangGraphEngine
 from agent_engine.logging_config import configure_logging
 from agent_engine.parsers.yaml.parser import YAMLParser
+from agent_manager.api.deps import CallerIdentity
 from agent_manager.api.routes import router
 from agent_manager.api.web import mount_web
 from agent_manager.application import ConversationService
@@ -61,8 +62,10 @@ def create_app(config_path: str, settings: Settings | None = None) -> FastAPI:
             yield
 
     app = FastAPI(lifespan=lifespan)
-    app.state.settings = settings
-    app.state.identity_resolver = build_identity_resolver(settings)
+    app.state.caller_identity = CallerIdentity(
+        resolver=build_identity_resolver(settings),
+        cookie_name=settings.agent_auth_cookie,
+    )
 
     @app.get("/health")
     def health() -> dict[str, str]:
