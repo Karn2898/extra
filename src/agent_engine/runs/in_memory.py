@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
+import math
+import time
+from collections import deque
+from collections.abc import Callable
+from dataclasses import dataclass
 
 from agent_engine.approvals.errors import InvalidStateTransition
 from agent_engine.approvals.models import (
@@ -10,44 +14,114 @@ from agent_engine.approvals.models import (
     RunStatus,
 )
 
+DEFAULT_TERMINAL_RUN_TTL_SECONDS = 86_400.0  # 24 hours
+
+_EXPIRATION_CLEANUP_BATCH_SIZE = 8
+
+_TERMINAL_RUN_STATUSES = frozenset(
+    {
+        RunStatus.COMPLETED,
+        RunStatus.FAILED,
+        RunStatus.CANCELLED,
+    }
+)
+
+
+@dataclass(slots=True)
+class _StoredRun:
+    record: RunRecord
+    expires_at: float | None = None
+
 
 class InMemoryRunRepository:
     """Process-local implementation of :class:`RunRepository`.
 
-    Operations are serialized only inside this Python process. The adapter is
-    adequate for local use and tests, but it does not provide cross-pod
-    registration or transition guarantees.
+    This adapter assumes every call for an instance runs on one asyncio event
+    loop and OS thread. Repository mutations contain no ``await`` points, so a
+    coroutine cannot interleave with a check-and-mutate sequence. The adapter is
+    not safe to share across threads or event loops and provides no cross-process
+    guarantees. Terminal records are retained for ``terminal_ttl_seconds``;
+    active and approval-pending records do not expire. An injected ``clock``
+    must be monotonic so the bounded FIFO cleanup queue stays expiration-ordered.
     """
 
-    def __init__(self) -> None:
-        self._runs: dict[str, RunRecord] = {}
-        self._lock = asyncio.Lock()
+    def __init__(
+        self,
+        *,
+        terminal_ttl_seconds: float = DEFAULT_TERMINAL_RUN_TTL_SECONDS,
+        clock: Callable[[], float] | None = None,
+    ) -> None:
+        if not math.isfinite(terminal_ttl_seconds) or terminal_ttl_seconds <= 0:
+            raise ValueError("terminal_ttl_seconds must be a positive finite number")
+        self._runs: dict[str, _StoredRun] = {}
+        self._expiration_queue: deque[tuple[float, str]] = deque()
+        self._terminal_ttl_seconds = terminal_ttl_seconds
+        self._clock = clock or time.monotonic
 
     async def create_if_absent(self, record: RunRecord) -> bool:
         """Register ``record`` unless its ``run_id`` is already known.
 
-        The existence check and write share one process-local critical section,
-        so exactly one local caller gets ``created=True``. A future shared
-        implementation provides the same contract with its own atomic primitive.
+        The check and insert contain no suspension point, so exactly one caller
+        on the owning event loop gets ``created=True``. A future shared adapter
+        provides the same contract with its own atomic primitive.
         """
-        async with self._lock:
-            existing = self._runs.get(record.run_id)
-            if existing is not None:
-                return False
-            self._runs[record.run_id] = record
-            return True
+        run_id = record.run_id
+        if run_id in self._runs:
+            return False
+
+        expires_at = (
+            self._clock() + self._terminal_ttl_seconds
+            if record.status in _TERMINAL_RUN_STATUSES
+            else None
+        )
+        entry = _StoredRun(record=record, expires_at=expires_at)
+        self._runs[run_id] = entry
+        if expires_at is not None:
+            self._expiration_queue.append((expires_at, run_id))
+        return True
 
     async def get(self, run_id: str) -> RunRecord | None:
-        async with self._lock:
-            return self._runs.get(run_id)
+        entry = self._get_unexpired_entry(run_id)
+        return None if entry is None else entry.record
 
     async def transition_if_allowed(self, run_id: str, target: RunStatus) -> bool:
-        async with self._lock:
-            record = self._runs.get(run_id)
-            if record is None:
-                return False
+        now = self._clock()
+        entry = self._get_unexpired_entry(run_id, now)
+        changed = False
+        if entry is not None:
             try:
-                record.transition(target)
+                entry.record.transition(target)
             except InvalidStateTransition:
-                return False
-            return True
+                pass
+            else:
+                changed = True
+                if target in _TERMINAL_RUN_STATUSES:
+                    entry.expires_at = now + self._terminal_ttl_seconds
+                    self._expiration_queue.append((entry.expires_at, run_id))
+        self._evict_expired_batch(now)
+        return changed
+
+    def _get_unexpired_entry(self, run_id: str, now: float | None = None) -> _StoredRun | None:
+        entry = self._runs.get(run_id)
+        if (
+            entry is not None
+            and entry.expires_at is not None
+            and entry.expires_at <= (self._clock() if now is None else now)
+            and entry.record.status in _TERMINAL_RUN_STATUSES
+        ):
+            self._runs.pop(run_id)
+            return None
+        return entry
+
+    def _evict_expired_batch(self, now: float) -> None:
+        for _ in range(_EXPIRATION_CLEANUP_BATCH_SIZE):
+            if not self._expiration_queue or self._expiration_queue[0][0] > now:
+                return
+            expires_at, run_id = self._expiration_queue.popleft()
+            current_entry = self._runs.get(run_id)
+            if (
+                current_entry is not None
+                and current_entry.expires_at == expires_at
+                and current_entry.record.status in _TERMINAL_RUN_STATUSES
+            ):
+                self._runs.pop(run_id)
