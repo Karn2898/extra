@@ -164,6 +164,12 @@ class ApprovalDecisionBody(ApprovalDecisionRequest):
     decision: str
 
 
+# Every field on ApprovalDecisionRequest is optional, so an absent body should
+# be treated the same as an empty one. A shared, read-only singleton default
+# (rather than a call in the signature) satisfies ruff's B008 check.
+_DEFAULT_APPROVAL_REQUEST_BODY = ApprovalDecisionRequest()
+
+
 class RunStatusResponse(BaseModel):
     run_id: str
     status: str
@@ -361,13 +367,17 @@ def create_app(
 
     @app.post("/runs/{run_id}/approvals/{approval_id}/approve", response_model=InvokeResponse)
     async def approve(
-        run_id: str, approval_id: str, body: ApprovalDecisionRequest
+        run_id: str,
+        approval_id: str,
+        body: ApprovalDecisionRequest = _DEFAULT_APPROVAL_REQUEST_BODY,
     ) -> InvokeResponse:
         return await _decide(run_id, approval_id, ApprovalDecision.ALLOW_ONCE, body.user_id)
 
     @app.post("/runs/{run_id}/approvals/{approval_id}/reject", response_model=InvokeResponse)
     async def reject(
-        run_id: str, approval_id: str, body: ApprovalDecisionRequest
+        run_id: str,
+        approval_id: str,
+        body: ApprovalDecisionRequest = _DEFAULT_APPROVAL_REQUEST_BODY,
     ) -> InvokeResponse:
         return await _decide(run_id, approval_id, ApprovalDecision.DENY, body.user_id)
 
