@@ -69,9 +69,10 @@ engine never stores that history on `RuntimeEngine`.
 `agent_manager` owns conversation history through its repository. Before a
 turn, `ConversationService` loads prior messages for the session and appends the
 new user message. It passes the prior turns through the engine's structured
-history argument, then appends the final assistant response only after the run
-finishes. During a model tool loop, the tool-call message and matching tool
-result remain structured and ordered for the provider. A run paused for tool
+history argument, then appends any emitted final assistant response when stream
+consumption ends, including after a later cleanup failure or client disconnect.
+During a model tool loop, the tool-call message and matching tool result remain
+structured and ordered for the provider. A run paused for tool
 approval stores its continuation in the LangGraph checkpoint keyed by `run_id`;
 session-wide approval grants live in a separate approval repository keyed by
 session and tool identity.

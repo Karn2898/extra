@@ -216,7 +216,7 @@ class _FinalThenCleanupErrorEngine(Engine):
         history: Sequence[ChatMessage] = (),
         context: RunContext | None = None,
     ) -> RunResult:
-        return RunResult(system_name="stub", visited=["agent"], answer=message)
+        raise RuntimeError("private run failure")
 
     async def stream(
         self,
@@ -257,16 +257,21 @@ def test_stream_surfaces_sse_events_and_persists_final_answer(client: TestClient
     assert response.status_code == 200
     assert "text/event-stream" in response.headers["content-type"]
     assert 'event: answer_delta\ndata: {"type": "answer_delta", "content": "x"}' in text
+    assert 'event: final\ndata: {"type": "final", "content": "answer:hello"' in text
     assert "event: done\ndata: [DONE]" in text
 
     messages = client.get(f"/conversations/{cid}/messages").json()
-    assert [(m["role"], m["content"]) for m in messages] == [("user", "hello")]
+    assert [(m["role"], m["content"]) for m in messages] == [
+        ("user", "hello"),
+        ("assistant", "answer:hello"),
+    ]
 
 
-def test_stream_surfaces_engine_error_raised_after_final() -> None:
+def test_stream_sanitizes_late_engine_error_and_persists_final_answer(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """The engine's own generator failing after `final` is a real failure: it
-    reaches the client as an `error` event (the route's own catch-all, not the
-    service) and the assistant message is not persisted."""
+    is logged server-side and reaches the client only as a generic error."""
     app = FastAPI()
     app.state.service = ConversationService(_FinalThenCleanupErrorEngine(), MemoryRepository())
     app.include_router(router)
@@ -280,10 +285,29 @@ def test_stream_surfaces_engine_error_raised_after_final() -> None:
 
     assert response.status_code == 200
     assert 'event: final\ndata: {"type": "final", "content": "done", "route": ["agent"]}' in text
-    assert "cleanup after final" in text
+    assert 'event: error\ndata: {"type": "error", "error": "Internal server error"}' in text
+    assert "cleanup after final" not in text
     assert "event: done\ndata: [DONE]" in text
+    assert "cleanup after final" in caplog.text
     messages = client.get(f"/conversations/{cid}/messages").json()
-    assert [(m["role"], m["content"]) for m in messages] == [("user", "x")]
+    assert [(m["role"], m["content"]) for m in messages] == [
+        ("user", "x"),
+        ("assistant", "done"),
+    ]
+
+
+def test_send_sanitizes_engine_failure() -> None:
+    app = FastAPI()
+    app.state.service = ConversationService(_FinalThenCleanupErrorEngine(), MemoryRepository())
+    app.include_router(router)
+    client = TestClient(app)
+    cid = client.post("/conversations").json()["conversation_id"]
+
+    response = client.post(f"/conversations/{cid}/messages", json={"message": "x"})
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Internal server error"
+    assert "private run failure" not in response.text
 
 
 def test_create_accepts_a_stable_session_id_owned_by_the_caller(client: TestClient) -> None:
