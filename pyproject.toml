@@ -50,6 +50,7 @@ dependencies = [
     "langchain-core>=0.3",
     "mcp>=1.27,<2",
     "langchain-mcp-adapters>=0.1",
+    "pyjwt>=2.9",
     "python-dotenv>=1.0",
     "pydantic-settings>=2.0",
     "click>=8.0",

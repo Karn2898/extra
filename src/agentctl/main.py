@@ -13,6 +13,7 @@ from agent_engine.parsers.yaml.parser import YAMLParser
 from agentctl.session import SpecError, load_and_validate, load_env
 
 LOCAL_USER_ID = "local-user"
+DEV_TOKEN_TTL_SECONDS = 3600
 
 
 @click.group()
@@ -130,9 +131,12 @@ async def _run_async(
     from agent_manager.application import ConversationService
     from agent_manager.composition import application_repositories
     from agent_manager.config import Settings
+    from agent_manager.domain import Principal
 
     effective_session_id = session_id or uuid4().hex[:16]
     effective_user_id = user_id or LOCAL_USER_ID
+    # In-process: no point minting a token to hand straight back to ourselves.
+    caller = Principal.external(effective_user_id)
 
     click.echo(f"  system : {spec.meta.name}", err=True)
     if session_id:
@@ -166,11 +170,9 @@ async def _run_async(
                 system_name=spec.meta.name,
                 config_path=str(Path(config).resolve()),
             )
-            await service.create(user_id=effective_user_id, session_id=effective_session_id)
+            await service.create(caller, session_id=effective_session_id)
             if stream:
-                async for event in service.stream(
-                    effective_session_id, message, caller_id=effective_user_id
-                ):
+                async for event in service.stream(effective_session_id, message, caller):
                     if event.type == "route" and event.route:
                         click.echo(f"  route  : {' → '.join(event.route)}", err=True)
                     elif event.type == "answer_delta" and event.content:
@@ -178,15 +180,39 @@ async def _run_async(
                         sys.stdout.flush()
                 sys.stdout.write("\n")
             else:
-                result = await service.send(
-                    effective_session_id, message, caller_id=effective_user_id
-                )
+                result = await service.send(effective_session_id, message, caller)
                 click.echo(f"  route  : {' → '.join(result.visited)}", err=True)
                 click.echo("")
                 click.echo(result.answer)
     except Exception as exc:
         click.echo(f"✗ Runtime error: {exc}", err=True)
         sys.exit(1)
+
+
+@cli.command()
+@click.option("--user", required=True, help="Host user id to mint a token for.")
+@click.option("--ttl", default=DEV_TOKEN_TTL_SECONDS, show_default=True, help="Lifetime, seconds.")
+def token(user: str, ttl: int) -> None:
+    """Mint a development bearer token from the configured signing secret.
+
+    No client-supplied identity is trusted, so this is how you drive the API by
+    hand."""
+    from agent_manager.config import Settings
+    from agent_manager.infrastructure.auth import encode_token
+
+    settings = Settings()
+    if not settings.agent_auth_secret:
+        click.echo("✗ AGENT_AUTH_SECRET is not set; there is no key to sign with.", err=True)
+        sys.exit(1)
+
+    issued = encode_token(
+        settings.agent_auth_secret,
+        subject=user,
+        ttl_seconds=ttl,
+        claims={settings.agent_auth_claim_user_id: user},
+    )
+    click.echo(f"  expires: {issued.expires_at.isoformat()}", err=True)
+    click.echo(issued.token)
 
 
 @cli.command()

@@ -22,6 +22,7 @@ from agent_manager.domain import (
     ConversationMessage,
     ConversationSession,
     Message,
+    Principal,
     Repository,
     Role,
     TokenBudgetUsage,
@@ -51,7 +52,7 @@ class PreparedConversationTurn:
 
     session_id: str
     run_id: str
-    user_id: str | None
+    user_id: str
     message: str
     history: tuple[ChatMessage, ...]
 
@@ -78,49 +79,42 @@ class ConversationService:
         self._system_name = system_name
         self._config_path = config_path
 
-    async def create(self, *, user_id: str | None = None, session_id: str | None = None) -> str:
+    async def create(self, principal: Principal, *, session_id: str | None = None) -> str:
         """Create a conversation, or return the caller's own existing one.
 
         A caller-supplied `session_id` may already exist. Handing it back to its
         owner keeps creation idempotent; handing it to anyone else would be a
         takeover.
         """
-        if user_id:
-            await self._repository.upsert_user(user_id)
+        await self._register(principal)
         session = await self._repository.create_session(
             session_id,
-            user_id=user_id,
+            user_id=principal.user_id,
             system_name=self._system_name,
             config_path=self._config_path,
         )
         # Checked after the write, not before: a check first lets two callers
         # racing for one id both pass it.
-        if session.user_id != user_id:
+        if session.user_id != principal.user_id:
             raise ConversationAlreadyExists(session.session_id)
         return session.session_id
 
-    async def history(self, conversation_id: str, *, caller_id: str | None = None) -> list[Message]:
-        await self._authorize(conversation_id, caller_id)
+    async def history(self, conversation_id: str, principal: Principal) -> list[Message]:
+        await self._authorize(conversation_id, principal)
         return await self._repository.list_messages(conversation_id)
 
-    async def usage(
-        self, conversation_id: str, *, caller_id: str | None = None
-    ) -> TokenBudgetUsage:
-        await self._authorize(conversation_id, caller_id)
+    async def usage(self, conversation_id: str, principal: Principal) -> TokenBudgetUsage:
+        await self._authorize(conversation_id, principal)
         used = await self._repository.get_token_usage(conversation_id)
         return TokenBudgetUsage.from_totals(used, self._max_tokens)
 
     async def list_conversations(
-        self, user_id: str | None, *, limit: int = 50
+        self, principal: Principal, *, limit: int = 50
     ) -> list[ConversationSession]:
-        if not user_id:
-            return []
-        return await self._repository.list_sessions(user_id, limit=limit)
+        return await self._repository.list_sessions(principal.user_id, limit=limit)
 
-    async def send(
-        self, conversation_id: str, text: str, *, caller_id: str | None = None
-    ) -> RunResult:
-        turn = await self.prepare_turn(conversation_id, text, caller_id=caller_id)
+    async def send(self, conversation_id: str, text: str, principal: Principal) -> RunResult:
+        turn = await self.prepare_turn(conversation_id, text, principal)
         result = await self._engine.run(
             turn.message,
             history=turn.history,
@@ -138,14 +132,12 @@ class ConversationService:
         self,
         conversation_id: str,
         text: str,
-        *,
-        caller_id: str | None = None,
+        principal: Principal,
     ) -> PreparedConversationTurn:
         """Persist a user message and return its isolated prior model context."""
-        session = await self._authorize(conversation_id, caller_id)
-        user_id = session.user_id
-        if user_id:
-            await self._repository.upsert_user(user_id)
+        await self._authorize(conversation_id, principal)
+        user_id = principal.user_id
+        await self._register(principal)
 
         if self._max_tokens is not None:
             used = await self._repository.get_token_usage(conversation_id)
@@ -201,17 +193,9 @@ class ConversationService:
         )
 
     async def stream(
-        self,
-        conversation_id: str,
-        text: str,
-        *,
-        caller_id: str | None = None,
+        self, conversation_id: str, text: str, principal: Principal
     ) -> AsyncIterator[RunStreamEvent]:
-        turn = await self.prepare_turn(
-            conversation_id,
-            text,
-            caller_id=caller_id,
-        )
+        turn = await self.prepare_turn(conversation_id, text, principal)
 
         final: RunStreamEvent | None = None
         try:
@@ -269,13 +253,20 @@ class ConversationService:
             snapshot_ttl_seconds=self._snapshot_ttl_seconds,
         )
 
+    async def _register(self, principal: Principal) -> None:
+        await self._repository.upsert_user(
+            principal.user_id,
+            external_user_id=principal.external_id,
+            display_name=principal.display_name,
+        )
+
     async def _require(self, conversation_id: str) -> ConversationSession:
         session = await self._repository.get_session(conversation_id)
         if session is None:
             raise ConversationNotFound(conversation_id)
         return session
 
-    async def _authorize(self, conversation_id: str, caller_id: str | None) -> ConversationSession:
+    async def _authorize(self, conversation_id: str, principal: Principal) -> ConversationSession:
         """Resolve a conversation the caller owns.
 
         A turn runs as the session owner and hooks and tools authorize on
@@ -283,6 +274,6 @@ class ConversationService:
         to reach it.
         """
         session = await self._require(conversation_id)
-        if session.user_id != caller_id:
+        if session.user_id != principal.user_id:
             raise ConversationAccessDenied(conversation_id)
         return session

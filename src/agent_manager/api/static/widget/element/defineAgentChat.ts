@@ -2,13 +2,13 @@ import { applyConfigAttributes } from "../config/parseConfig";
 import type { AgentChatConfigInput } from "../types";
 import { AgentChatElement } from "./AgentChatElement";
 
-export function defineAgentChat(scriptOrigin: string): void {
+export function defineAgentChat(scriptBaseUrl: string): void {
   if (customElements.get("agent-chat")) return;
   customElements.define(
     "agent-chat",
     class extends AgentChatElement {
       constructor() {
-        super(scriptOrigin);
+        super(scriptBaseUrl);
       }
     },
   );

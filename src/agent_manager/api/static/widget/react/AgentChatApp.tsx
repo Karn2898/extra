@@ -56,7 +56,6 @@ const toEntry = (message: ChatMessage): MessageEntry => ({
 export interface AgentChatAppProps {
   client: AgentChatClient;
   config: AgentChatConfig;
-  userId: string;
   onAnswer: (detail: AgentChatAnswerDetail) => void;
   panelId: string;
   titleId: string;
@@ -65,7 +64,6 @@ export interface AgentChatAppProps {
 export function AgentChatApp({
   client,
   config,
-  userId,
   onAnswer,
   panelId,
   titleId,
@@ -93,7 +91,7 @@ export function AgentChatApp({
     setActiveId((current) => (current === staleId ? freshId : current));
   }, []);
 
-  const conversation = useConversation(client, config.endpoint, userId, onReplaced);
+  const conversation = useConversation(client, config.endpoint, onReplaced);
 
   const refreshUsage = useCallback(
     async (cid: string) => {
@@ -294,7 +292,7 @@ export function AgentChatApp({
           <ThreadDrawer
             open={threadsOpen}
             threads={threads}
-            activeId={getStoredConversationId(config.endpoint, userId)}
+            activeId={getStoredConversationId(config.endpoint)}
             onSelect={openThread}
             onNew={startNewThread}
             onClose={() => setThreadsOpen(false)}

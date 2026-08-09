@@ -61,6 +61,16 @@ Renders as a fixed panel directly in the page — no launcher button.
 | `greeting` | — | First message shown when the chat opens |
 | `mode` | `"floating"` | `"floating"` or `"inline"` |
 | `position` | `"bottom-right"` | Floating position: `"bottom-right"` or `"bottom-left"` |
+| `token-url` | — | URL on the host backend returning `{ "token": "…" }` for the signed-in user. See [Identity](/identity) |
+| `endpoint` | the directory `widget.js` was served from | Base URL of the manager API. Only needed when the script and the API live at different URLs |
+
+The element also exposes two members for host apps:
+
+- `element.tokenProvider = async () => token` — for a SPA holding its token in memory instead of exposing `token-url`.
+- `element.logout()` — clears the stored identity and thread when the host signs a user out.
+
+With neither configured, the widget asks the manager for a visitor pass, so a
+product with no login still gets one isolated conversation per browser.
 
 ---
 

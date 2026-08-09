@@ -1,9 +1,10 @@
 import { createRoot, type Root } from "react-dom/client";
 
 import { AgentChatClient } from "../api/AgentChatClient";
+import { TokenSource, type TokenProvider } from "../auth/tokenSource";
 import { parseConfig } from "../config/parseConfig";
 import { AgentChatApp } from "../react/AgentChatApp";
-import { getOrCreateUserId } from "../storage/conversationStorage";
+import { removeStoredConversationId } from "../storage/conversationStorage";
 import { styles } from "../styles/styles";
 import type { AgentChatAnswerDetail, AgentChatConfig } from "../types";
 
@@ -11,11 +12,15 @@ let nextWidgetId = 0;
 
 export class AgentChatElement extends HTMLElement {
   static get observedAttributes(): string[] {
-    return ["endpoint", "title", "color", "greeting", "position", "avatar", "mode", "user"];
+    return ["endpoint", "title", "color", "greeting", "position", "avatar", "mode", "token-url"];
   }
 
+  /** For a host holding its token in memory instead of exposing a `token-url`.
+   *  Assign before the element connects, or re-render after. */
+  tokenProvider: TokenProvider | null = null;
+
   private config!: AgentChatConfig;
-  private userId!: string;
+  private tokens!: TokenSource;
   private client!: AgentChatClient;
   private connected = false;
   private reactRoot: Root | null = null;
@@ -24,7 +29,7 @@ export class AgentChatElement extends HTMLElement {
   private readonly panelId = `${this.widgetId}-panel`;
   private readonly titleId = `${this.widgetId}-title`;
 
-  constructor(private readonly scriptOrigin: string = defaultScriptOrigin()) {
+  constructor(private readonly scriptBaseUrl: string = defaultScriptBaseUrl()) {
     super();
   }
 
@@ -49,10 +54,19 @@ export class AgentChatElement extends HTMLElement {
     this.render();
   }
 
+  /** Forget this browser's identity and its open thread, so the next person on
+   *  this machine starts clean. Call it when the host signs a user in or out. */
+  logout(): void {
+    this.tokens?.forget();
+    if (this.config) removeStoredConversationId(this.config.endpoint);
+    this.instanceKey += 1;
+    if (this.connected) this.render();
+  }
+
   private configure(): void {
-    this.config = parseConfig(this, this.scriptOrigin);
-    this.userId = this.config.user || getOrCreateUserId(this.config.endpoint);
-    this.client = new AgentChatClient(this.config.endpoint, this.userId);
+    this.config = parseConfig(this, this.scriptBaseUrl);
+    this.tokens = new TokenSource(this.config.endpoint, this.config.tokenUrl, this.tokenProvider);
+    this.client = new AgentChatClient(this.config.endpoint, this.tokens);
   }
 
   private render(): void {
@@ -74,7 +88,6 @@ export class AgentChatElement extends HTMLElement {
         key={this.instanceKey}
         client={this.client}
         config={this.config}
-        userId={this.userId}
         onAnswer={(detail) => this.emitAnswer(detail)}
         panelId={this.panelId}
         titleId={this.titleId}
@@ -107,6 +120,9 @@ export class AgentChatElement extends HTMLElement {
   }
 }
 
-function defaultScriptOrigin(): string {
-  return new URL(import.meta.url).origin;
+/** The manager serves this script, so its own directory is the API base — path
+ *  prefix included, which `.origin` would drop for a deployment proxied under
+ *  the host's site at e.g. /agents/widget.js. */
+function defaultScriptBaseUrl(): string {
+  return new URL(".", import.meta.url).href;
 }

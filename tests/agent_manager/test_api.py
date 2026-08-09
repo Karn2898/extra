@@ -6,7 +6,6 @@ import dataclasses
 from collections.abc import AsyncIterator, Sequence
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from agent_engine.engine.engine import Engine
@@ -14,19 +13,24 @@ from agent_engine.engine.types import ChatMessage, RunResult
 from agent_engine.runtime.hooks.models import RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
 from agent_engine.runtime.tool_models import ToolUsageRecord
-from agent_manager.api.routes import router
 from agent_manager.application import ConversationService
+from agent_manager.config import AuthMode
 from agent_manager.domain import TokenBudgetUsage, thread_title
 from agent_manager.infrastructure.persistence.memory_repository import MemoryRepository
-from tests.agent_manager.conftest import RecordingEngine
+from tests.agent_manager.conftest import (
+    HOST_COOKIE,
+    RecordingEngine,
+    bearer,
+    build_test_app,
+    session_cookie,
+)
 
 
 @pytest.fixture
 def client() -> TestClient:
-    app = FastAPI()
-    app.state.service = ConversationService(RecordingEngine(), MemoryRepository())
-    app.include_router(router)
-    return TestClient(app)
+    """Authenticated by default; tests that care about identity pass their own."""
+    app = build_test_app(ConversationService(RecordingEngine(), MemoryRepository()))
+    return TestClient(app, headers=bearer("default-user"))
 
 
 def test_create_send_history_round_trip(client: TestClient) -> None:
@@ -44,7 +48,7 @@ def test_create_send_history_round_trip(client: TestClient) -> None:
 
 
 def test_list_conversations_returns_titled_threads_scoped_to_user(client: TestClient) -> None:
-    u1 = {"X-Agent-Chat-User": "u1"}
+    u1 = bearer("u1")
     a = client.post("/conversations", headers=u1).json()["conversation_id"]
     client.post(f"/conversations/{a}/messages", json={"message": "first thread"}, headers=u1)
     b = client.post("/conversations", headers=u1).json()["conversation_id"]
@@ -55,57 +59,95 @@ def test_list_conversations_returns_titled_threads_scoped_to_user(client: TestCl
         a: "first thread",
         b: "second thread",
     }
-    assert client.get("/conversations", headers={"X-Agent-Chat-User": "u2"}).json() == []
-    assert client.get("/conversations").json() == []
+    assert client.get("/conversations", headers=bearer("u2")).json() == []
 
 
 def test_another_caller_cannot_touch_a_conversation_it_does_not_own(client: TestClient) -> None:
     """The conversation id is not a credential — every route checks the caller."""
-    u1 = {"X-Agent-Chat-User": "u1"}
+    u1 = bearer("u1")
     cid = client.post("/conversations", headers=u1).json()["conversation_id"]
     client.post(f"/conversations/{cid}/messages", json={"message": "secret"}, headers=u1)
 
-    for headers in ({"X-Agent-Chat-User": "u2"}, {}):
-        assert client.get(f"/conversations/{cid}/messages", headers=headers).status_code == 403
-        assert client.get(f"/conversations/{cid}/usage", headers=headers).status_code == 403
-        send = client.post(
-            f"/conversations/{cid}/messages", json={"message": "hi"}, headers=headers
-        )
-        assert send.status_code == 403
-        stream = client.post(
-            f"/conversations/{cid}/messages/stream", json={"message": "hi"}, headers=headers
-        )
-        assert stream.status_code == 403
+    u2 = bearer("u2")
+    assert client.get(f"/conversations/{cid}/messages", headers=u2).status_code == 403
+    assert client.get(f"/conversations/{cid}/usage", headers=u2).status_code == 403
+    send = client.post(f"/conversations/{cid}/messages", json={"message": "hi"}, headers=u2)
+    assert send.status_code == 403
+    stream = client.post(
+        f"/conversations/{cid}/messages/stream", json={"message": "hi"}, headers=u2
+    )
+    assert stream.status_code == 403
 
 
 def test_create_cannot_claim_a_conversation_id_owned_by_another_caller(
     client: TestClient,
 ) -> None:
-    alice = {"X-Agent-Chat-User": "alice"}
+    alice = bearer("alice")
     client.post("/conversations", json={"session_id": "sess-1"}, headers=alice)
     client.post("/conversations/sess-1/messages", json={"message": "secret"}, headers=alice)
 
-    for headers in ({"X-Agent-Chat-User": "bob"}, {}):
-        taken = client.post("/conversations", json={"session_id": "sess-1"}, headers=headers)
-        assert taken.status_code == 409
-        assert client.get("/conversations/sess-1/messages", headers=headers).status_code == 403
+    bob = bearer("bob")
+    taken = client.post("/conversations", json={"session_id": "sess-1"}, headers=bob)
+    assert taken.status_code == 409
+    assert client.get("/conversations/sess-1/messages", headers=bob).status_code == 403
 
     assert client.get("/conversations", headers=alice).json()[0]["conversation_id"] == "sess-1"
 
 
-def test_an_empty_caller_header_is_anonymous_not_an_identity(client: TestClient) -> None:
-    """An id of "" would own conversations that no listing can reach."""
-    empty = {"X-Agent-Chat-User": "   "}
-    cid = client.post("/conversations", headers=empty).json()["conversation_id"]
-
-    assert client.get(f"/conversations/{cid}/messages", headers=empty).status_code == 200
-    assert client.get(f"/conversations/{cid}/messages").status_code == 200
-    assert client.get("/conversations", headers=empty).json() == []
+@pytest.fixture
+def unauthenticated() -> TestClient:
+    return TestClient(build_test_app(ConversationService(RecordingEngine(), MemoryRepository())))
 
 
-def test_an_oversized_caller_header_is_rejected(client: TestClient) -> None:
-    """The id becomes a 64-char database key, so it is bounded at the edge."""
-    assert client.post("/conversations", headers={"X-Agent-Chat-User": "x" * 65}).status_code == 400
+def test_every_conversation_route_needs_a_proven_caller(unauthenticated: TestClient) -> None:
+    """Identity is the gate: without a token there is nothing to authorize."""
+    assert unauthenticated.post("/conversations").status_code == 401
+    assert unauthenticated.get("/conversations").status_code == 401
+    assert unauthenticated.get("/conversations/sess-1/messages").status_code == 401
+    assert unauthenticated.get("/conversations/sess-1/usage").status_code == 401
+    send = unauthenticated.post("/conversations/sess-1/messages", json={"message": "hi"})
+    assert send.status_code == 401
+
+
+def test_a_token_signed_with_another_key_is_not_an_identity(unauthenticated: TestClient) -> None:
+    """Asserting a user id is free; signing it is not."""
+    forged = bearer("alice", secret="an-attacker-secret-of-sufficient-length")
+
+    assert unauthenticated.post("/conversations", headers=forged).status_code == 401
+
+
+def test_the_host_session_cookie_authenticates_a_same_origin_deployment() -> None:
+    """The zero-host-code path: proxied under the host's origin, its own cookie
+    arrives on our requests and we verify it with the host's own secret."""
+    app = build_test_app(
+        ConversationService(RecordingEngine(), MemoryRepository()),
+        agent_auth_mode=AuthMode.HOST_TOKEN,
+        agent_auth_cookie=HOST_COOKIE,
+        agent_auth_claim_user_id="id",
+    )
+    dana = TestClient(app, cookies=session_cookie("u_8412", id="u_8412"))
+
+    cid = dana.post("/conversations").json()["conversation_id"]
+    dana.post(f"/conversations/{cid}/messages", json={"message": "hi"})
+
+    assert [t["conversation_id"] for t in dana.get("/conversations").json()] == [cid]
+    assert TestClient(app).get(f"/conversations/{cid}/messages").status_code == 401
+
+
+def test_a_visitor_pass_is_an_identity_of_its_own(unauthenticated: TestClient) -> None:
+    """Products with no login still get isolation: passes are signed, not guessed."""
+    client = unauthenticated
+    first = client.post("/auth/anonymous").json()["token"]
+    second = client.post("/auth/anonymous").json()["token"]
+    visitor = {"Authorization": f"Bearer {first}"}
+    other_visitor = {"Authorization": f"Bearer {second}"}
+
+    cid = client.post("/conversations", headers=visitor).json()["conversation_id"]
+    client.post(f"/conversations/{cid}/messages", json={"message": "hi"}, headers=visitor)
+
+    assert client.get(f"/conversations/{cid}/messages", headers=visitor).status_code == 200
+    assert client.get(f"/conversations/{cid}/messages", headers=other_visitor).status_code == 403
+    assert client.get("/conversations", headers=other_visitor).json() == []
 
 
 def test_thread_title_collapses_whitespace_and_truncates() -> None:
@@ -148,10 +190,10 @@ def test_usage_reports_cumulative_tokens_and_severity_against_budget() -> None:
                 output_tokens=100,
             )
 
-    app = FastAPI()
-    app.state.service = ConversationService(TokenEngine(), MemoryRepository(), max_tokens=1000)
-    app.include_router(router)
-    client = TestClient(app)
+    client = TestClient(
+        build_test_app(ConversationService(TokenEngine(), MemoryRepository(), max_tokens=1000)),
+        headers=bearer("default-user"),
+    )
 
     cid = client.post("/conversations").json()["conversation_id"]
     client.post(f"/conversations/{cid}/messages", json={"message": "hi"})
@@ -233,10 +275,10 @@ class _FinalThenCleanupErrorEngine(Engine):
 def test_send_surfaces_sub_agent_in_visited_without_mocking() -> None:
     """End-to-end through the real routes + service: the response exposes the
     sub-agent routing path (the evidence the demo page renders)."""
-    app = FastAPI()
-    app.state.service = ConversationService(_SubAgentEngine(), MemoryRepository())
-    app.include_router(router)
-    client = TestClient(app)
+    client = TestClient(
+        build_test_app(ConversationService(_SubAgentEngine(), MemoryRepository())),
+        headers=bearer("default-user"),
+    )
 
     cid = client.post("/conversations").json()["conversation_id"]
     body = client.post(f"/conversations/{cid}/messages", json={"message": "tags?"}).json()
@@ -272,10 +314,10 @@ def test_stream_sanitizes_late_engine_error_and_persists_final_answer(
 ) -> None:
     """The engine's own generator failing after `final` is a real failure: it
     is logged server-side and reaches the client only as a generic error."""
-    app = FastAPI()
-    app.state.service = ConversationService(_FinalThenCleanupErrorEngine(), MemoryRepository())
-    app.include_router(router)
-    client = TestClient(app)
+    client = TestClient(
+        build_test_app(ConversationService(_FinalThenCleanupErrorEngine(), MemoryRepository())),
+        headers=bearer("default-user"),
+    )
     cid = client.post("/conversations").json()["conversation_id"]
 
     with client.stream(
@@ -297,10 +339,10 @@ def test_stream_sanitizes_late_engine_error_and_persists_final_answer(
 
 
 def test_send_sanitizes_engine_failure() -> None:
-    app = FastAPI()
-    app.state.service = ConversationService(_FinalThenCleanupErrorEngine(), MemoryRepository())
-    app.include_router(router)
-    client = TestClient(app)
+    client = TestClient(
+        build_test_app(ConversationService(_FinalThenCleanupErrorEngine(), MemoryRepository())),
+        headers=bearer("default-user"),
+    )
     cid = client.post("/conversations").json()["conversation_id"]
 
     response = client.post(f"/conversations/{cid}/messages", json={"message": "x"})
@@ -311,7 +353,7 @@ def test_send_sanitizes_engine_failure() -> None:
 
 
 def test_create_accepts_a_stable_session_id_owned_by_the_caller(client: TestClient) -> None:
-    u1 = {"X-Agent-Chat-User": "u1"}
+    u1 = bearer("u1")
     created = client.post("/conversations", json={"session_id": "sess-1"}, headers=u1).json()
     assert created["conversation_id"] == "sess-1"
     assert created["session_id"] == "sess-1"
@@ -335,11 +377,8 @@ class _BudgetEngine(RecordingEngine):
 
 def test_send_returns_429_when_token_budget_exceeded() -> None:
     """send_message returns 429 when the conversation token budget is exhausted."""
-    app = FastAPI()
     service = ConversationService(_BudgetEngine(), MemoryRepository(), max_tokens=1)
-    app.state.service = service
-    app.include_router(router)
-    client = TestClient(app)
+    client = TestClient(build_test_app(service), headers=bearer("default-user"))
 
     cid = client.post("/conversations").json()["conversation_id"]
     client.post(f"/conversations/{cid}/messages", json={"message": "first"})
@@ -356,11 +395,8 @@ def test_send_returns_429_when_token_budget_exceeded() -> None:
 
 def test_stream_returns_429_when_token_budget_exceeded() -> None:
     """stream_message returns 429 when the conversation token budget is exhausted."""
-    app = FastAPI()
     service = ConversationService(_BudgetEngine(), MemoryRepository(), max_tokens=1)
-    app.state.service = service
-    app.include_router(router)
-    client = TestClient(app)
+    client = TestClient(build_test_app(service), headers=bearer("default-user"))
 
     cid = client.post("/conversations").json()["conversation_id"]
     client.post(f"/conversations/{cid}/messages", json={"message": "first"})
@@ -419,11 +455,8 @@ class _ToolErrorEngine(RecordingEngine):
 def test_tool_error_text_is_sanitized_in_send_message() -> None:
     """Raw tool exception details must be sanitized to generic text in API responses."""
 
-    app = FastAPI()
     service = ConversationService(_ToolErrorEngine(), MemoryRepository())
-    app.state.service = service
-    app.include_router(router)
-    client = TestClient(app)
+    client = TestClient(build_test_app(service), headers=bearer("default-user"))
 
     cid = client.post("/conversations").json()["conversation_id"]
     response = client.post(f"/conversations/{cid}/messages", json={"message": "trigger tool"})
@@ -437,11 +470,8 @@ def test_tool_error_text_is_sanitized_in_send_message() -> None:
 
 def test_tool_error_text_is_sanitized_in_stream_message() -> None:
     """Raw tool exception details must be sanitized to generic text in stream SSE events."""
-    app = FastAPI()
     service = ConversationService(_ToolErrorEngine(), MemoryRepository())
-    app.state.service = service
-    app.include_router(router)
-    client = TestClient(app)
+    client = TestClient(build_test_app(service), headers=bearer("default-user"))
 
     cid = client.post("/conversations").json()["conversation_id"]
     url = f"/conversations/{cid}/messages/stream"
