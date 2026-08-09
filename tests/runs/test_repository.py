@@ -8,7 +8,10 @@ import math
 import pytest
 
 from agent_engine.approvals.models import RunRecord, RunStatus
-from agent_engine.runs.in_memory import InMemoryRunRepository
+from agent_engine.runs.in_memory import (
+    _EXPIRATION_CLEANUP_BATCH_SIZE,
+    InMemoryRunRepository,
+)
 from agent_engine.runs.repository import RunRepository
 
 pytestmark = pytest.mark.asyncio
@@ -31,8 +34,13 @@ def run_repository() -> RunRepository:
     return InMemoryRunRepository()
 
 
-def _run(run_id: str, *, system_name: str = "system") -> RunRecord:
-    return RunRecord(run_id=run_id, thread_id=run_id, system_name=system_name)
+def _run(
+    run_id: str,
+    *,
+    system_name: str = "system",
+    status: RunStatus = RunStatus.RUNNING,
+) -> RunRecord:
+    return RunRecord(run_id=run_id, thread_id=run_id, system_name=system_name, status=status)
 
 
 async def test_in_memory_run_repository_implements_contract() -> None:
@@ -78,16 +86,45 @@ async def test_run_repository_registers_different_ids(
     assert await run_repository.get("r2") is not None
 
 
-async def test_in_memory_run_registration_has_one_process_local_winner() -> None:
+async def test_many_concurrent_run_registrations_have_one_winner() -> None:
     repository = InMemoryRunRepository()
-
-    async def register(index: int) -> bool:
-        return await repository.create_if_absent(_run("shared", system_name=f"system-{index}"))
-
-    results = await asyncio.gather(*(register(index) for index in range(20)))
+    results = await asyncio.gather(
+        *(
+            repository.create_if_absent(_run("shared", system_name=f"system-{index}"))
+            for index in range(100)
+        )
+    )
 
     assert sum(results) == 1
     assert await repository.get("shared") is not None
+
+
+async def test_concurrent_creates_for_unrelated_runs_all_succeed() -> None:
+    repository = InMemoryRunRepository()
+    run_ids = [f"run-{index}" for index in range(100)]
+
+    results = await asyncio.gather(
+        *(repository.create_if_absent(_run(run_id)) for run_id in run_ids)
+    )
+    stored = await asyncio.gather(*(repository.get(run_id) for run_id in run_ids))
+
+    assert all(results)
+    assert all(record is not None for record in stored)
+
+
+async def test_transition_and_duplicate_create_for_same_run_are_safe() -> None:
+    repository = InMemoryRunRepository()
+    original = _run("shared", system_name="original")
+    await repository.create_if_absent(original)
+    duplicate_result, transition_result = await asyncio.gather(
+        repository.create_if_absent(_run("shared", system_name="replacement")),
+        repository.transition_if_allowed("shared", RunStatus.COMPLETED),
+    )
+
+    assert duplicate_result is False
+    assert transition_result is True
+    assert await repository.get("shared") == original
+    assert original.status == RunStatus.COMPLETED
 
 
 async def test_transition_if_allowed_is_a_single_process_local_operation() -> None:
@@ -163,11 +200,81 @@ async def test_expired_run_id_can_be_registered_again() -> None:
     await repository.create_if_absent(original)
     await repository.transition_if_allowed("reused", RunStatus.COMPLETED)
     clock.advance(1)
+    assert await repository.get("reused") is None
 
     replacement = _run("reused", system_name="replacement")
 
     assert await repository.create_if_absent(replacement) is True
     assert await repository.get("reused") == replacement
+
+
+async def test_existing_run_registration_preserves_original_expiration() -> None:
+    clock = ManualClock()
+    repository = InMemoryRunRepository(terminal_ttl_seconds=10, clock=clock)
+    original = _run("finished", system_name="original")
+    await repository.create_if_absent(original)
+    await repository.transition_if_allowed("finished", RunStatus.COMPLETED)
+    clock.advance(5)
+    original_entry = repository._runs["finished"]
+    original_expiration = original_entry.expires_at
+    original_queue = tuple(repository._expiration_queue)
+
+    created = await repository.create_if_absent(_run("finished", system_name="replacement"))
+
+    assert created is False
+    assert repository._runs["finished"] is original_entry
+    assert original_entry.expires_at == original_expiration
+    assert tuple(repository._expiration_queue) == original_queue
+    clock.advance(4)
+    assert await repository.get("finished") == original
+    clock.advance(1)
+    assert await repository.get("finished") is None
+
+
+async def test_create_if_absent_does_not_evict_expired_records() -> None:
+    clock = ManualClock()
+    repository = InMemoryRunRepository(terminal_ttl_seconds=1, clock=clock)
+    expired = _run("expired")
+    await repository.create_if_absent(expired)
+    await repository.transition_if_allowed("expired", RunStatus.COMPLETED)
+    clock.advance(1)
+
+    assert await repository.create_if_absent(_run("expired")) is False
+    assert await repository.create_if_absent(_run("new")) is True
+    assert repository._runs["expired"].record is expired
+
+    assert await repository.get("expired") is None
+
+
+async def test_stale_expiration_cannot_delete_newer_record() -> None:
+    clock = ManualClock()
+    repository = InMemoryRunRepository(terminal_ttl_seconds=1, clock=clock)
+    original = _run("reused", status=RunStatus.COMPLETED)
+    await repository.create_if_absent(original)
+    clock.advance(1)
+    assert await repository.get("reused") is None
+
+    replacement = _run("reused")
+    assert await repository.create_if_absent(replacement) is True
+    assert await repository.transition_if_allowed("reused", RunStatus.COMPLETED) is True
+
+    assert await repository.get("reused") is replacement
+
+
+async def test_expiration_cleanup_work_is_bounded_per_transition() -> None:
+    clock = ManualClock()
+    repository = InMemoryRunRepository(terminal_ttl_seconds=1, clock=clock)
+    expired_count = 100
+    for index in range(expired_count):
+        await repository.create_if_absent(_run(f"expired-{index}", status=RunStatus.COMPLETED))
+    clock.advance(1)
+
+    assert await repository.transition_if_allowed("missing", RunStatus.COMPLETED) is False
+
+    remaining_expired = sum(run_id.startswith("expired-") for run_id in repository._runs)
+    removed = expired_count - remaining_expired
+    assert 0 < removed <= _EXPIRATION_CLEANUP_BATCH_SIZE
+    assert len(repository._expiration_queue) > 0
 
 
 @pytest.mark.parametrize("ttl", [0, -1, math.inf, math.nan])

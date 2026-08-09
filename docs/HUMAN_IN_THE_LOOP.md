@@ -274,16 +274,33 @@ A future Redis implementation must provide the same contract across pods using
 an appropriate atomic Redis operation, and can be selected through composition
 without changing `RunLifecycle` or `LangGraphEngine`.
 
+The adapter is intentionally lock-free under its process-local execution model:
+one repository instance is accessed from one asyncio event loop and OS thread,
+and its check-and-mutate sequences contain no suspension points. Coroutines
+therefore cannot interleave inside a repository operation. The adapter must not
+be shared across threads or event loops; a deployment requiring that model must
+inject an implementation with the appropriate synchronization.
+
 The in-memory adapter bounds terminal-state retention to prevent completed run
 records from accumulating for the lifetime of a long-running process. It keeps
 `COMPLETED`, `FAILED`, and `CANCELLED` records for 24 hours by default, using a
-configurable adapter-local TTL and opportunistic eviction on repository access.
+configurable adapter-local TTL. Status reads check only their requested run;
+transitions additionally process a fixed-size batch from a FIFO expiration
+queue so untouched terminal records are eventually reclaimed. Cleanup cost is
+therefore bounded and never scans or drains all expired runs on a request path.
 `RUNNING`, `PENDING_APPROVAL`, and `RESUMING` records never expire, so cleanup
 cannot invalidate an active execution or resumable approval. After a terminal
 record expires, its `run_id` is unknown and may be registered again; the TTL is
 therefore also the in-memory adapter's idempotency and status-query retention
 window. This policy does not change the `RunRepository` protocol: applications
 that need different retention inject another configured or persistent adapter.
+
+`create_if_absent` deliberately performs no eviction. Its existence check and
+insert have no `await` between them, preserving one-winner asyncio concurrency
+semantics without a lock. Consequently, attempting to create an existing run
+cannot delete it or change its original expiration; an expired record becomes
+reusable only after targeted status access or bounded transition cleanup has
+applied the normal TTL eviction policy.
 
 Run status changes cross the same boundary through `transition_if_allowed`.
 Checking whether a transition is legal and applying it are one repository
