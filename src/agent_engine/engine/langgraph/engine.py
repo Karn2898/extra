@@ -18,11 +18,11 @@ from langgraph.types import Command
 
 from agent_engine.approvals.coordinator import ApprovalCoordinator
 from agent_engine.approvals.decision import ApprovalDecision, parse_decision
+from agent_engine.approvals.errors import RunNotFound
 from agent_engine.approvals.manager import ApprovalManager, ToolExecutionManager
 from agent_engine.approvals.models import ApprovalRecord
 from agent_engine.approvals.repository import (
     InMemoryApprovalRepository,
-    InMemoryRunRepository,
     InMemoryToolExecutionRepository,
 )
 from agent_engine.approvals.session_store import (
@@ -63,6 +63,8 @@ from agent_engine.loaders.tool_loader import ToolLoader
 from agent_engine.logging_config import log
 from agent_engine.models.factory import build_chat_model
 from agent_engine.observability import build_callbacks
+from agent_engine.runs.in_memory import InMemoryRunRepository
+from agent_engine.runs.repository import RunRepository
 from agent_engine.runtime.execution import ExecutionLimiter, current_execution
 from agent_engine.runtime.hooks import (
     EngineContext,
@@ -238,6 +240,7 @@ class LangGraphEngine(Engine):
         checkpoint_connection_string: str | None = None,
         execution_manager: ToolExecutionManager | None = None,
         approval_manager: ApprovalManager | None = None,
+        run_repository: RunRepository | None = None,
         session_approval_repository: SessionApprovalRepository | None = None,
         session_approval_store: SessionApprovalStore | None = None,
     ) -> None:
@@ -264,10 +267,17 @@ class LangGraphEngine(Engine):
         self._execution_manager = execution_manager or ToolExecutionManager(
             execution_repository=InMemoryToolExecutionRepository()
         )
-        self._approval_manager = approval_manager or ApprovalManager(
-            run_repository=InMemoryRunRepository(),
-            approval_repository=InMemoryApprovalRepository(),
-        )
+        if approval_manager is not None and run_repository is not None:
+            raise ValueError("pass approval_manager or run_repository, not both")
+        if approval_manager is not None:
+            self._run_repository = approval_manager.run_repository
+            self._approval_manager = approval_manager
+        else:
+            self._run_repository = run_repository or InMemoryRunRepository()
+            self._approval_manager = ApprovalManager(
+                run_repository=self._run_repository,
+                approval_repository=InMemoryApprovalRepository(),
+            )
         self._session_approval_repository = (
             session_approval_repository or InMemorySessionApprovalRepository()
             if session_approval_store is None
@@ -291,7 +301,7 @@ class LangGraphEngine(Engine):
         self._lifecycle = RunLifecycle(
             system_name=self._system_name,
             hook_manager=self._hook_manager,
-            approval_manager=self._approval_manager,
+            run_repository=self._run_repository,
         )
         self._filters = self._setup_filters(spec)
         self._mcp_tools = await self._connect_mcps(spec)
@@ -466,7 +476,9 @@ class LangGraphEngine(Engine):
 
     async def get_run_status(self, run_id: str) -> str:
         """Return the current status of a run (raises RunNotFound if unknown)."""
-        run = await self._approval_manager.get_run(run_id)
+        run = await self._run_repository.get(run_id)
+        if run is None:
+            raise RunNotFound(run_id)
         return run.status.value
 
     async def get_pending_approval(self, run_id: str) -> PendingApproval | None:

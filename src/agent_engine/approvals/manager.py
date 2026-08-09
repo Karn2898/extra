@@ -4,8 +4,9 @@
 a duplicate execution of the same tool call so a graph re-entry after resume does
 not cause a second side effect.
 
-``ApprovalManager`` owns the pending-approval records and the distributed-safe
-claim used to resume a run exactly once.
+``ApprovalManager`` owns pending-approval records and the repository-defined
+claim used to resume a run exactly once within that repository's consistency
+scope.
 
 Neither performs risk classification. Whether a call requires approval is decided
 by :class:`agent_engine.approvals.coordinator.ApprovalCoordinator`; these
@@ -35,11 +36,11 @@ from agent_engine.approvals.models import (
 )
 from agent_engine.approvals.repository import (
     ApprovalRepository,
-    RunRepository,
     ToolExecutionRepository,
 )
 from agent_engine.approvals.sanitization import mask_arguments
 from agent_engine.logging_config import log
+from agent_engine.runs.repository import RunRepository
 
 logger = logging.getLogger(__name__)
 
@@ -102,8 +103,8 @@ class ApprovalManager:
 
     Enforces the full validation set: the run exists, the approval exists and
     belongs to the run, the caller is authorized, the approval is still pending,
-    and the stored tool call matches. Exposes a distributed-safe ``claim`` so two
-    pods cannot resume the same approval twice.
+    and the stored tool call matches. The injected approval repository defines
+    the coordination scope of the atomic ``claim`` operation.
     """
 
     def __init__(
@@ -112,24 +113,20 @@ class ApprovalManager:
         self._runs = run_repository
         self._approvals = approval_repository
 
-    async def register_run(self, record: RunRecord) -> RunRecord:
-        """Register ``record`` unless its ``run_id`` is already known.
+    @property
+    def run_repository(self) -> RunRepository:
+        """The run repository shared with lifecycle composition.
 
-        Idempotent: a concurrent caller for the same ``run_id`` (e.g. a retried
-        request landing on a different pod) gets back the record that actually
-        won, instead of overwriting it.
+        Exposing the injected port keeps ``LangGraphEngine`` from reaching into
+        manager internals when a custom approval manager is supplied.
         """
-        existing, _created = await self._runs.create_if_absent(record)
-        return existing
+        return self._runs
 
     async def get_run(self, run_id: str) -> RunRecord:
         record = await self._runs.get(run_id)
         if record is None:
             raise RunNotFound(run_id)
         return record
-
-    async def get_run_or_none(self, run_id: str) -> RunRecord | None:
-        return await self._runs.get(run_id)
 
     async def create_pending(
         self,
@@ -180,14 +177,13 @@ class ApprovalManager:
         # A run may not have been registered by an external caller; register
         # lazily. create_if_absent is atomic, so a concurrent interrupt for the
         # same run_id cannot race this into two records.
-        run, _created = await self._runs.create_if_absent(
+        await self._runs.create_if_absent(
             RunRecord(run_id=run_id, thread_id=thread_id, system_name="", status=RunStatus.RUNNING)
         )
         # A model can emit several tool calls in one response. Reaching another
         # interrupt while the run is already pending should keep that state,
         # rather than attempting an illegal pending -> pending transition.
-        if run.status != RunStatus.PENDING_APPROVAL:
-            await self._runs.set_status(run_id, RunStatus.PENDING_APPROVAL)
+        await self._runs.transition_if_allowed(run_id, RunStatus.PENDING_APPROVAL)
         log(
             logger,
             logging.INFO,
@@ -228,7 +224,8 @@ class ApprovalManager:
     ) -> ApprovalRecord:
         """Validate and atomically claim an approval for resume.
 
-        Exactly one concurrent caller succeeds; the rest get
+        Exactly one concurrent caller sharing the approval repository's
+        coordination scope succeeds; the rest get
         :class:`ApprovalAlreadyProcessed`. On success the run and approval both
         move to RESUMING.
         """
@@ -248,9 +245,7 @@ class ApprovalManager:
             )
             raise ApprovalAlreadyProcessed(approval_id, record.status.value) from exc
         # Move the run in lock-step; RESUMING is only reachable from PENDING_APPROVAL.
-        run = await self.get_run(run_id)
-        if run.status == RunStatus.PENDING_APPROVAL:
-            await self._runs.set_status(run_id, RunStatus.RESUMING)
+        await self._runs.transition_if_allowed(run_id, RunStatus.RESUMING)
         log(
             logger,
             logging.INFO,
@@ -264,6 +259,3 @@ class ApprovalManager:
     async def finalize(self, approval_id: str, *, approved: bool) -> ApprovalRecord:
         target = ApprovalStatus.APPROVED if approved else ApprovalStatus.REJECTED
         return await self._approvals.set_status(approval_id, target)
-
-    async def mark_run(self, run_id: str, status: RunStatus) -> RunRecord:
-        return await self._runs.set_status(run_id, status)

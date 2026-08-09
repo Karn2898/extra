@@ -23,9 +23,9 @@ from agent_engine.approvals.manager import (
 from agent_engine.approvals.models import ApprovalStatus, RunRecord, RunStatus
 from agent_engine.approvals.repository import (
     InMemoryApprovalRepository,
-    InMemoryRunRepository,
     InMemoryToolExecutionRepository,
 )
+from agent_engine.runs.in_memory import InMemoryRunRepository
 
 
 def _manager() -> ToolExecutionManager:
@@ -136,9 +136,13 @@ async def test_second_claim_is_rejected() -> None:
 
 
 async def test_claim_validates_run_membership() -> None:
-    mgr = _approval_manager()
+    runs = InMemoryRunRepository()
+    mgr = ApprovalManager(
+        run_repository=runs,
+        approval_repository=InMemoryApprovalRepository(),
+    )
     await _pending(mgr)
-    await mgr.register_run(RunRecord(run_id="r2", thread_id="r2", system_name="s"))
+    await runs.create_if_absent(RunRecord(run_id="r2", thread_id="r2", system_name="s"))
     with pytest.raises(ApprovalRunMismatch):
         await mgr.claim(run_id="r2", approval_id="ap1")
 

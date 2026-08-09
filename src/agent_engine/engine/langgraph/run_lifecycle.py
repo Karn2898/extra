@@ -4,10 +4,10 @@ import logging
 import uuid
 from collections.abc import Callable
 
-from agent_engine.approvals.manager import ApprovalManager
-from agent_engine.approvals.models import RunRecord, RunStatus, can_run_transition
+from agent_engine.approvals.models import RunRecord, RunStatus
 from agent_engine.engine.types import RunResult
 from agent_engine.logging_config import log
+from agent_engine.runs.repository import RunRepository
 from agent_engine.runtime.hooks import HookManager, RunContext, RunEndContext
 
 logger = logging.getLogger(__name__)
@@ -25,11 +25,11 @@ class RunLifecycle:
         *,
         system_name: str,
         hook_manager: HookManager,
-        approval_manager: ApprovalManager,
+        run_repository: RunRepository,
     ) -> None:
         self._system_name = system_name
         self._hooks = hook_manager
-        self._runs = approval_manager
+        self._runs = run_repository
 
     # -- start ---------------------------------------------------------------
 
@@ -50,11 +50,9 @@ class RunLifecycle:
         return ctx
 
     async def _register(self, ctx: RunContext) -> None:
-        """Record the run as ``RUNNING``. ``register_run`` is itself
-        create-if-absent, so a concurrent caller for the same ``run_id`` cannot
-        clobber a record another caller already wrote."""
+        """Express one idempotent registration operation to the repository."""
         assert ctx.run_id is not None
-        await self._runs.register_run(
+        await self._runs.create_if_absent(
             RunRecord(
                 run_id=ctx.run_id,
                 thread_id=ctx.run_id,
@@ -116,16 +114,8 @@ class RunLifecycle:
             )
 
     async def _mark(self, run_id: str | None, target: RunStatus) -> bool:
-        """Move a run to ``target`` if the state machine allows it, else leave it."""
-        run = await self._registered(run_id)
-        if run is not None and can_run_transition(run.status, target):
-            await self._runs.mark_run(run.run_id, target)
-            return True
-        return False
-
-    async def _registered(self, run_id: str | None) -> RunRecord | None:
-        """The registry's record for a run, if it has one."""
-        return None if run_id is None else await self._runs.get_run_or_none(run_id)
+        """Request one atomic transition, leaving absent or terminal runs alone."""
+        return False if run_id is None else await self._runs.transition_if_allowed(run_id, target)
 
     def _end_context(self, ctx: RunContext, result: RunResult) -> RunEndContext:
         """Safe summary of a completed run for ``on_run_end`` (no answer text)."""

@@ -70,9 +70,7 @@ from agent_engine.approvals.provider import (
 from agent_engine.approvals.repository import (
     ApprovalRepository,
     InMemoryApprovalRepository,
-    InMemoryRunRepository,
     InMemoryToolExecutionRepository,
-    RunRepository,
     ToolExecutionRepository,
 )
 from agent_engine.approvals.sanitization import mask_arguments, mask_sensitive
@@ -102,7 +100,6 @@ __all__ = [
     "CheckpointNotFound",
     "DefaultApprovalPolicy",
     "InMemoryApprovalRepository",
-    "InMemoryRunRepository",
     "InMemorySessionApprovalRepository",
     "InMemorySessionApprovalStore",
     "InMemoryToolExecutionRepository",
@@ -110,7 +107,6 @@ __all__ = [
     "InvalidStateTransition",
     "RunNotFound",
     "RunRecord",
-    "RunRepository",
     "RunStatus",
     "SessionApprovalGrant",
     "SessionApprovalKey",

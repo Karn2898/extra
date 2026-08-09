@@ -21,6 +21,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 from langchain_core.messages.tool import ToolCall
 
+from agent_engine.approvals.models import RunStatus
 from agent_engine.core.spec import (
     AgentSpec,
     BasePromptSet,
@@ -33,6 +34,7 @@ from agent_engine.core.spec import (
     ToolSpec,
 )
 from agent_engine.engine.langgraph.engine import LangGraphEngine
+from agent_engine.runs.in_memory import InMemoryRunRepository
 from agent_engine.runtime.execution import current_execution
 from agent_engine.runtime.hooks import RunContext, current_run_context
 from agent_engine.runtime.streaming import RunStreamEvent, StreamSinks, current_streams
@@ -184,6 +186,21 @@ async def test_successful_stream_ends_the_run_and_fires_end_hook(tmp_path: Path)
     assert len(summaries) == 1
     assert summaries[0].status == "succeeded"
     assert summaries[0].visited == ("solo",)
+
+
+async def test_engine_uses_injected_run_repository(tmp_path: Path) -> None:
+    runs = InMemoryRunRepository()
+    async with LangGraphEngine(
+        tmp_path,
+        model_factory=_factory,
+        run_repository=runs,
+    ) as engine:
+        await engine.build(_spec())
+        await engine.run("hello", context=RunContext(run_id="run-injected"))
+
+    stored = await runs.get("run-injected")
+    assert stored is not None
+    assert stored.status == RunStatus.COMPLETED
 
 
 async def test_start_hook_may_replace_the_context_the_run_is_registered_under(
