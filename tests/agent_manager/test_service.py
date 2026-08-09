@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from typing import cast
 
 import pytest
 
 from agent_engine.engine.types import ChatMessage, ChatRole
+from agent_engine.runtime.hooks.models import RunContext
+from agent_engine.runtime.streaming import RunStreamEvent
 from agent_manager.application import (
     ConversationAccessDenied,
     ConversationAlreadyExists,
@@ -16,6 +20,22 @@ from agent_manager.application import (
 from agent_manager.domain import Role
 from agent_manager.infrastructure.persistence.memory_repository import MemoryRepository
 from tests.agent_manager.conftest import RecordingEngine
+
+
+class CleanupAfterFinalError(RuntimeError):
+    """Distinct failure type used to verify transparent propagation."""
+
+
+class FinalThenCleanupErrorEngine(RecordingEngine):
+    async def stream(
+        self,
+        message: str,
+        *,
+        history: Sequence[ChatMessage] = (),
+        context: RunContext | None = None,
+    ) -> AsyncIterator[RunStreamEvent]:
+        yield RunStreamEvent(type="final", content="persisted", route=("agent",))
+        raise CleanupAfterFinalError("cleanup after final")
 
 
 def _service(window: int = 10) -> tuple[ConversationService, RecordingEngine]:
@@ -32,6 +52,39 @@ async def test_send_persists_user_and_assistant_in_order() -> None:
     assert [(m.role, m.content) for m in msgs] == [
         (Role.USER, "hello"),
         (Role.ASSISTANT, "answer:hello"),
+    ]
+
+
+async def test_stream_persists_final_before_propagating_late_engine_failure() -> None:
+    repository = MemoryRepository()
+    service = ConversationService(FinalThenCleanupErrorEngine(), repository)
+    cid = await service.create()
+
+    with pytest.raises(CleanupAfterFinalError, match="cleanup after final"):
+        async for _event in service.stream(cid, "hello"):
+            pass
+
+    messages = await service.history(cid)
+    assert [(message.role, message.content) for message in messages] == [
+        (Role.USER, "hello"),
+        (Role.ASSISTANT, "persisted"),
+    ]
+
+
+async def test_stream_persists_final_when_consumer_closes_generator() -> None:
+    repository = MemoryRepository()
+    service = ConversationService(FinalThenCleanupErrorEngine(), repository)
+    cid = await service.create()
+    events = cast(AsyncGenerator[RunStreamEvent, None], service.stream(cid, "hello"))
+
+    final = await events.__anext__()
+    assert final.type == "final"
+    await events.aclose()
+
+    messages = await service.history(cid)
+    assert [(message.role, message.content) for message in messages] == [
+        (Role.USER, "hello"),
+        (Role.ASSISTANT, "persisted"),
     ]
 
 

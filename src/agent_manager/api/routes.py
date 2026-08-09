@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
 from typing import Annotated, Any
@@ -33,17 +34,16 @@ from agent_manager.application import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 Service = Annotated[ConversationService, Depends(get_service)]
 CallerId = Annotated[str | None, Depends(get_caller_id)]
 
 _BUDGET_EXCEEDED_DETAIL = {
     "error_type": "context_limit_exceeded",
-    "message": (
-        "This conversation has reached its context limit."
-        " Start a new chat to continue."
-    ),
+    "message": ("This conversation has reached its context limit. Start a new chat to continue."),
 }
+_INTERNAL_ERROR_MESSAGE = "Internal server error"
 
 _HTTP_ERRORS: dict[type[Exception], tuple[int, Any]] = {
     ConversationNotFound: (404, "conversation not found"),
@@ -60,7 +60,6 @@ def _as_http_error() -> Iterator[None]:
     except tuple(_HTTP_ERRORS) as exc:
         status, detail = _HTTP_ERRORS[type(exc)]
         raise HTTPException(status_code=status, detail=detail) from None
-
 
 
 @router.post("/conversations", response_model=CreateConversationResponse)
@@ -127,8 +126,9 @@ async def send_message(
     except HTTPException:
         raise
 
-    except Exception as exc:  # engine failure
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception:  # engine failure
+        logger.exception("conversation request failed")
+        raise HTTPException(status_code=500, detail=_INTERNAL_ERROR_MESSAGE) from None
     return SendMessageResponse(
         answer=result.answer,
         visited=list(result.visited),
@@ -148,9 +148,7 @@ def _to_stream_event(event: RunStreamEvent) -> StreamEventOut:
         error=event.error,
         system_name=event.system_name,
         used_tools=(
-            [_client_tool_record(tool) for tool in event.used_tools]
-            if event.used_tools
-            else None
+            [_client_tool_record(tool) for tool in event.used_tools] if event.used_tools else None
         ),
     )
 
@@ -167,7 +165,6 @@ async def stream_message(
     except StopAsyncIteration:
         first = None
 
-
     async def event_source() -> AsyncIterator[str]:
         try:
             if first is not None:
@@ -176,8 +173,10 @@ async def stream_message(
             async for event in stream:
                 payload = _to_stream_event(event).model_dump(exclude_none=True)
                 yield f"event: {event.type}\ndata: {json.dumps(payload)}\n\n"
-        except Exception as exc:
-            yield f"event: error\ndata: {json.dumps({'type': 'error', 'error': str(exc)})}\n\n"
+        except Exception:
+            logger.exception("conversation stream failed")
+            payload = {"type": "error", "error": _INTERNAL_ERROR_MESSAGE}
+            yield f"event: error\ndata: {json.dumps(payload)}\n\n"
         finally:
             yield "event: done\ndata: [DONE]\n\n"
 
