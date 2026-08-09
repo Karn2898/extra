@@ -21,8 +21,8 @@ IMAGE := ghcr.io/extra-org/extra:local
 COMPOSE := CONFIG=$(CONFIG) docker compose -f $(EXAMPLE)/docker-compose.yml
 
 .DEFAULT_GOAL := help
-.PHONY: help install generate-ai sync-ai sync-skills test lint format typecheck check clean validate inspect \
-        build validate-image up up-ui down logs generate-check
+.PHONY: help install generate-ai sync-ai sync-skills format-check format lint typecheck test \
+        generate-check check clean validate inspect build validate-image up up-ui down logs
 
 help: ## Show available targets.
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -39,7 +39,10 @@ sync-ai: generate-ai ## Alias for generate-ai (older name, kept for docs compati
 
 sync-skills: generate-ai ## Alias for generate-ai (older name, kept for docs compatibility).
 
-format: ## Auto-format the codebase (ruff format).
+format-check: ## Check code formatting without modifying files.
+	ruff format --check $(SRC) $(TESTS)
+
+format: ## Auto-format the codebase.
 	ruff format $(SRC) $(TESTS)
 
 lint: ## Lint the codebase (ruff check).
@@ -50,8 +53,6 @@ typecheck: ## Type-check the codebase (mypy).
 
 test: ## Run the test suite (pytest).
 	pytest
-
-check: lint typecheck test generate-check ## Quality gate: lint + typecheck + test + generated stubs.
 
 # Compares the example tree before and after `generate` rather than against
 # HEAD, so an unrelated work-in-progress diff cannot make this fail.
@@ -65,6 +66,8 @@ generate-check: ## Fail if `agentctl generate` would write anything (stale stubs
 			exit 1; \
 		fi; \
 	done
+
+check: format-check lint typecheck test generate-check ## Quality gate.
 
 validate: ## Validate every example offline (no LLM calls, no network, no API keys).
 	@for ex in $(EXAMPLES); do agentctl validate $$ex/agents.yaml || exit 1; done

@@ -71,6 +71,7 @@ Components (all small, single-responsibility):
 | `InMemorySessionApprovalRepository` | Current process-lifetime adapter |
 | `ApprovalProvider` | Requests a decision from a human (frontend-agnostic) |
 | `ApprovalCoordinator` | Wires policy + session store + provider together |
+| `RunRepository` | Abstract run-persistence contract; owns idempotent registration semantics |
 | `ApprovalManager` | Pending-approval lifecycle + atomic resume claim |
 | `ToolExecutionManager` | Execution idempotency ledger |
 | `CheckpointProviderFactory` | Selects the checkpointer once at startup |
@@ -220,6 +221,12 @@ execution_id  one actual execution attempt (idempotency key)
 Run states: `RUNNING → PENDING_APPROVAL → RESUMING → COMPLETED | FAILED`, with
 validated transitions (no `COMPLETED → RESUMING`, no `REJECTED → APPROVED`).
 
+`CANCELLED` is also terminal and is reachable only from `RUNNING` or `RESUMING`.
+It records that a streaming consumer disconnected or stopped iteration, so the
+engine cancelled the graph instead of continuing model calls for an abandoned
+stream. Losing a stream after the run reaches `PENDING_APPROVAL` does not cancel
+the run: its durable checkpoint remains valid for a later human decision.
+
 ## 6. Checkpointer selection
 
 `CheckpointProviderFactory` chooses the checkpointer **once** at startup; nothing
@@ -252,6 +259,26 @@ the execution ledger are currently process-local, so fully cross-Pod HITL remain
 future work behind their existing repository contracts.
 
 ## 7. Concurrency and idempotency
+
+**Run registration.** `RunRepository` is a runtime-checkable structural protocol,
+with `InMemoryRunRepository` as its current process-local implementation. The
+contract lives in `agent_engine.runs.repository`; the adapter lives separately in
+`agent_engine.runs.in_memory`, leaving `agent_engine.approvals.repository`
+focused on approval and execution-ledger persistence.
+`RunLifecycle` sends the abstraction one intent:
+create the run if its `run_id` is not already registered. The repository returns
+whether it created the record; it must never overwrite or reset an existing run.
+The current `InMemoryRunRepository` provides that guarantee only
+within one Python process. It does **not** make registration distributed-safe.
+A future Redis implementation must provide the same contract across pods using
+an appropriate atomic Redis operation, and can be selected through composition
+without changing `RunLifecycle` or `LangGraphEngine`.
+
+Run status changes cross the same boundary through `transition_if_allowed`.
+Checking whether a transition is legal and applying it are one repository
+operation, so completion and cancellation cannot both win against the same
+in-flight state. The in-memory adapter provides that guarantee only inside its
+process; a shared adapter must implement the operation atomically across pods.
 
 **Each pending approval is uniquely identified** by its `tool_call_id`, so a
 decision can never be matched to a different pending invocation. Concurrent

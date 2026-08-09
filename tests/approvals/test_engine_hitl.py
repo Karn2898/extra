@@ -25,7 +25,6 @@ from agent_engine.approvals.errors import ApprovalAlreadyProcessed, InvalidDecis
 from agent_engine.approvals.manager import ApprovalManager
 from agent_engine.approvals.repository import (
     InMemoryApprovalRepository,
-    InMemoryRunRepository,
 )
 from agent_engine.approvals.session_store import InMemorySessionApprovalRepository
 from agent_engine.core.spec import (
@@ -38,6 +37,7 @@ from agent_engine.core.spec import (
     ToolSpec,
 )
 from agent_engine.engine.langgraph.engine import LangGraphEngine
+from agent_engine.runs.in_memory import InMemoryRunRepository
 from agent_engine.runtime.hooks import RunContext
 
 _MODEL = ModelConfig(provider="fake", name="fake", temperature=None)

@@ -43,3 +43,4 @@ class RecordingEngine(Engine):
         self.histories.append(tuple(history))
         self.contexts.append(context)
         yield RunStreamEvent(type="answer_delta", content="x")
+        yield RunStreamEvent(type="final", content=f"answer:{message}", route=("agent",))

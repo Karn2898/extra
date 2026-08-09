@@ -1,11 +1,10 @@
-"""Persistence contracts for runs, approvals, and execution idempotency.
+"""Persistence contracts for approvals and execution idempotency.
 
 The engine depends only on these ``Protocol`` interfaces (Dependency Inversion);
-the in-memory implementations here are the default and back local development
-and tests. A production deployment supplies a shared, database-backed
-implementation with the *same* contract so multi-pod resume works — the
-distributed-safe atomic claim maps to a conditional ``UPDATE ... WHERE
-status = 'pending'`` (compare-and-set).
+the in-memory implementations back local development and tests. A production
+deployment supplies a shared, database-backed implementation with the same
+contract so multi-pod resume works. Its atomic approval claim maps to a
+conditional ``UPDATE ... WHERE status = 'pending'`` (compare-and-set).
 """
 
 from __future__ import annotations
@@ -13,23 +12,13 @@ from __future__ import annotations
 import asyncio
 from typing import Protocol, runtime_checkable
 
-from agent_engine.approvals.errors import ApprovalNotFound, RunNotFound
+from agent_engine.approvals.errors import ApprovalNotFound
 from agent_engine.approvals.models import (
     ApprovalRecord,
     ApprovalStatus,
-    RunRecord,
-    RunStatus,
     ToolExecutionRecord,
     ensure_approval_transition,
-    ensure_run_transition,
 )
-
-
-@runtime_checkable
-class RunRepository(Protocol):
-    async def create(self, record: RunRecord) -> RunRecord: ...
-    async def get(self, run_id: str) -> RunRecord | None: ...
-    async def set_status(self, run_id: str, target: RunStatus) -> RunRecord: ...
 
 
 @runtime_checkable
@@ -47,33 +36,6 @@ class ToolExecutionRepository(Protocol):
     async def get(self, execution_id: str) -> ToolExecutionRecord | None: ...
     async def start(self, record: ToolExecutionRecord) -> tuple[ToolExecutionRecord, bool]: ...
     async def complete(self, execution_id: str, status: str, result: str) -> None: ...
-
-
-class InMemoryRunRepository:
-    """Process-local run store. Not shared across pods (see class docstring of
-    the persistent factory); adequate for a single process and tests."""
-
-    def __init__(self) -> None:
-        self._runs: dict[str, RunRecord] = {}
-        self._lock = asyncio.Lock()
-
-    async def create(self, record: RunRecord) -> RunRecord:
-        async with self._lock:
-            self._runs[record.run_id] = record
-            return record
-
-    async def get(self, run_id: str) -> RunRecord | None:
-        async with self._lock:
-            return self._runs.get(run_id)
-
-    async def set_status(self, run_id: str, target: RunStatus) -> RunRecord:
-        async with self._lock:
-            record = self._runs.get(run_id)
-            if record is None:
-                raise RunNotFound(run_id)
-            ensure_run_transition(record.status, target)
-            record.transition(target)
-            return record
 
 
 class InMemoryApprovalRepository:

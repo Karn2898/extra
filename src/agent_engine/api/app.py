@@ -270,7 +270,6 @@ def create_app(
             answer=result.answer,
             visited=result.visited,
             used_tools=[_client_tool_record(t) for t in result.used_tools],
-
             run_id=run_id,
             status=result.status,
             pending_approval=_pending_model(result.pending_approval),
@@ -350,7 +349,6 @@ def create_app(
             answer=result.answer,
             visited=result.visited,
             used_tools=[_client_tool_record(t) for t in result.used_tools],
-
             run_id=run_id,
             status=result.status,
             pending_approval=_pending_model(result.pending_approval),

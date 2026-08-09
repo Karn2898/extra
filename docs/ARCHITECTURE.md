@@ -607,7 +607,7 @@ server by default; in `--url` mode it talks to `agentctl serve`'s stateless
 **Conversation persistence (✅ done, not in the original task list):**
 `agent_manager` is a DDD-style service (`domain/`, `application/`,
 `infrastructure/persistence/`) providing `ConversationService` (send/stream,
-structured prior-context assembly, post-success persistence), a SQLite-backed
+structured prior-context assembly, final-response persistence), a SQLite-backed
 `SqlRepository` with Alembic migrations, and tables for conversations,
 messages, users, and sessions. It is wired into both `agentctl run`/`chat`
 (CLI) and the `agent_manager` API server. `agent_engine` has no dependency on

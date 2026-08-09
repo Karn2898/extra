@@ -9,7 +9,7 @@ Keeps the five identifiers the design mandates strictly separate:
 * ``execution_id`` — a single actual execution attempt (idempotency key).
 
 State transitions are explicit and validated; illegal transitions raise so a
-completed or rejected run can never silently re-run.
+completed, failed, cancelled, or rejected operation can never silently re-run.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ class RunStatus(StrEnum):
     RESUMING = "resuming"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class ApprovalStatus(StrEnum):
@@ -38,18 +39,30 @@ class ApprovalStatus(StrEnum):
     REJECTED = "rejected"
 
 
-# Allowed forward transitions. Anything not listed is rejected. Note there is no
-# path out of COMPLETED/FAILED and no REJECTED -> APPROVED, per the spec.
+# Allowed forward transitions. Anything not listed is rejected. Terminal run
+# states have no outgoing path, and approvals cannot move REJECTED -> APPROVED.
 _RUN_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
     RunStatus.RUNNING: frozenset(
-        {RunStatus.PENDING_APPROVAL, RunStatus.COMPLETED, RunStatus.FAILED}
+        {
+            RunStatus.PENDING_APPROVAL,
+            RunStatus.COMPLETED,
+            RunStatus.FAILED,
+            RunStatus.CANCELLED,
+        }
     ),
     RunStatus.PENDING_APPROVAL: frozenset({RunStatus.RESUMING, RunStatus.FAILED}),
     RunStatus.RESUMING: frozenset(
-        {RunStatus.RUNNING, RunStatus.PENDING_APPROVAL, RunStatus.COMPLETED, RunStatus.FAILED}
+        {
+            RunStatus.RUNNING,
+            RunStatus.PENDING_APPROVAL,
+            RunStatus.COMPLETED,
+            RunStatus.FAILED,
+            RunStatus.CANCELLED,
+        }
     ),
     RunStatus.COMPLETED: frozenset(),
     RunStatus.FAILED: frozenset(),
+    RunStatus.CANCELLED: frozenset(),
 }
 
 _APPROVAL_TRANSITIONS: dict[ApprovalStatus, frozenset[ApprovalStatus]] = {
