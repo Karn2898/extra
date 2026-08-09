@@ -8,6 +8,7 @@
 export type TokenProvider = () => Promise<string | null>;
 
 const PASS_ENDPOINT = "/auth/anonymous";
+const LINK_ENDPOINT = "/auth/link";
 
 export function visitorPassKey(endpoint: string): string {
   return `agent-chat:pass:${endpoint}`;
@@ -24,20 +25,48 @@ export class TokenSource {
   ) {}
 
   async current(): Promise<string | null> {
-    if (!this.cached) this.cached = (await this.fromHost()) ?? this.storedPass();
+    if (!this.cached) this.cached = (await this.hostToken()) ?? this.storedPass();
     return this.cached;
   }
 
   /** After a 401: whatever we sent is no good, so get another. */
   async renew(): Promise<string | null> {
-    this.forget();
-    this.cached = (await this.fromHost()) ?? (await this.issuePass());
+    this.cached = (await this.hostToken()) ?? (await this.issuePass());
     return this.cached;
   }
 
   /** Drop this browser's identity — a host app signing its user out. */
   forget(): void {
     this.cached = null;
+    this.clearPass();
+  }
+
+  /** A host token, plus the one-time hand-off of whatever this browser chatted
+   *  about before signing in. */
+  private async hostToken(): Promise<string | null> {
+    const token = await this.fromHost();
+    if (token) await this.claimVisitorHistory(token);
+    return token;
+  }
+
+  private async claimVisitorHistory(hostToken: string): Promise<void> {
+    const pass = this.storedPass();
+    if (!pass) return;
+    try {
+      const response = await fetch(`${this.endpoint}${LINK_ENDPOINT}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${hostToken}` },
+        body: JSON.stringify({ anonymous_token: pass }),
+      });
+      // Drop the pass on any verdict, including a refusal — only a server that
+      // never answered is worth asking again.
+      if (response.status < 500) this.clearPass();
+    } catch {
+      // Offline: keep the pass so the next page load retries the hand-off.
+    }
+  }
+
+  private clearPass(): void {
     try {
       this.storage.removeItem(visitorPassKey(this.endpoint));
     } catch {

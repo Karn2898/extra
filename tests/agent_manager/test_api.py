@@ -150,6 +150,49 @@ def test_a_visitor_pass_is_an_identity_of_its_own(unauthenticated: TestClient) -
     assert client.get("/conversations", headers=other_visitor).json() == []
 
 
+def test_signing_in_adopts_the_conversations_a_visitor_already_started() -> None:
+    """The whole point: a pre-login chat is still there after logging in."""
+    app = build_test_app(ConversationService(RecordingEngine(), MemoryRepository()))
+    client = TestClient(app)
+    pass_token = client.post("/auth/anonymous").json()["token"]
+    visitor = {"Authorization": f"Bearer {pass_token}"}
+    cid = client.post("/conversations", headers=visitor).json()["conversation_id"]
+    client.post(f"/conversations/{cid}/messages", json={"message": "hi"}, headers=visitor)
+
+    alice = bearer("alice")
+    linked = client.post("/auth/link", json={"anonymous_token": pass_token}, headers=alice)
+
+    assert linked.json() == {"conversations_moved": 1}
+    assert [t["conversation_id"] for t in client.get("/conversations", headers=alice).json()] == [
+        cid
+    ]
+    assert client.get(f"/conversations/{cid}/messages", headers=alice).status_code == 200
+    assert client.get(f"/conversations/{cid}/messages", headers=visitor).status_code == 403
+
+
+def test_linking_refuses_a_pass_that_is_not_ours_or_already_spent() -> None:
+    app = build_test_app(ConversationService(RecordingEngine(), MemoryRepository()))
+    client = TestClient(app)
+    pass_token = client.post("/auth/anonymous").json()["token"]
+
+    forged = client.post(
+        "/auth/link", json={"anonymous_token": "not-a-token"}, headers=bearer("alice")
+    )
+    assert forged.status_code == 401
+
+    client.post("/auth/link", json={"anonymous_token": pass_token}, headers=bearer("alice"))
+    replayed = client.post(
+        "/auth/link", json={"anonymous_token": pass_token}, headers=bearer("bob")
+    )
+    assert replayed.json() == {"conversations_moved": 0}
+
+    visitor = {"Authorization": f"Bearer {client.post('/auth/anonymous').json()['token']}"}
+    assert (
+        client.post("/auth/link", json={"anonymous_token": pass_token}, headers=visitor).status_code
+        == 403
+    )
+
+
 def test_thread_title_collapses_whitespace_and_truncates() -> None:
     assert thread_title("  hi   there  ") == "hi there"
     assert thread_title("") == "New chat"

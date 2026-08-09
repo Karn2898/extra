@@ -19,6 +19,8 @@ from agent_manager.api.schemas import (
     ConversationSummary,
     CreateConversationRequest,
     CreateConversationResponse,
+    LinkAnonymousRequest,
+    LinkAnonymousResponse,
     MessageOut,
     SendMessageRequest,
     SendMessageResponse,
@@ -29,12 +31,13 @@ from agent_manager.api.schemas import (
 from agent_manager.application import (
     ConversationAccessDenied,
     ConversationAlreadyExists,
+    ConversationLinkRefused,
     ConversationNotFound,
     ConversationService,
     ConversationTokenBudgetExceeded,
 )
 from agent_manager.domain import Principal
-from agent_manager.infrastructure.auth import IdentityResolver
+from agent_manager.infrastructure.auth import IdentityResolver, TokenError
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -54,6 +57,7 @@ _HTTP_ERRORS: dict[type[Exception], tuple[int, Any]] = {
     ConversationAccessDenied: (403, "conversation owned by another user"),
     ConversationAlreadyExists: (409, "conversation id already taken"),
     ConversationTokenBudgetExceeded: (429, _BUDGET_EXCEEDED_DETAIL),
+    ConversationLinkRefused: (403, "a visitor cannot adopt another visitor"),
 }
 
 
@@ -72,6 +76,25 @@ async def issue_anonymous_pass(identity: Identity) -> AnonymousPassResponse:
     cannot reach another's conversations by guessing an id."""
     issued = identity.anonymous.issue()
     return AnonymousPassResponse(token=issued.token, expires_at=issued.expires_at)
+
+
+@router.post("/auth/link", response_model=LinkAnonymousResponse)
+async def link_anonymous_conversations(
+    body: LinkAnonymousRequest, service: Service, caller: Caller, identity: Identity
+) -> LinkAnonymousResponse:
+    """Adopt the conversations a visitor started before signing in.
+
+    Both tokens are verified: a visitor pass proves which conversations, the
+    caller's own token proves who is adopting them. Linking happens once, so a
+    replayed pass moves nothing.
+    """
+    try:
+        visitor = identity.anonymous.resolve(body.anonymous_token)
+    except TokenError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from None
+    with _as_http_error():
+        moved = await service.link_anonymous(visitor, caller)
+    return LinkAnonymousResponse(conversations_moved=moved)
 
 
 @router.post("/conversations", response_model=CreateConversationResponse)

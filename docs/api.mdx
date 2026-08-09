@@ -121,6 +121,25 @@ curl -X POST http://localhost:8100/auth/anonymous
 { "token": "eyJhbGciOi…", "expires_at": "2026-09-08T10:00:00Z" }
 ```
 
+### `POST /auth/link`
+
+Adopt the conversations a visitor started before signing in. Requires a verified
+caller; the body carries the visitor pass being handed over.
+
+```bash
+curl -X POST http://localhost:8100/auth/link \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"anonymous_token": "eyJhbGciOi…"}'
+```
+
+```json
+{ "conversations_moved": 2 }
+```
+
+Linking happens once — a replayed pass returns `0`. Errors: `401` the pass is not
+one of ours, `403` the caller is itself a visitor.
+
 ### `POST /conversations`
 
 Create a new conversation, owned by the calling user. The body is optional; a

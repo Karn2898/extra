@@ -416,4 +416,44 @@ assert.equal(localStorage.getItem(visitorPassKey("https://api.example")), "visit
 visitorTokens.forget();
 assert.equal(localStorage.getItem(visitorPassKey("https://api.example")), null);
 
+// Signing in hands the pre-login conversations to the account, once.
+resetPage();
+calls = [];
+localStorage.setItem(visitorPassKey("https://api.example"), "old-pass");
+globalThis.fetch = async (url, options = {}) => {
+  calls.push({ url, options });
+  if (url === "/agent-chat/token") return jsonResponse({ token: "host-token" });
+  if (url.endsWith("/auth/link")) return jsonResponse({ conversations_moved: 2 });
+  return jsonResponse({ conversation_id: "conv-merged" });
+};
+const signedIn = new AgentChatClient(
+  "https://api.example",
+  new TokenSource("https://api.example", "/agent-chat/token"),
+);
+await signedIn.createConversation();
+
+const link = calls.find((c) => c.url.endsWith("/auth/link"));
+assert.ok(link, "the visitor pass is handed over on sign-in");
+assert.equal(authHeader(link), "Bearer host-token");
+assert.equal(JSON.parse(link.options.body).anonymous_token, "old-pass");
+assert.equal(
+  localStorage.getItem(visitorPassKey("https://api.example")),
+  null,
+  "a handed-over pass is not offered twice",
+);
+
+// A server that never answered keeps the pass, so the next load retries.
+resetPage();
+localStorage.setItem(visitorPassKey("https://api.example"), "kept-pass");
+globalThis.fetch = async (url) => {
+  if (url === "/agent-chat/token") return jsonResponse({ token: "host-token" });
+  if (url.endsWith("/auth/link")) throw new Error("offline");
+  return jsonResponse({ conversation_id: "conv-1" });
+};
+await new AgentChatClient(
+  "https://api.example",
+  new TokenSource("https://api.example", "/agent-chat/token"),
+).createConversation();
+assert.equal(localStorage.getItem(visitorPassKey("https://api.example")), "kept-pass");
+
 console.log("widget self-check: OK");

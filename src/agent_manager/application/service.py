@@ -46,6 +46,10 @@ class ConversationTokenBudgetExceeded(Exception):
     """Raised when a conversation's lifetime token budget is exhausted."""
 
 
+class ConversationLinkRefused(Exception):
+    """Raised when a visitor's conversations cannot be handed to the caller."""
+
+
 @dataclass(frozen=True)
 class PreparedConversationTurn:
     """A persisted user turn plus the prior structured model context."""
@@ -98,6 +102,17 @@ class ConversationService:
         if session.user_id != principal.user_id:
             raise ConversationAlreadyExists(session.session_id)
         return session.session_id
+
+    async def link_anonymous(self, visitor: Principal, principal: Principal) -> int:
+        """Hand a visitor's conversations to the account they just signed into.
+
+        One direction only: a signed-in user adopts a visitor's history, never
+        the reverse, or one browser could push conversations onto another.
+        """
+        if principal.is_anonymous:
+            raise ConversationLinkRefused(visitor.user_id)
+        await self._register(principal)
+        return await self._repository.link_anonymous_user(visitor.user_id, principal.user_id)
 
     async def history(self, conversation_id: str, principal: Principal) -> list[Message]:
         await self._authorize(conversation_id, principal)

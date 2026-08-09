@@ -52231,6 +52231,7 @@ function parseSseFrame(frame) {
 
 // src/agent_manager/api/static/widget/auth/tokenSource.ts
 var PASS_ENDPOINT = "/auth/anonymous";
+var LINK_ENDPOINT = "/auth/link";
 function visitorPassKey(endpoint) {
   return `agent-chat:pass:${endpoint}`;
 }
@@ -52243,18 +52244,40 @@ var TokenSource = class {
     this.cached = null;
   }
   async current() {
-    if (!this.cached) this.cached = await this.fromHost() ?? this.storedPass();
+    if (!this.cached) this.cached = await this.hostToken() ?? this.storedPass();
     return this.cached;
   }
   /** After a 401: whatever we sent is no good, so get another. */
   async renew() {
-    this.forget();
-    this.cached = await this.fromHost() ?? await this.issuePass();
+    this.cached = await this.hostToken() ?? await this.issuePass();
     return this.cached;
   }
   /** Drop this browser's identity — a host app signing its user out. */
   forget() {
     this.cached = null;
+    this.clearPass();
+  }
+  /** A host token, plus the one-time hand-off of whatever this browser chatted
+   *  about before signing in. */
+  async hostToken() {
+    const token = await this.fromHost();
+    if (token) await this.claimVisitorHistory(token);
+    return token;
+  }
+  async claimVisitorHistory(hostToken) {
+    const pass = this.storedPass();
+    if (!pass) return;
+    try {
+      const response = await fetch(`${this.endpoint}${LINK_ENDPOINT}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${hostToken}` },
+        body: JSON.stringify({ anonymous_token: pass })
+      });
+      if (response.status < 500) this.clearPass();
+    } catch {
+    }
+  }
+  clearPass() {
     try {
       this.storage.removeItem(visitorPassKey(this.endpoint));
     } catch {

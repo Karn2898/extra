@@ -137,6 +137,22 @@ There is no mapping table to maintain and nothing to synchronise:
 Visitor passes use the separate `anon:` namespace, so a host id can never
 collide with one.
 
+## Signing in: keeping the conversation
+
+A visitor who chats before logging in keeps that history. On the first
+authenticated call the widget hands its visitor pass to `POST /auth/link`, and
+those conversations move onto the account:
+
+```text
+before   anon:7f3c…   owns   pre-login chat
+after    ext:9f2a…    owns   pre-login chat   (plus anything they already had)
+```
+
+Both tokens are verified — the pass says *which* conversations, the caller's own
+token says *who* is adopting them. A pass can be adopted once: replaying it moves
+nothing, so the same conversations can never be attached to a second account.
+Nothing to configure; the widget does it.
+
 ## Signing in and out
 
 ```js

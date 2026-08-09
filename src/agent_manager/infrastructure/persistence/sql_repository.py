@@ -10,7 +10,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlmodel import col, select
@@ -77,6 +77,28 @@ class SqlRepository(Repository):
         async with self._sessions() as session:
             row = await session.get(ConversationUserRow, user_id)
         return _user(row) if row else None
+
+    async def link_anonymous_user(self, anonymous_user_id: str, user_id: str) -> int:
+        async with self._sessions() as session, session.begin():
+            # Claiming the visitor is a conditional update, not a read then a
+            # write: two tabs signing in at once would both pass a read check
+            # and hand the same conversations to two accounts.
+            claimed = await session.exec(
+                update(ConversationUserRow)
+                .where(
+                    col(ConversationUserRow.user_id) == anonymous_user_id,
+                    col(ConversationUserRow.linked_to_user_id).is_(None),
+                )
+                .values(linked_to_user_id=user_id, updated_at=datetime.now(UTC))
+            )
+            if _rows_affected(claimed) == 0:
+                return 0
+            moved = await session.exec(
+                update(ConversationSessionRow)
+                .where(col(ConversationSessionRow.user_id) == anonymous_user_id)
+                .values(user_id=user_id)
+            )
+            return _rows_affected(moved)
 
     async def create_session(
         self,
@@ -307,12 +329,19 @@ class SqlRepository(Repository):
         return list(result.all())
 
 
+def _rows_affected(result: Any) -> int:
+    """SQLAlchemy types `execute` as a generic `Result`; an UPDATE returns a
+    `CursorResult`, which is what carries `rowcount`."""
+    return int(result.rowcount)
+
+
 def _user(row: ConversationUserRow) -> User:
     return User(
         user_id=row.user_id,
         external_user_id=row.external_user_id,
         username=row.username,
         display_name=row.display_name,
+        linked_to_user_id=row.linked_to_user_id,
         metadata=dict(row.metadata_json or {}),
         created_at=_utc(row.created_at),
         updated_at=_utc(row.updated_at),

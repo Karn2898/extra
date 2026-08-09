@@ -53,6 +53,7 @@ class MemoryRepository(Repository):
             else existing.display_name
             if existing
             else None,
+            linked_to_user_id=existing.linked_to_user_id if existing else None,
             metadata=dict(metadata or (existing.metadata if existing else {})),
             created_at=existing.created_at if existing else now,
             updated_at=now,
@@ -62,6 +63,16 @@ class MemoryRepository(Repository):
 
     async def get_user(self, user_id: str) -> User | None:
         return self._users.get(user_id)
+
+    async def link_anonymous_user(self, anonymous_user_id: str, user_id: str) -> int:
+        visitor = self._users.get(anonymous_user_id)
+        if visitor is None or visitor.linked_to_user_id is not None:
+            return 0
+        self._users[anonymous_user_id] = replace(visitor, linked_to_user_id=user_id)
+        moved = [s for s in self._sessions.values() if s.user_id == anonymous_user_id]
+        for session in moved:
+            self._sessions[session.session_id] = replace(session, user_id=user_id)
+        return len(moved)
 
     async def create_session(
         self,

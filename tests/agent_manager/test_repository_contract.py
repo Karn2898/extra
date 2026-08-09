@@ -324,3 +324,28 @@ def _message(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
     )
+
+
+async def test_linking_a_visitor_moves_their_sessions_once(repo: Repository) -> None:
+    await repo.upsert_user("anon:v1")
+    await repo.upsert_user("ext:alice")
+    await repo.create_session("pre-login", user_id="anon:v1")
+
+    assert await repo.link_anonymous_user("anon:v1", "ext:alice") == 1
+    moved = await repo.get_session("pre-login")
+    assert moved is not None and moved.user_id == "ext:alice"
+    assert [s.session_id for s in await repo.list_sessions("ext:alice")] == ["pre-login"]
+    assert await repo.list_sessions("anon:v1") == []
+
+    visitor = await repo.get_user("anon:v1")
+    assert visitor is not None and visitor.linked_to_user_id == "ext:alice"
+
+    # Spent: a replayed pass moves nothing, whoever presents it.
+    await repo.upsert_user("ext:bob")
+    assert await repo.link_anonymous_user("anon:v1", "ext:bob") == 0
+    assert await repo.list_sessions("ext:bob") == []
+
+
+async def test_linking_an_unknown_visitor_is_a_no_op(repo: Repository) -> None:
+    await repo.upsert_user("ext:alice")
+    assert await repo.link_anonymous_user("anon:never-seen", "ext:alice") == 0
