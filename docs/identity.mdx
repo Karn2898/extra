@@ -6,20 +6,17 @@ description: Give every user their own private chat — in most cases without wr
 Every conversation belongs to one person. Nobody else can list it, read it, or
 write to it, even knowing its id.
 
-Who that person is depends on your product. Pick your case:
+Who that person is depends on your product:
 
 <CardGroup cols={3}>
   <Card title="No login" icon="user">
-    Your product has no accounts, or the chat sits on a public page.
-    **Nothing to do.**
+    No accounts, or a public page. **Nothing to do.**
   </Card>
-  <Card title="Login, same domain" icon="shield-check">
-    Extra runs behind your own domain.
-    **Two env vars.**
+  <Card title="Same domain" icon="shield-check">
+    Extra served from your site. **Config only.**
   </Card>
-  <Card title="Login, other domain" icon="key">
-    Extra runs on its own hostname.
-    **One small endpoint.**
+  <Card title="Other domain" icon="key">
+    Extra on its own hostname. **One endpoint.**
   </Card>
 </CardGroup>
 
@@ -32,96 +29,72 @@ Who that person is depends on your product. Pick your case:
 <agent-chat title="Support"></agent-chat>
 ```
 
-That's it. Each browser gets its own signed visitor pass and its own
-conversations. Two people on the same page cannot see each other's chats.
+Each browser gets its own signed pass and its own conversations. Two people on
+the same page cannot see each other's chats.
 
 ---
 
-## Login, same domain
+## Same domain
 
-The easiest way to tie chats to real users: put Extra on a path of the site your
-users are already signed into, and it reads their existing session.
+Serve Extra from a path on the site your users already sign into — say
+`acme.com/agents` — and it reads the session they already have.
 
-<Steps>
-  <Step title="Proxy Extra under your domain">
-    ```nginx
-    location /agents/ { proxy_pass http://agent-manager:8100/; }
-    ```
-  </Step>
-  <Step title="Tell Extra how to read your session">
-    ```bash
-    AGENT_AUTH_MODE=host_token
-    AGENT_AUTH_SECRET=${YOUR_JWT_SECRET}   # the one your app already signs with
-    AGENT_AUTH_COOKIE=session              # your session cookie's name
-    AGENT_AUTH_CLAIM_USER_ID=sub           # the claim holding your user id
-    ```
-  </Step>
-  <Step title="Embed">
-    ```html
-    <script type="module" src="/agents/widget.js"></script>
-    <agent-chat title="Support"></agent-chat>
-    ```
-  </Step>
-</Steps>
+```bash
+AGENT_AUTH_MODE=host_token
+AGENT_AUTH_SECRET=${YOUR_JWT_SECRET}   # the key your app already signs with
+AGENT_AUTH_COOKIE=session              # your session cookie's name
+```
 
-**No code.** Your users' browsers already send that cookie; Extra verifies it
-with your own secret.
+```html
+<script type="module" src="/agents/widget.js"></script>
+<agent-chat title="Support"></agent-chat>
+```
+
+No code. The browser sends your cookie because it's the same origin, and Extra
+verifies it with your own secret.
 
 <Note>
-Works with anything that issues a session JWT — Open WebUI, Django, Rails, and
-most Node stacks. If your session cookie is opaque rather than a JWT, use the
-next option.
+Works with any app that issues a session JWT — Open WebUI, Django, Rails, most
+Node stacks. If your user id isn't in the `sub` claim, set
+`AGENT_AUTH_CLAIM_USER_ID`.
 </Note>
 
 ---
 
-## Login, other domain
+## Other domain
 
-Browsers refuse to send your session cookie to a different hostname, so your
-backend has to vouch for the user instead.
+Browsers won't send your session cookie to a different hostname, so your backend
+vouches for the user instead.
 
-<Steps>
-  <Step title="Add one endpoint">
-    It runs behind your existing login and takes no parameters.
+```js
+app.get("/agent-chat/token", requireLogin, (req, res) => {
+  res.json({ token: jwt.sign({ sub: req.user.id }, process.env.AGENT_CHAT_SECRET) });
+});
+```
 
-    ```js
-    app.get("/agent-chat/token", requireLogin, (req, res) => {
-      res.set("Cache-Control", "no-store");
-      res.json({
-        token: jwt.sign({ sub: req.user.id }, process.env.AGENT_CHAT_SECRET, {
-          expiresIn: "1h",
-        }),
-      });
-    });
-    ```
-  </Step>
-  <Step title="Point Extra at the same secret">
-    ```bash
-    AGENT_AUTH_MODE=mint
-    AGENT_AUTH_SECRET=<32+ random characters>
-    ```
-  </Step>
-  <Step title="Embed with token-url">
-    ```html
-    <agent-chat title="Support" token-url="/agent-chat/token"></agent-chat>
-    ```
-  </Step>
-</Steps>
+```bash
+AGENT_AUTH_MODE=mint
+AGENT_AUTH_SECRET=<32+ random characters>
+```
+
+```html
+<agent-chat title="Support" token-url="/agent-chat/token"></agent-chat>
+```
+
+Not logged in? Return `401` — the widget falls back to an anonymous pass.
 
 <Warning>
-Sign `req.user.id` from the session — never a value from the request. An
-endpoint that accepts `?user=` lets anyone get a token as anyone.
+Sign `req.user.id` from the session, never a value from the request. An endpoint
+that accepts `?user=` lets anyone get a token as anyone.
 </Warning>
-
-Not logged in? Return `401`. The widget falls back to a visitor pass on its own.
 
 ---
 
 ## Signing in keeps the conversation
 
 Someone who chats before logging in doesn't lose it. On their first
-authenticated request the widget hands their visitor pass over, and those
-conversations move onto their account. Automatic, and it can only happen once.
+authenticated request the widget hands their pass over and those conversations
+move onto their account. Automatic, and it only happens once.
 
 ## Signing out
 
@@ -132,35 +105,16 @@ document.querySelector("agent-chat").logout();
 Clears the stored identity and the open thread. Call it when your app signs a
 user out — and, in a single-page app, when it signs one *in* without a reload.
 
-## Rotating your secret
-
-Change `AGENT_AUTH_SECRET` and restart. Widgets fetch a fresh token on their
-next request. Set `AGENT_AUTH_ANONYMOUS_SECRET` too if you want visitor
-conversations to survive that rotation.
-
 ## Settings
 
-<ParamField path="AGENT_AUTH_MODE" default="anonymous">
-  `anonymous`, `host_token`, or `mint`.
-</ParamField>
+| Variable | Default | |
+|---|---|---|
+| `AGENT_AUTH_MODE` | `anonymous` | `anonymous`, `host_token`, or `mint` |
+| `AGENT_AUTH_SECRET` | — | Signing key, 32+ characters. Required unless anonymous |
+| `AGENT_AUTH_COOKIE` | — | Your session cookie's name (`host_token` only) |
+| `AGENT_AUTH_CLAIM_USER_ID` | `sub` | Claim holding the user id. Also `_EMAIL`, `_DISPLAY_NAME`, `_ROLES` |
+| `AGENT_AUTH_MAX_TTL_SECONDS` | `3600` | Longest token accepted in `mint` mode |
+| `AGENT_AUTH_ANONYMOUS_SECRET` | derived | Signs anonymous passes. Set it to survive a secret rotation |
 
-<ParamField path="AGENT_AUTH_SECRET">
-  Signing key. Required unless the mode is `anonymous`. 32 characters minimum.
-</ParamField>
-
-<ParamField path="AGENT_AUTH_COOKIE">
-  Your session cookie's name. `host_token` mode only.
-</ParamField>
-
-<ParamField path="AGENT_AUTH_CLAIM_USER_ID" default="sub">
-  Which claim in your token holds the user id. Also `_EMAIL`, `_DISPLAY_NAME`,
-  `_ROLES`, `_ORGANIZATION_ID`.
-</ParamField>
-
-<ParamField path="AGENT_AUTH_MAX_TTL_SECONDS" default="3600">
-  Longest token lifetime accepted in `mint` mode.
-</ParamField>
-
-<ParamField path="AGENT_AUTH_ANONYMOUS_SECRET">
-  Signs visitor passes. Derived from `AGENT_AUTH_SECRET` when unset.
-</ParamField>
+Rotating `AGENT_AUTH_SECRET` is safe: widgets fetch a fresh token on their next
+request.
