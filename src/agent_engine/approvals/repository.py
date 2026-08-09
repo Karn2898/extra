@@ -1,7 +1,10 @@
 """Persistence contracts for approvals and execution idempotency.
 
-The in-memory implementations back local development and tests; future shared
-implementations must preserve the same structural contracts.
+The engine depends only on these ``Protocol`` interfaces (Dependency Inversion);
+the in-memory implementations back local development and tests. A production
+deployment supplies a shared, database-backed implementation with the same
+contract so multi-pod resume works. Its atomic approval claim maps to a
+conditional ``UPDATE ... WHERE status = 'pending'`` (compare-and-set).
 """
 
 from __future__ import annotations

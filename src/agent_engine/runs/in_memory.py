@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import asyncio
 
+from agent_engine.approvals.errors import InvalidStateTransition
 from agent_engine.approvals.models import (
     RunRecord,
     RunStatus,
-    can_run_transition,
 )
-from agent_engine.runs.repository import RunRepository
 
 
-class InMemoryRunRepository(RunRepository):
+class InMemoryRunRepository:
     """Process-local implementation of :class:`RunRepository`.
 
     Operations are serialized only inside this Python process. The adapter is
@@ -45,7 +44,10 @@ class InMemoryRunRepository(RunRepository):
     async def transition_if_allowed(self, run_id: str, target: RunStatus) -> bool:
         async with self._lock:
             record = self._runs.get(run_id)
-            if record is None or not can_run_transition(record.status, target):
+            if record is None:
                 return False
-            record.transition(target)
+            try:
+                record.transition(target)
+            except InvalidStateTransition:
+                return False
             return True

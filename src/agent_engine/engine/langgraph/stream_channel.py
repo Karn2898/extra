@@ -41,5 +41,5 @@ class StreamChannel:
             if item is None:
                 return
             if isinstance(item, BaseException):
-                raise RuntimeError(str(item)) from item
+                raise item
             yield item

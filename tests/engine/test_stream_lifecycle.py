@@ -34,6 +34,7 @@ from agent_engine.core.spec import (
     ToolSpec,
 )
 from agent_engine.engine.langgraph.engine import LangGraphEngine
+from agent_engine.engine.langgraph.stream_channel import StreamChannel
 from agent_engine.runs.in_memory import InMemoryRunRepository
 from agent_engine.runtime.execution import current_execution
 from agent_engine.runtime.hooks import RunContext, current_run_context
@@ -224,6 +225,21 @@ async def test_start_hook_may_replace_the_context_the_run_is_registered_under(
 
 
 # -- failure path ------------------------------------------------------------
+
+
+async def test_stream_channel_preserves_producer_exception_type() -> None:
+    class ProducerFailure(Exception):
+        pass
+
+    channel = StreamChannel()
+    failure = ProducerFailure("producer failed")
+    channel.abort(failure)
+    events = channel.events()
+
+    with pytest.raises(ProducerFailure) as raised:
+        await events.__anext__()
+
+    assert raised.value is failure
 
 
 async def test_graph_failure_reaches_the_consumer_and_fails_the_run(tmp_path: Path) -> None:

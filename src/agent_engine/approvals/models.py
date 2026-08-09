@@ -1,3 +1,17 @@
+"""Run / approval / execution domain model.
+
+Keeps the five identifiers the design mandates strictly separate:
+
+* ``run_id``       — business-level Extra run identifier.
+* ``thread_id``    — LangGraph persistence / checkpoint identifier.
+* ``approval_id``  — one pending approval request.
+* ``tool_call_id`` — the agent's requested tool call.
+* ``execution_id`` — a single actual execution attempt (idempotency key).
+
+State transitions are explicit and validated; illegal transitions raise so a
+completed, failed, cancelled, or rejected operation can never silently re-run.
+"""
+
 from __future__ import annotations
 
 import time
@@ -25,6 +39,8 @@ class ApprovalStatus(StrEnum):
     REJECTED = "rejected"
 
 
+# Allowed forward transitions. Anything not listed is rejected. Terminal run
+# states have no outgoing path, and approvals cannot move REJECTED -> APPROVED.
 _RUN_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
     RunStatus.RUNNING: frozenset(
         {

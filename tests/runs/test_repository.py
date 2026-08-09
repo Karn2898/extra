@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, cast
 
 import pytest
 
@@ -27,12 +26,6 @@ def _run(run_id: str, *, system_name: str = "system") -> RunRecord:
 async def test_in_memory_run_repository_implements_contract() -> None:
     assert issubclass(InMemoryRunRepository, RunRepository)
     assert isinstance(InMemoryRunRepository(), RunRepository)
-
-
-async def test_run_repository_cannot_be_instantiated() -> None:
-    repository_type = cast(Any, RunRepository)
-    with pytest.raises(TypeError, match="abstract"):
-        repository_type()
 
 
 async def test_run_repository_registers_new_run(run_repository: RunRepository) -> None:

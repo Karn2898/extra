@@ -260,9 +260,9 @@ future work behind their existing repository contracts.
 
 ## 7. Concurrency and idempotency
 
-**Run registration.** `RunRepository` is an explicit abstract base class, with
-`InMemoryRunRepository` as its current process-local implementation. The contract
-lives in `agent_engine.runs.repository`; the adapter lives separately in
+**Run registration.** `RunRepository` is a runtime-checkable structural protocol,
+with `InMemoryRunRepository` as its current process-local implementation. The
+contract lives in `agent_engine.runs.repository`; the adapter lives separately in
 `agent_engine.runs.in_memory`, leaving `agent_engine.approvals.repository`
 focused on approval and execution-ledger persistence.
 `RunLifecycle` sends the abstraction one intent:

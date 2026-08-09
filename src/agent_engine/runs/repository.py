@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from typing import Protocol, runtime_checkable
 
 from agent_engine.approvals.models import RunRecord, RunStatus
 
 
-class RunRepository(ABC):
+@runtime_checkable
+class RunRepository(Protocol):
     """Persistence contract for run records.
 
     ``create_if_absent`` is the atomic semantic boundary: implementations must
@@ -18,21 +19,18 @@ class RunRepository(ABC):
     the same semantics across processes.
     """
 
-    @abstractmethod
     async def create_if_absent(self, record: RunRecord) -> bool:
         """Return ``True`` if created, or ``False`` without replacing existing state.
 
         An existing ``run_id`` is an idempotent outcome, not an error. Backend
         failures may still propagate from an implementation.
         """
-        raise NotImplementedError
+        ...
 
-    @abstractmethod
     async def get(self, run_id: str) -> RunRecord | None:
         """Return the stored run, or ``None`` when ``run_id`` is unknown."""
-        raise NotImplementedError
+        ...
 
-    @abstractmethod
     async def transition_if_allowed(self, run_id: str, target: RunStatus) -> bool:
         """Atomically apply an allowed transition.
 
@@ -40,4 +38,4 @@ class RunRepository(ABC):
         ``False`` when the run is absent or the transition is not allowed,
         without modifying stored state.
         """
-        raise NotImplementedError
+        ...
