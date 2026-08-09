@@ -1,206 +1,166 @@
 ---
 title: Identity
-description: How a host product tells Extra who the user is — and how products with no login still get isolated chats.
+description: Give every user their own private chat — in most cases without writing any code.
 ---
 
-Extra is embedded in someone else's product, so it cannot authenticate a user
-itself — the host already did that. What it needs is for the host to **attest**
-who the caller is, in a way the manager can verify.
+Every conversation belongs to one person. Nobody else can list it, read it, or
+write to it, even knowing its id.
 
-Every conversation is owned by exactly one caller. The conversation id is not a
-credential: knowing it grants nothing.
+Who that person is depends on your product. Pick your case:
 
-## The constraint that decides your integration
+<CardGroup cols={3}>
+  <Card title="No login" icon="user">
+    Your product has no accounts, or the chat sits on a public page.
+    **Nothing to do.**
+  </Card>
+  <Card title="Login, same domain" icon="shield-check">
+    Extra runs behind your own domain.
+    **Two env vars.**
+  </Card>
+  <Card title="Login, other domain" icon="key">
+    Extra runs on its own hostname.
+    **One small endpoint.**
+  </Card>
+</CardGroup>
 
-Host session tokens normally live in **httpOnly cookies**. The widget's
-JavaScript cannot read them, and the browser will not send them cross-origin. So:
+---
 
-- **Manager served from the host's own origin** → the cookie arrives on our
-  requests automatically → **no host code at all**.
-- **Manager on a different origin** → the host must expose a token endpoint.
-  There is no way around this; it is the browser's rule, not ours.
-
-## Mode 1 — `host_token`: verify the host's own session token
-
-The operator adds a proxy rule (`https://app.acme.com/agents/*` → the manager
-container) and three environment variables:
-
-```bash
-AGENT_AUTH_MODE=host_token
-AGENT_AUTH_SECRET=${THE_HOSTS_OWN_JWT_SECRET}
-AGENT_AUTH_CLAIM_USER_ID=id      # which claim carries their user id
-AGENT_AUTH_COOKIE=token          # name of their session cookie
-```
+## No login
 
 ```html
-<script type="module" src="/agents/widget.js"></script>
-<agent-chat></agent-chat>
+<script type="module" src="https://agents.acme.com/widget.js"></script>
+<agent-chat title="Support"></agent-chat>
 ```
 
-The widget calls back to the directory it was served from, so the proxy prefix
-needs no repeating. No endpoint, no SDK, no user import, and no change to
-`agents.yml`.
+That's it. Each browser gets its own signed visitor pass and its own
+conversations. Two people on the same page cannot see each other's chats.
 
-### Worked example: Open WebUI
+---
 
-Open WebUI signs its session JWT with `WEBUI_SECRET_KEY` (HS256) and stores it in
-an httpOnly `token` cookie. Proxied under its origin, the configuration above is
-the whole integration — an ops change, not a code change. The same shape fits
-Django, Rails, or anything else that issues a session JWT.
+## Login, same domain
 
-## Mode 2 — `mint`: the host mints a token for us
+The easiest way to tie chats to real users: put Extra on a path of the site your
+users are already signed into, and it reads their existing session.
 
-Use this when the manager is cross-origin, or when you want short-lived tokens
-carrying claims the session token does not have (`plan`, `tenant`, `locale`).
+<Steps>
+  <Step title="Proxy Extra under your domain">
+    ```nginx
+    location /agents/ { proxy_pass http://agent-manager:8100/; }
+    ```
+  </Step>
+  <Step title="Tell Extra how to read your session">
+    ```bash
+    AGENT_AUTH_MODE=host_token
+    AGENT_AUTH_SECRET=${YOUR_JWT_SECRET}   # the one your app already signs with
+    AGENT_AUTH_COOKIE=session              # your session cookie's name
+    AGENT_AUTH_CLAIM_USER_ID=sub           # the claim holding your user id
+    ```
+  </Step>
+  <Step title="Embed">
+    ```html
+    <script type="module" src="/agents/widget.js"></script>
+    <agent-chat title="Support"></agent-chat>
+    ```
+  </Step>
+</Steps>
 
-```bash
-AGENT_AUTH_MODE=mint
-AGENT_AUTH_SECRET=<a shared secret, 32+ characters>
-```
+**No code.** Your users' browsers already send that cookie; Extra verifies it
+with your own secret.
 
-One endpoint in the host backend — it runs behind the host's existing login, so
-Extra never sees a password or a session table:
+<Note>
+Works with anything that issues a session JWT — Open WebUI, Django, Rails, and
+most Node stacks. If your session cookie is opaque rather than a JWT, use the
+next option.
+</Note>
 
-```js
-app.get("/agent-chat/token", requireLogin, (req, res) => {
-  res.set("Cache-Control", "no-store");
-  res.json({
-    token: jwt.sign(
-      { sub: req.user.id, email: req.user.email, roles: req.user.roles },
-      process.env.AGENT_CHAT_SECRET,
-      { expiresIn: "1h" },
-    ),
-  });
-});
-```
+---
 
-```html
-<agent-chat endpoint="https://agents.acme.com" token-url="/agent-chat/token"></agent-chat>
-```
+## Login, other domain
 
-### Securing the token endpoint
+Browsers refuse to send your session cookie to a different hostname, so your
+backend has to vouch for the user instead.
 
-It is the front door to every identity in your product, so:
+<Steps>
+  <Step title="Add one endpoint">
+    It runs behind your existing login and takes no parameters.
 
-- **Keep it behind your existing login.** It takes no parameters; the caller
-  proves who they are by being logged in. Signed out, return 401 — the widget
-  falls back to a visitor pass on its own.
-- **Sign the session's user, never a request value.** `sub: req.user.id` is
-  correct; `sub: req.query.user` would let anyone mint a token as anyone.
-- **No permissive CORS on it, and `Cache-Control: no-store`.** Another origin can
-  send the request but cannot read the reply — unless you add
-  `Access-Control-Allow-Origin`, which would hand your users' tokens away. The
-  no-store header keeps a shared cache from serving one user's token to another.
+    ```js
+    app.get("/agent-chat/token", requireLogin, (req, res) => {
+      res.set("Cache-Control", "no-store");
+      res.json({
+        token: jwt.sign({ sub: req.user.id }, process.env.AGENT_CHAT_SECRET, {
+          expiresIn: "1h",
+        }),
+      });
+    });
+    ```
+  </Step>
+  <Step title="Point Extra at the same secret">
+    ```bash
+    AGENT_AUTH_MODE=mint
+    AGENT_AUTH_SECRET=<32+ random characters>
+    ```
+  </Step>
+  <Step title="Embed with token-url">
+    ```html
+    <agent-chat title="Support" token-url="/agent-chat/token"></agent-chat>
+    ```
+  </Step>
+</Steps>
 
-Tokens are capped at `AGENT_AUTH_MAX_TTL_SECONDS` (default one hour). A single
-sign-on app that holds its token in memory can skip `token-url` and assign a
-provider instead:
+<Warning>
+Sign `req.user.id` from the session — never a value from the request. An
+endpoint that accepts `?user=` lets anyone get a token as anyone.
+</Warning>
 
-```js
-document.querySelector("agent-chat").tokenProvider = async () => store.accessToken;
-```
+Not logged in? Return `401`. The widget falls back to a visitor pass on its own.
 
-## Mode 3 — `anonymous`: products with no login
+---
 
-The default. Nothing to configure and nothing for the host to build: the widget
-asks the manager for a **visitor pass** and keeps it in `localStorage`. Each
-browser is its own user.
+## Signing in keeps the conversation
 
-A pass is signed, so a visitor cannot reach another visitor's conversations by
-guessing an id — this is isolation, not just separation.
+Someone who chats before logging in doesn't lose it. On their first
+authenticated request the widget hands their visitor pass over, and those
+conversations move onto their account. Automatic, and it can only happen once.
 
-Set `AGENT_AUTH_ANONYMOUS_SECRET` in production. Without it the manager derives
-the pass key from `AGENT_AUTH_SECRET`, or — if neither is set — signs with an
-ephemeral key, and every restart invalidates outstanding passes.
-
-## What happens at runtime
-
-```text
-widget call → bearer token (minted or a visitor pass), or the host's cookie
-manager    → verify the signature → the user id claim is genuinely theirs
-           → user_id = "ext:<digest>", created on first use
-401        → the widget renews its token once and retries; that is the whole
-             refresh story
-host session gone → the token endpoint 401s → the widget falls back to a pass
-```
-
-## How a host user id maps to ours
-
-There is no mapping table to maintain and nothing to synchronise:
-
-- The mapped claim (`sub` by default) is hashed into
-  `user_id = "ext:" + sha256(subject)[:32]`, because `conversation_users.user_id`
-  is a 64-character primary key and a host subject may be an email address or a
-  long OIDC subject.
-- The raw value is stored alongside it in the indexed `external_user_id` column,
-  so support lookups and debugging use the readable id.
-- A user exists in Extra the first moment they send a message.
-- The same host id on a laptop and a phone yields the same conversations.
-
-Visitor passes use the separate `anon:` namespace, so a host id can never
-collide with one.
-
-## Signing in: keeping the conversation
-
-A visitor who chats before logging in keeps that history. On the first
-authenticated call the widget hands its visitor pass to `POST /auth/link`, and
-those conversations move onto the account:
-
-```text
-before   anon:7f3c…   owns   pre-login chat
-after    ext:9f2a…    owns   pre-login chat   (plus anything they already had)
-```
-
-Both tokens are verified — the pass says *which* conversations, the caller's own
-token says *who* is adopting them. A pass can be adopted once: replaying it moves
-nothing, so the same conversations can never be attached to a second account.
-Nothing to configure; the widget does it.
-
-## Signing in and out
+## Signing out
 
 ```js
 document.querySelector("agent-chat").logout();
 ```
 
-Clears the stored token and the remembered thread. On sign-**out** it is not
-strictly required — a stored conversation belonging to someone else is rejected
-and replaced — but it avoids the round trip and the flash of a stale thread.
+Clears the stored identity and the open thread. Call it when your app signs a
+user out — and, in a single-page app, when it signs one *in* without a reload.
 
-On sign-**in** it matters more. The widget resolves its identity host-token-first
-on every page load, so a normal navigation after login picks up the new user by
-itself. A single-page app that signs a user in without reloading should call
-`logout()` at that moment, or the widget keeps using the visitor pass it already
-holds for the rest of the session.
+## Rotating your secret
 
-## Rotating the secret
+Change `AGENT_AUTH_SECRET` and restart. Widgets fetch a fresh token on their
+next request. Set `AGENT_AUTH_ANONYMOUS_SECRET` too if you want visitor
+conversations to survive that rotation.
 
-Tokens are verified against `AGENT_AUTH_SECRET` at request time, so rotating it
-invalidates every outstanding token: users' widgets fetch a new one on their next
-401 and continue. Visitor passes derived from the old secret are invalidated too
-unless `AGENT_AUTH_ANONYMOUS_SECRET` is set explicitly.
+## Settings
 
-## Extending verification
+<ParamField path="AGENT_AUTH_MODE" default="anonymous">
+  `anonymous`, `host_token`, or `mint`.
+</ParamField>
 
-`TokenVerifier` never names an algorithm. It takes them from a `KeySource`,
-which is the one thing that differs between HS256, RS256/ES256, and JWKS:
+<ParamField path="AGENT_AUTH_SECRET">
+  Signing key. Required unless the mode is `anonymous`. 32 characters minimum.
+</ParamField>
 
-```python
-class KeySource(Protocol):
-    @property
-    def algorithms(self) -> tuple[str, ...]: ...
-    def key_for(self, header: Mapping[str, Any]) -> Any: ...
-```
+<ParamField path="AGENT_AUTH_COOKIE">
+  Your session cookie's name. `host_token` mode only.
+</ParamField>
 
-Today only `StaticSecretKeySource` ships. Supporting an asymmetric issuer means
-adding an implementation — a public key, or a JWKS fetch cached by `kid`, which
-is why `key_for` receives the token header — and changing nothing else.
+<ParamField path="AGENT_AUTH_CLAIM_USER_ID" default="sub">
+  Which claim in your token holds the user id. Also `_EMAIL`, `_DISPLAY_NAME`,
+  `_ROLES`, `_ORGANIZATION_ID`.
+</ParamField>
 
-## Development
+<ParamField path="AGENT_AUTH_MAX_TTL_SECONDS" default="3600">
+  Longest token lifetime accepted in `mint` mode.
+</ParamField>
 
-The manager trusts no client-supplied identity, so use a minted token to drive
-the API by hand:
-
-```bash
-AGENT_AUTH_MODE=mint AGENT_AUTH_SECRET=$SECRET agentctl token --user alice
-curl http://localhost:8100/conversations -H "Authorization: Bearer $TOKEN"
-```
+<ParamField path="AGENT_AUTH_ANONYMOUS_SECRET">
+  Signs visitor passes. Derived from `AGENT_AUTH_SECRET` when unset.
+</ParamField>
