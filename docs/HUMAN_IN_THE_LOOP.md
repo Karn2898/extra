@@ -274,6 +274,17 @@ A future Redis implementation must provide the same contract across pods using
 an appropriate atomic Redis operation, and can be selected through composition
 without changing `RunLifecycle` or `LangGraphEngine`.
 
+The in-memory adapter bounds terminal-state retention to prevent completed run
+records from accumulating for the lifetime of a long-running process. It keeps
+`COMPLETED`, `FAILED`, and `CANCELLED` records for 24 hours by default, using a
+configurable adapter-local TTL and opportunistic eviction on repository access.
+`RUNNING`, `PENDING_APPROVAL`, and `RESUMING` records never expire, so cleanup
+cannot invalidate an active execution or resumable approval. After a terminal
+record expires, its `run_id` is unknown and may be registered again; the TTL is
+therefore also the in-memory adapter's idempotency and status-query retention
+window. This policy does not change the `RunRepository` protocol: applications
+that need different retention inject another configured or persistent adapter.
+
 Run status changes cross the same boundary through `transition_if_allowed`.
 Checking whether a transition is legal and applying it are one repository
 operation, so completion and cancellation cannot both win against the same

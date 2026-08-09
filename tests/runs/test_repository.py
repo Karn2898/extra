@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 
 import pytest
 
@@ -11,6 +12,17 @@ from agent_engine.runs.in_memory import InMemoryRunRepository
 from agent_engine.runs.repository import RunRepository
 
 pytestmark = pytest.mark.asyncio
+
+
+class ManualClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
 
 
 @pytest.fixture
@@ -104,3 +116,61 @@ async def test_transition_if_allowed_leaves_missing_or_terminal_runs_unchanged()
     stored = await repository.get("finished")
     assert stored is not None
     assert stored.status == RunStatus.COMPLETED
+
+
+@pytest.mark.parametrize(
+    "terminal_status",
+    [RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED],
+)
+async def test_terminal_runs_expire_after_configured_ttl(terminal_status: RunStatus) -> None:
+    clock = ManualClock()
+    repository = InMemoryRunRepository(terminal_ttl_seconds=60, clock=clock)
+    record = _run("finished")
+    await repository.create_if_absent(record)
+    assert await repository.transition_if_allowed("finished", terminal_status) is True
+
+    clock.advance(59)
+    assert await repository.get("finished") == record
+
+    clock.advance(1)
+    assert await repository.get("finished") is None
+
+
+@pytest.mark.parametrize(
+    "active_status",
+    [RunStatus.RUNNING, RunStatus.PENDING_APPROVAL, RunStatus.RESUMING],
+)
+async def test_active_runs_do_not_expire(active_status: RunStatus) -> None:
+    clock = ManualClock()
+    repository = InMemoryRunRepository(terminal_ttl_seconds=1, clock=clock)
+    record = RunRecord(
+        run_id="active",
+        thread_id="active",
+        system_name="system",
+        status=active_status,
+    )
+    await repository.create_if_absent(record)
+
+    clock.advance(10)
+
+    assert await repository.get("active") == record
+
+
+async def test_expired_run_id_can_be_registered_again() -> None:
+    clock = ManualClock()
+    repository = InMemoryRunRepository(terminal_ttl_seconds=1, clock=clock)
+    original = _run("reused", system_name="original")
+    await repository.create_if_absent(original)
+    await repository.transition_if_allowed("reused", RunStatus.COMPLETED)
+    clock.advance(1)
+
+    replacement = _run("reused", system_name="replacement")
+
+    assert await repository.create_if_absent(replacement) is True
+    assert await repository.get("reused") == replacement
+
+
+@pytest.mark.parametrize("ttl", [0, -1, math.inf, math.nan])
+async def test_terminal_run_ttl_must_be_positive_and_finite(ttl: float) -> None:
+    with pytest.raises(ValueError, match="positive finite"):
+        InMemoryRunRepository(terminal_ttl_seconds=ttl)
