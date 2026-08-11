@@ -116,6 +116,18 @@ def test_a_token_signed_with_another_key_is_not_an_identity(unauthenticated: Tes
     assert unauthenticated.post("/conversations", headers=forged).status_code == 401
 
 
+def test_a_forged_token_is_logged_server_side(
+    unauthenticated: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The client sees only the generic 401; the attempt still leaves a trail."""
+    forged = bearer("alice", secret="an-attacker-secret-of-sufficient-length")
+
+    with caplog.at_level("WARNING"):
+        unauthenticated.post("/conversations", headers=forged)
+
+    assert "token verification failed" in caplog.text
+
+
 def test_the_host_session_cookie_authenticates_a_same_origin_deployment() -> None:
     """The zero-host-code path: proxied under the host's origin, its own cookie
     arrives on our requests and we verify it with the host's own secret."""

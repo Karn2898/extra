@@ -91,6 +91,7 @@ async def link_anonymous_conversations(
     try:
         visitor = identity.resolver.anonymous.resolve(body.anonymous_token)
     except TokenError as exc:
+        logger.warning("visitor pass verification failed: %s", exc)
         raise HTTPException(status_code=401, detail=str(exc)) from None
     with _as_http_error():
         moved = await service.link_anonymous(visitor, caller)

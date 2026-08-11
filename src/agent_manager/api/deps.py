@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from fastapi import HTTPException, Request
@@ -9,6 +10,8 @@ from fastapi import HTTPException, Request
 from agent_manager.application import ConversationService
 from agent_manager.domain import Principal
 from agent_manager.infrastructure.auth import IdentityResolver, TokenError
+
+logger = logging.getLogger(__name__)
 
 BEARER_PREFIX = "Bearer "
 UNAUTHENTICATED_DETAIL = "a verified identity is required"
@@ -46,6 +49,7 @@ def get_principal(request: Request) -> Principal:
     try:
         return identity.resolver.resolve(token)
     except TokenError as exc:
+        logger.warning("token verification failed: %s", exc)
         raise HTTPException(status_code=401, detail=str(exc)) from None
 
 
