@@ -63,13 +63,13 @@ async def test_send_persists_user_and_assistant_in_order() -> None:
 async def test_stream_persists_final_before_propagating_late_engine_failure() -> None:
     repository = MemoryRepository()
     service = ConversationService(FinalThenCleanupErrorEngine(), repository)
-    cid = await service.create()
+    cid = await service.create(ALICE)
 
     with pytest.raises(CleanupAfterFinalError, match="cleanup after final"):
-        async for _event in service.stream(cid, "hello"):
+        async for _event in service.stream(cid, "hello", ALICE):
             pass
 
-    messages = await service.history(cid)
+    messages = await service.history(cid, ALICE)
     assert [(message.role, message.content) for message in messages] == [
         (Role.USER, "hello"),
         (Role.ASSISTANT, "persisted"),
@@ -79,14 +79,14 @@ async def test_stream_persists_final_before_propagating_late_engine_failure() ->
 async def test_stream_persists_final_when_consumer_closes_generator() -> None:
     repository = MemoryRepository()
     service = ConversationService(FinalThenCleanupErrorEngine(), repository)
-    cid = await service.create()
-    events = cast(AsyncGenerator[RunStreamEvent, None], service.stream(cid, "hello"))
+    cid = await service.create(ALICE)
+    events = cast(AsyncGenerator[RunStreamEvent, None], service.stream(cid, "hello", ALICE))
 
     final = await events.__anext__()
     assert final.type == "final"
     await events.aclose()
 
-    messages = await service.history(cid)
+    messages = await service.history(cid, ALICE)
     assert [(message.role, message.content) for message in messages] == [
         (Role.USER, "hello"),
         (Role.ASSISTANT, "persisted"),
