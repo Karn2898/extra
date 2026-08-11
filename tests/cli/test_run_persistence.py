@@ -12,11 +12,17 @@ from click.testing import CliRunner, Result
 from agent_engine.engine.types import ChatMessage, ChatRole, RunResult
 from agent_engine.runtime.hooks import RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
+from agent_manager.domain import Principal
 from agent_manager.infrastructure.persistence.database import create_db_engine, session_factory
 from agent_manager.infrastructure.persistence.sql_repository import SqlRepository
 from agent_manager.infrastructure.persistence.tables import ConversationSnapshotRow
 from agentctl import main as main_mod
 from agentctl.main import cli
+
+# `agentctl run` names its caller via Principal.external, which stores a digest
+# rather than the raw id — see domain/identity.py. Recompute it here instead of
+# hardcoding a hash, so this stays correct if the digest scheme ever changes.
+LOCAL_USER_ID = Principal.external(main_mod.LOCAL_USER_ID).user_id
 
 
 class FakeRuntimeEngine:
@@ -123,7 +129,7 @@ async def _messages_snapshot_and_user(db_url: str, session_id: str) -> tuple[lis
         return (
             await repo.list_conversation_messages(session_id),
             await repo.get_snapshot(session_id),
-            await repo.get_user("local-user"),
+            await repo.get_user(LOCAL_USER_ID),
         )
     finally:
         await engine.dispose()
@@ -236,12 +242,12 @@ def test_agentctl_run_without_session_prints_reusable_generated_session(
 
     session, messages = asyncio.run(_session_and_messages(db_url, session_id))
     assert session is not None
-    assert session.user_id == "local-user"
+    assert session.user_id == LOCAL_USER_ID
     assert [(m.role.value, m.content) for m in messages] == [
         ("user", "hello"),
         ("assistant", "answer-1"),
     ]
-    assert {ctx.user_id for ctx in FakeRuntimeEngine.contexts if ctx} == {"local-user"}
+    assert {ctx.user_id for ctx in FakeRuntimeEngine.contexts if ctx} == {LOCAL_USER_ID}
 
 
 def test_agentctl_run_failure_keeps_user_message_without_assistant_response(
@@ -264,8 +270,8 @@ def test_agentctl_run_failure_keeps_user_message_without_assistant_response(
     assert [(m.role.value, m.content) for m in messages] == [
         ("user", "persist me before failure"),
     ]
-    assert messages[0].user_id == "local-user"
+    assert messages[0].user_id == LOCAL_USER_ID
     assert snapshot is not None
     assert snapshot.message_count == 1
     assert {ctx.conversation_id for ctx in FailingRuntimeEngine.contexts if ctx} == {"sess-fail"}
-    assert {ctx.user_id for ctx in FailingRuntimeEngine.contexts if ctx} == {"local-user"}
+    assert {ctx.user_id for ctx in FailingRuntimeEngine.contexts if ctx} == {LOCAL_USER_ID}
