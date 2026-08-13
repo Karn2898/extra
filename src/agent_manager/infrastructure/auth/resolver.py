@@ -46,15 +46,15 @@ class ClaimMapping:
     organization_id: str = "org_id"
 
     def to_principal(self, claims: Mapping[str, Any]) -> Principal:
-        external_id = claims.get(self.user_id)
-        if not isinstance(external_id, str) or not external_id.strip():
+        external_id = _identifier(claims.get(self.user_id))
+        if external_id is None:
             raise TokenError(f"token carries no usable {self.user_id!r} claim")
         return Principal.external(
             external_id,
             email=_text(claims.get(self.email)),
             display_name=_text(claims.get(self.display_name)),
             roles=_roles(claims.get(self.roles)),
-            organization_id=_text(claims.get(self.organization_id)),
+            organization_id=_identifier(claims.get(self.organization_id)),
             claims=claims,
         )
 
@@ -129,6 +129,20 @@ def _is_anonymous_pass(token: str) -> bool:
 
 def _text(value: Any) -> str | None:
     return value if isinstance(value, str) and value.strip() else None
+
+
+def _identifier(value: Any) -> str | None:
+    """A claim that names something, as text.
+
+    JSON numbers are accepted because plenty of hosts key users on an integer
+    primary key — Django and Rails out of the box. Booleans are not: `bool` is
+    an `int` in Python, and a boolean id is a bug rather than an identity.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return str(value)
+    return _text(value)
 
 
 def _roles(value: Any) -> tuple[str, ...]:

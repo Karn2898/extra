@@ -68,7 +68,11 @@ vouches for the user instead.
 
 ```js
 app.get("/agent-chat/token", requireLogin, (req, res) => {
-  res.json({ token: jwt.sign({ sub: req.user.id }, process.env.AGENT_CHAT_SECRET) });
+  res.json({
+    token: jwt.sign({ sub: req.user.id }, process.env.AGENT_CHAT_SECRET, {
+      expiresIn: "1h", // required: tokens minted for us must expire
+    }),
+  });
 });
 ```
 

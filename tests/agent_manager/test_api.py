@@ -137,9 +137,11 @@ def test_the_host_session_cookie_authenticates_a_same_origin_deployment() -> Non
         agent_auth_cookie=HOST_COOKIE,
         agent_auth_claim_user_id="id",
     )
-    dana = TestClient(app, cookies=session_cookie("u_8412", id="u_8412"))
+    dana = TestClient(app, cookies=session_cookie(id="u_8412"))
 
-    cid = dana.post("/conversations").json()["conversation_id"]
+    created = dana.post("/conversations")
+    assert created.status_code == 200, created.text
+    cid = created.json()["conversation_id"]
     dana.post(f"/conversations/{cid}/messages", json={"message": "hi"})
 
     assert [t["conversation_id"] for t in dana.get("/conversations").json()] == [cid]

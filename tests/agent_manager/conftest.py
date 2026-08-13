@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import jwt
 from fastapi import FastAPI
 
 from agent_engine.engine.engine import Engine
@@ -16,7 +18,7 @@ from agent_manager.api.routes import router
 from agent_manager.application import ConversationService
 from agent_manager.composition import build_identity_resolver
 from agent_manager.config import AuthMode, Settings
-from agent_manager.infrastructure.auth import encode_token
+from agent_manager.infrastructure.auth import HMAC_SHA256, encode_token
 
 AUTH_SECRET = "conftest-signing-secret-of-sufficient-length"
 TOKEN_TTL_SECONDS = 300
@@ -43,10 +45,16 @@ def bearer(user: str, *, secret: str = AUTH_SECRET, **claims: Any) -> dict[str, 
     return {"Authorization": f"Bearer {issued.token}"}
 
 
-def session_cookie(user: str, **claims: Any) -> dict[str, str]:
-    """A host's own session token, as it arrives on a same-origin deployment."""
-    issued = encode_token(AUTH_SECRET, subject=user, ttl_seconds=TOKEN_TTL_SECONDS, claims=claims)
-    return {HOST_COOKIE: issued.token}
+def session_cookie(**claims: Any) -> dict[str, str]:
+    """A host's own session token, carrying only the claims the host actually sets.
+
+    Deliberately does not add `sub`: Open WebUI's real tokens name the user in
+    `id` and never carry `sub`, and a helper that quietly supplies one lets a
+    token shape we cannot actually verify pass as if we could.
+    """
+    now = datetime.now(UTC)
+    payload = {**claims, "iat": now, "exp": now + timedelta(seconds=TOKEN_TTL_SECONDS)}
+    return {HOST_COOKIE: jwt.encode(payload, AUTH_SECRET, algorithm=HMAC_SHA256)}
 
 
 class RecordingEngine(Engine):

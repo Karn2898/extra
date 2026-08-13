@@ -130,6 +130,16 @@ def test_a_token_missing_the_mapped_user_id_is_rejected() -> None:
         source.resolve(_encode())
 
 
+def test_a_host_token_naming_the_user_by_an_integer_id_is_accepted() -> None:
+    """Django and Rails key users on an integer primary key; a JSON number is a
+    perfectly ordinary user id and must not be mistaken for a missing claim."""
+    source = HostIdentitySource(_verifier(), ClaimMapping(user_id="id"))
+
+    assert source.resolve(_encode(id=12345)).external_id == "12345"
+    with pytest.raises(TokenError, match="'id'"):
+        source.resolve(_encode(id=True))
+
+
 def test_verification_does_not_require_sub_when_the_mapped_claim_is_something_else() -> None:
     """Regression: Open WebUI's own tokens carry `id`, never `sub` — a token
     shaped exactly like theirs must not be rejected before ClaimMapping runs."""
@@ -182,6 +192,23 @@ def test_a_visitor_pass_round_trips_but_a_host_token_does_not_become_one() -> No
     host_user = resolver.resolve(encode_token(SECRET, subject="alice", ttl_seconds=300).token)
     assert not host_user.is_anonymous
     assert host_user.external_id == "alice"
+
+
+def test_mint_mode_accepts_the_token_our_own_docs_tell_hosts_to_produce() -> None:
+    """Pins docs/identity.mdx against the code. The documented snippet signs
+    `sub` with `expiresIn`; Node's jsonwebtoken adds `iat` itself. Drop the
+    expiry from the docs and mint mode rejects every token a host produces."""
+    resolver = build_identity_resolver(
+        _settings(agent_auth_mode=AuthMode.MINT, agent_auth_secret=SECRET)
+    )
+    now = datetime.now(UTC)
+    as_documented = jwt.encode(
+        {"sub": "u_8412", "iat": now, "exp": now + timedelta(hours=1)},
+        SECRET,
+        algorithm="HS256",
+    )
+
+    assert resolver.resolve(as_documented).external_id == "u_8412"
 
 
 def test_without_a_host_secret_only_visitor_passes_are_accepted() -> None:
