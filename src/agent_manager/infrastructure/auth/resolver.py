@@ -89,7 +89,13 @@ class AnonymousIdentitySource:
         )
 
     def resolve(self, token: str) -> Principal:
-        return Principal.anonymous(str(self._verifier.verify(token)[SUBJECT_CLAIM]))
+        claims = self._verifier.verify(token)
+        subject = claims.get(SUBJECT_CLAIM)
+        if not isinstance(subject, str) or not subject:
+            # Only `issue()` ever mints a token with this `kid`, and it always
+            # sets `sub` — reachable only if that invariant is ever broken.
+            raise TokenError("visitor pass carries no usable subject claim")
+        return Principal.anonymous(subject)
 
 
 class IdentityResolver:

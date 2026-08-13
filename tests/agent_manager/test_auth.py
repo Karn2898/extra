@@ -130,6 +130,22 @@ def test_a_token_missing_the_mapped_user_id_is_rejected() -> None:
         source.resolve(_encode())
 
 
+def test_verification_does_not_require_sub_when_the_mapped_claim_is_something_else() -> None:
+    """Regression: Open WebUI's own tokens carry `id`, never `sub` — a token
+    shaped exactly like theirs must not be rejected before ClaimMapping runs."""
+    now = datetime.now(UTC)
+    open_webui_shaped_token = jwt.encode(
+        {"id": "u_8412", "jti": "abc", "iat": now, "exp": now + timedelta(hours=1)},
+        SECRET,
+        algorithm="HS256",
+    )
+    source = HostIdentitySource(_verifier(), ClaimMapping(user_id="id"))
+
+    principal = source.resolve(open_webui_shaped_token)
+
+    assert principal.external_id == "u_8412"
+
+
 def test_roles_are_read_from_a_list_or_a_delimited_string() -> None:
     source = HostIdentitySource(_verifier())
 

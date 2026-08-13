@@ -15,6 +15,9 @@ from agent_manager.infrastructure.auth.keys import HMAC_SHA256, KeySource
 CLOCK_SKEW_LEEWAY_SECONDS = 60
 EXPIRY_CLAIM = "exp"
 ISSUED_AT_CLAIM = "iat"
+# The claim `encode_token` names its subject with. Verification never requires
+# it: which claim carries identity is per-host configuration (`ClaimMapping`),
+# not something `TokenVerifier` should know or enforce.
 SUBJECT_CLAIM = "sub"
 
 
@@ -71,7 +74,7 @@ class TokenVerifier:
         return claims
 
     def _required_claims(self) -> list[str]:
-        required = [SUBJECT_CLAIM]
+        required = []
         if self._policy.require_expiry:
             required.append(EXPIRY_CLAIM)
         if self._policy.max_ttl_seconds is not None:
