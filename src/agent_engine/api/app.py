@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 
 
 _RID_OK = re.compile(r"[^A-Za-z0-9._-]")
+_INTERNAL_ERROR_MESSAGE = "Internal server error"
 
 
 def _begin_request(x_request_id: str | None) -> str:
@@ -335,15 +336,29 @@ def create_app(
         )
 
     async def _decide(
-        run_id: str, approval_id: str, decision: ApprovalDecision, user_id: str | None
+        run_id: str,
+        approval_id: str,
+        decision: ApprovalDecision,
+        user_id: str | None,
+        session_id: str | None,
     ) -> InvokeResponse:
         engine = _hitl_engine()
         try:
-            result = await engine.resume(run_id, approval_id, decision, caller_user_id=user_id)
+            result = await engine.resume(
+                run_id,
+                approval_id,
+                decision,
+                caller_user_id=user_id,
+                caller_session_id=_run_context(session_id, run_id=run_id).conversation_id,
+            )
         except ApprovalError as exc:
             raise _map_approval_error(exc) from exc
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        except Exception:
+            logger.exception(
+                "approval decision failed",
+                extra={"run_id": run_id, "approval_id": approval_id},
+            )
+            raise HTTPException(status_code=500, detail=_INTERNAL_ERROR_MESSAGE) from None
         return InvokeResponse(
             system_name=result.system_name,
             answer=result.answer,
@@ -355,28 +370,47 @@ def create_app(
         )
 
     @app.post("/runs/{run_id}/approvals/{approval_id}/decision", response_model=InvokeResponse)
-    async def decide(run_id: str, approval_id: str, body: ApprovalDecisionBody) -> InvokeResponse:
+    async def decide(
+        run_id: str,
+        approval_id: str,
+        body: ApprovalDecisionBody,
+        x_session_id: str | None = Header(default=None),
+    ) -> InvokeResponse:
         # The single free-text → typed decision boundary for the API.
         try:
             decision = parse_decision(body.decision)
         except InvalidDecision as exc:
             raise _map_approval_error(exc) from exc
-        return await _decide(run_id, approval_id, decision, body.user_id)
+        return await _decide(run_id, approval_id, decision, body.user_id, x_session_id)
 
     @app.post("/runs/{run_id}/approvals/{approval_id}/approve", response_model=InvokeResponse)
     async def approve(
         run_id: str,
         approval_id: str,
         body: ApprovalDecisionRequest = _DEFAULT_APPROVAL_REQUEST_BODY,
+        x_session_id: str | None = Header(default=None),
     ) -> InvokeResponse:
-        return await _decide(run_id, approval_id, ApprovalDecision.ALLOW_ONCE, body.user_id)
+        return await _decide(
+            run_id,
+            approval_id,
+            ApprovalDecision.ALLOW_ONCE,
+            body.user_id,
+            x_session_id,
+        )
 
     @app.post("/runs/{run_id}/approvals/{approval_id}/reject", response_model=InvokeResponse)
     async def reject(
         run_id: str,
         approval_id: str,
         body: ApprovalDecisionRequest = _DEFAULT_APPROVAL_REQUEST_BODY,
+        x_session_id: str | None = Header(default=None),
     ) -> InvokeResponse:
-        return await _decide(run_id, approval_id, ApprovalDecision.DENY, body.user_id)
+        return await _decide(
+            run_id,
+            approval_id,
+            ApprovalDecision.DENY,
+            body.user_id,
+            x_session_id,
+        )
 
     return app

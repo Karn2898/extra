@@ -101,6 +101,24 @@ class InMemoryRunRepository:
         self._evict_expired_batch(now)
         return changed
 
+    async def add_token_usage(
+        self,
+        run_id: str,
+        *,
+        input_tokens: int | None,
+        output_tokens: int | None,
+    ) -> RunRecord | None:
+        """Accumulate reported usage without introducing a suspension point."""
+        entry = self._get_unexpired_entry(run_id)
+        if entry is None:
+            return None
+        record = entry.record
+        if input_tokens is not None:
+            record.input_tokens = (record.input_tokens or 0) + input_tokens
+        if output_tokens is not None:
+            record.output_tokens = (record.output_tokens or 0) + output_tokens
+        return record
+
     def _get_unexpired_entry(self, run_id: str, now: float | None = None) -> _StoredRun | None:
         entry = self._runs.get(run_id)
         if (

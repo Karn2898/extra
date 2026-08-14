@@ -39,3 +39,17 @@ class RunRepository(Protocol):
         without modifying stored state.
         """
         ...
+
+    async def add_token_usage(
+        self,
+        run_id: str,
+        *,
+        input_tokens: int | None,
+        output_tokens: int | None,
+    ) -> RunRecord | None:
+        """Atomically add one execution leg's reported usage to a run.
+
+        ``None`` means the provider did not report that value. It does not erase
+        usage recorded by an earlier execution leg.
+        """
+        ...

@@ -76,12 +76,19 @@ class FakeChatModel:
                         id=f"call_{input_text}",
                     )
                 ],
+                usage_metadata={"input_tokens": 2, "output_tokens": 1, "total_tokens": 3},
             )
         # Echo the last tool result so tests can see what reached the model.
         for m in reversed(messages):
             if isinstance(m, ToolMessage):
-                return AIMessage(content=f"done: {m.content}")
-        return AIMessage(content="done")
+                return AIMessage(
+                    content=f"done: {m.content}",
+                    usage_metadata={"input_tokens": 2, "output_tokens": 1, "total_tokens": 3},
+                )
+        return AIMessage(
+            content="done",
+            usage_metadata={"input_tokens": 2, "output_tokens": 1, "total_tokens": 3},
+        )
 
 
 class ChangingToolCallIdModel(FakeChatModel):
@@ -176,14 +183,18 @@ async def test_allow_once_resumes_same_run_and_executes_once(tmp_path: Path) -> 
         await engine.build(_spec("send_email"))
         pending = await engine.run("hi", context=RunContext(run_id="run-1"))
         assert pending.pending_approval is not None
+        assert (pending.input_tokens, pending.output_tokens) == (2, 1)
         approval_id = pending.pending_approval.approval_id
 
         resumed = await engine.resume("run-1", approval_id, "allow once")
+        recovered = await engine.get_processed_result("run-1", approval_id)
 
     assert resumed.status == "completed"
     assert "sent: go" in resumed.answer
     assert _executions(counter) == 1  # executed exactly once
     assert resumed.visited == ["writer"]  # same run, agent not re-selected as a new route
+    assert (resumed.input_tokens, resumed.output_tokens) == (6, 3)
+    assert recovered == resumed
 
 
 async def test_resume_is_stable_when_provider_changes_tool_call_id(tmp_path: Path) -> None:
@@ -237,6 +248,7 @@ async def test_allow_for_session_suppresses_later_prompt_same_conversation(
             pending.pending_approval.approval_id,
             "allow for this session",
             caller_user_id="user-1",
+            caller_session_id="conv-1",
         )
         assert resumed.status == "completed"
 
@@ -283,6 +295,7 @@ async def test_session_permission_survives_engine_reconstruction(tmp_path: Path)
             pending.pending_approval.approval_id,
             "allow for this session",
             caller_user_id="user-1",
+            caller_session_id="conv-1",
         )
 
     async with LangGraphEngine(

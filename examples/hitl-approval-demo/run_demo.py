@@ -166,6 +166,7 @@ class DemoRunner:
                 pending.approval_id,
                 decision,
                 caller_user_id=USER_ID,
+                caller_session_id=session_id,
             )
         else:
             print(f"model_tool_request_observed: {bool(result.used_tools)}")

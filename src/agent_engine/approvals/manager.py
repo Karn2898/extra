@@ -215,12 +215,30 @@ class ApprovalManager:
     async def get_approval(self, run_id: str, approval_id: str) -> ApprovalRecord:
         return await self._load_for_run(run_id, approval_id)
 
+    async def get_authorized(
+        self,
+        *,
+        run_id: str,
+        approval_id: str,
+        caller_user_id: str | None = None,
+        caller_auth_ref: str | None = None,
+    ) -> ApprovalRecord:
+        """Return an approval only when the caller matches its stored scope."""
+        record = await self._load_for_run(run_id, approval_id)
+        self._ensure_authorized(
+            record,
+            caller_user_id=caller_user_id,
+            caller_auth_ref=caller_auth_ref,
+        )
+        return record
+
     async def claim(
         self,
         *,
         run_id: str,
         approval_id: str,
         caller_user_id: str | None = None,
+        caller_auth_ref: str | None = None,
     ) -> ApprovalRecord:
         """Validate and atomically claim an approval for resume.
 
@@ -229,9 +247,13 @@ class ApprovalManager:
         :class:`ApprovalAlreadyProcessed`. On success the run and approval both
         move to RESUMING.
         """
-        record = await self._load_for_run(run_id, approval_id)
-        if record.authorized_user_id is not None and record.authorized_user_id != caller_user_id:
-            raise UnauthorizedApprover(approval_id)
+        record = await self.get_authorized(
+            run_id=run_id,
+            approval_id=approval_id,
+            caller_user_id=caller_user_id,
+            caller_auth_ref=caller_auth_ref,
+        )
+
         try:
             claimed = await self._approvals.claim(approval_id)
         except InvalidStateTransition as exc:
@@ -255,6 +277,18 @@ class ApprovalManager:
             tool_call_id=claimed.tool_call_id,
         )
         return claimed
+
+    @staticmethod
+    def _ensure_authorized(
+        record: ApprovalRecord,
+        *,
+        caller_user_id: str | None,
+        caller_auth_ref: str | None,
+    ) -> None:
+        if record.authorized_user_id is not None and record.authorized_user_id != caller_user_id:
+            raise UnauthorizedApprover(record.approval_id)
+        if record.auth_ref is not None and record.auth_ref != caller_auth_ref:
+            raise UnauthorizedApprover(record.approval_id)
 
     async def finalize(self, approval_id: str, *, approved: bool) -> ApprovalRecord:
         target = ApprovalStatus.APPROVED if approved else ApprovalStatus.REJECTED

@@ -34,6 +34,16 @@ class RegistrationSpy(RunRepository):
         self.transitions.append((run_id, target))
         return True
 
+    async def add_token_usage(
+        self,
+        run_id: str,
+        *,
+        input_tokens: int | None,
+        output_tokens: int | None,
+    ) -> RunRecord | None:
+        del run_id, input_tokens, output_tokens
+        raise AssertionError("RunLifecycle must not record engine-owned usage")
+
 
 async def test_begin_delegates_registration_as_one_repository_operation() -> None:
     repository = RegistrationSpy()
