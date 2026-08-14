@@ -14,6 +14,8 @@ from agent_engine.approvals.session_store import (
     InMemorySessionApprovalRepository,
     SessionApprovalRepository,
 )
+from agent_engine.tool_usage.in_memory import InMemoryToolUsageRepository
+from agent_engine.tool_usage.repository import ToolUsageRepository
 from agent_manager.config import AuthMode, Settings
 from agent_manager.domain import Repository
 from agent_manager.infrastructure.auth.keys import StaticSecretKeySource
@@ -38,11 +40,22 @@ EPHEMERAL_SECRET_BYTES = 32
 class ApplicationRepositories:
     conversations: Repository
     session_approvals: SessionApprovalRepository
+    tool_usage: ToolUsageRepository
 
 
 def build_session_approval_repository() -> SessionApprovalRepository:
     """Create the process-lifetime adapter used by the current application."""
     return InMemorySessionApprovalRepository()
+
+
+def build_tool_usage_repository() -> ToolUsageRepository:
+    """Select the tool-usage backend for this deployment.
+
+    The only place the concrete adapter is named: a distributed deployment
+    swaps the implementation here, and no agent, node, or tool-execution code
+    changes with it.
+    """
+    return InMemoryToolUsageRepository()
 
 
 def build_identity_resolver(settings: Settings) -> IdentityResolver:
@@ -113,6 +126,7 @@ async def application_repositories(
         yield ApplicationRepositories(
             conversations=SqlRepository(sessions),
             session_approvals=build_session_approval_repository(),
+            tool_usage=build_tool_usage_repository(),
         )
     finally:
         await db_engine.dispose()
