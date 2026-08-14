@@ -7,9 +7,11 @@ through unchanged.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from agent_engine.approvals.decision import ApprovalDecision
 from agent_manager.domain import BudgetSeverity, Role
 
 
@@ -64,10 +66,28 @@ class ToolRecord(BaseModel):
     error: str | None = None
 
 
+class PendingApprovalOut(BaseModel):
+    run_id: str
+    approval_id: str
+    agent_id: str
+    tool_name: str
+    description: str
+    provider: str
+    server_id: str | None = None
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
 class SendMessageResponse(BaseModel):
     answer: str
     visited: list[str]
     used_tools: list[ToolRecord]
+    status: str = "completed"
+    run_id: str | None = None
+    pending_approval: PendingApprovalOut | None = None
+
+
+class ApprovalDecisionRequest(BaseModel):
+    decision: ApprovalDecision
 
 
 class TokenBudgetResponse(BaseModel):
@@ -88,3 +108,8 @@ class StreamEventOut(BaseModel):
     error: str | None = None
     system_name: str | None = None
     used_tools: list[ToolRecord] | None = None
+    run_id: str | None = None
+    approval_id: str | None = None
+    agent_id: str | None = None
+    description: str | None = None
+    arguments: dict[str, Any] | None = None

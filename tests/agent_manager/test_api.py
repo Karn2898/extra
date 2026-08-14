@@ -8,14 +8,22 @@ from collections.abc import AsyncIterator, Sequence
 import pytest
 from fastapi.testclient import TestClient
 
+from agent_engine.approvals.decision import ApprovalDecision
+from agent_engine.approvals.errors import ApprovalAlreadyProcessed
 from agent_engine.engine.engine import Engine
-from agent_engine.engine.types import ChatMessage, RunResult
+from agent_engine.engine.types import ChatMessage, PendingApproval, RunResult
 from agent_engine.runtime.hooks.models import RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
 from agent_engine.runtime.tool_models import ToolUsageRecord
 from agent_manager.application import ConversationService
 from agent_manager.config import AuthMode
-from agent_manager.domain import TokenBudgetUsage, thread_title
+from agent_manager.domain import (
+    ConversationMessage,
+    Principal,
+    Role,
+    TokenBudgetUsage,
+    thread_title,
+)
 from agent_manager.infrastructure.persistence.memory_repository import MemoryRepository
 from tests.agent_manager.conftest import (
     HOST_COOKIE,
@@ -24,6 +32,103 @@ from tests.agent_manager.conftest import (
     build_test_app,
     session_cookie,
 )
+
+
+class _ApprovalRecordingEngine(RecordingEngine):
+    def __init__(self) -> None:
+        super().__init__()
+        self.pending: PendingApproval | None = None
+        self.resume_calls: list[
+            tuple[str, str, ApprovalDecision | str, str | None, str | None]
+        ] = []
+        self.completed_results: dict[str, RunResult] = {}
+
+    def _pending_result(self, context: RunContext | None) -> RunResult:
+        assert context is not None and context.run_id is not None
+        self.pending = PendingApproval(
+            run_id=context.run_id,
+            approval_id="approval-1",
+            agent_id="writer",
+            tool_name="send_email",
+            description="Writer wants to call send_email. It has not been executed yet.",
+        )
+        return RunResult(
+            system_name="stub",
+            visited=["writer"],
+            answer="",
+            status="pending_approval",
+            pending_approval=self.pending,
+        )
+
+    async def run(
+        self,
+        message: str,
+        *,
+        history: Sequence[ChatMessage] = (),
+        context: RunContext | None = None,
+    ) -> RunResult:
+        del message, history
+        self.contexts.append(context)
+        return self._pending_result(context)
+
+    async def stream(
+        self,
+        message: str,
+        *,
+        history: Sequence[ChatMessage] = (),
+        context: RunContext | None = None,
+    ) -> AsyncIterator[RunStreamEvent]:
+        del message, history
+        self.contexts.append(context)
+        pending = self._pending_result(context).pending_approval
+        assert pending is not None
+        yield RunStreamEvent(
+            type="pending_approval",
+            route=("writer",),
+            run_id=pending.run_id,
+            approval_id=pending.approval_id,
+            agent_id=pending.agent_id,
+            tool_name=pending.tool_name,
+            description=pending.description,
+            provider="mcp",
+            server_id="mail-server",
+            arguments={"recipient": "masked@example.test", "token": "***"},
+        )
+
+    async def get_pending_approval(self, run_id: str) -> PendingApproval | None:
+        return self.pending if self.pending is not None and self.pending.run_id == run_id else None
+
+    async def get_processed_result(
+        self,
+        run_id: str,
+        approval_id: str,
+        *,
+        caller_user_id: str | None = None,
+        caller_session_id: str | None = None,
+    ) -> RunResult | None:
+        del approval_id, caller_user_id, caller_session_id
+        return self.completed_results.get(run_id)
+
+    async def resume(
+        self,
+        run_id: str,
+        approval_id: str,
+        decision: ApprovalDecision | str,
+        *,
+        caller_user_id: str | None = None,
+        caller_session_id: str | None = None,
+    ) -> RunResult:
+        self.resume_calls.append((run_id, approval_id, decision, caller_user_id, caller_session_id))
+        answer = "The tool request was denied." if decision == ApprovalDecision.DENY else "sent"
+        result = RunResult(
+            system_name="stub",
+            visited=["writer"],
+            answer=answer,
+            input_tokens=5,
+            output_tokens=2,
+        )
+        self.completed_results[run_id] = result
+        return result
 
 
 @pytest.fixture
@@ -363,6 +468,229 @@ def test_stream_surfaces_sse_events_and_persists_final_answer(client: TestClient
     assert [(m["role"], m["content"]) for m in messages] == [
         ("user", "hello"),
         ("assistant", "answer:hello"),
+    ]
+
+
+def test_stream_surfaces_pending_approval_details() -> None:
+    engine = _ApprovalRecordingEngine()
+    app = build_test_app(ConversationService(engine, MemoryRepository()))
+    client = TestClient(app)
+    headers = bearer("user-1")
+    client.post(
+        "/conversations",
+        json={"session_id": "session-1"},
+        headers=headers,
+    )
+
+    response = client.post(
+        "/conversations/session-1/messages/stream",
+        json={"message": "send it"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert 'event: pending_approval\ndata: {"type": "pending_approval"' in response.text
+    assert '"run_id":' in response.text
+    assert '"approval_id": "approval-1"' in response.text
+    assert '"agent_id": "writer"' in response.text
+    assert '"tool_name": "send_email"' in response.text
+    assert "has not been executed yet" in response.text
+    assert '"provider": "mcp"' in response.text
+    assert '"server_id": "mail-server"' in response.text
+    assert '"arguments": {"recipient": "masked@example.test", "token": "***"}' in response.text
+    assert "event: done\ndata: [DONE]" in response.text
+
+
+@pytest.mark.parametrize(
+    ("decision", "expected_answer"),
+    [
+        (ApprovalDecision.ALLOW_ONCE, "sent"),
+        (ApprovalDecision.DENY, "The tool request was denied."),
+        (ApprovalDecision.ALLOW_FOR_SESSION, "sent"),
+    ],
+)
+def test_conversation_approval_actions_resume_and_persist(
+    decision: ApprovalDecision,
+    expected_answer: str,
+) -> None:
+    engine = _ApprovalRecordingEngine()
+    repository = MemoryRepository()
+    app = build_test_app(ConversationService(engine, repository))
+    client = TestClient(app)
+    headers = bearer("user-1")
+    client.post(
+        "/conversations",
+        json={"session_id": "session-1"},
+        headers=headers,
+    )
+    pending_response = client.post(
+        "/conversations/session-1/messages",
+        json={"message": "send it"},
+        headers=headers,
+    )
+    pending = pending_response.json()["pending_approval"]
+
+    response = client.post(
+        f"/conversations/session-1/runs/{pending['run_id']}"
+        f"/approvals/{pending['approval_id']}/decision",
+        json={"decision": decision.value},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+    assert response.json()["pending_approval"] is None
+    assert response.json()["answer"] == expected_answer
+    assert engine.resume_calls == [
+        (
+            pending["run_id"],
+            "approval-1",
+            decision,
+            Principal.external("user-1").user_id,
+            "session-1",
+        )
+    ]
+    messages = client.get("/conversations/session-1/messages", headers=headers).json()
+    assert [(message["role"], message["content"]) for message in messages] == [
+        ("user", "send it"),
+        ("assistant", expected_answer),
+    ]
+    assert client.get("/conversations/session-1/usage", headers=headers).json()["used_tokens"] == 7
+
+
+def test_conversation_approval_refuses_a_different_caller() -> None:
+    engine = _ApprovalRecordingEngine()
+    app = build_test_app(ConversationService(engine, MemoryRepository()))
+    client = TestClient(app)
+    owner = bearer("owner")
+    client.post(
+        "/conversations",
+        json={"session_id": "session-1"},
+        headers=owner,
+    )
+    pending = client.post(
+        "/conversations/session-1/messages",
+        json={"message": "send it"},
+        headers=owner,
+    ).json()["pending_approval"]
+
+    response = client.post(
+        f"/conversations/session-1/runs/{pending['run_id']}"
+        f"/approvals/{pending['approval_id']}/decision",
+        json={"decision": ApprovalDecision.ALLOW_ONCE.value},
+        headers=bearer("intruder"),
+    )
+
+    assert response.status_code == 403
+    assert engine.resume_calls == []
+
+
+def test_conversation_approval_sanitizes_engine_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class FailingApprovalEngine(_ApprovalRecordingEngine):
+        async def resume(
+            self,
+            run_id: str,
+            approval_id: str,
+            decision: ApprovalDecision | str,
+            *,
+            caller_user_id: str | None = None,
+            caller_session_id: str | None = None,
+        ) -> RunResult:
+            del run_id, approval_id, decision, caller_user_id, caller_session_id
+            raise RuntimeError("private approval failure")
+
+    engine = FailingApprovalEngine()
+    app = build_test_app(ConversationService(engine, MemoryRepository()))
+    client = TestClient(app, headers=bearer("user-1"))
+    client.post("/conversations", json={"session_id": "session-1"})
+    pending = client.post(
+        "/conversations/session-1/messages",
+        json={"message": "send it"},
+    ).json()["pending_approval"]
+
+    response = client.post(
+        f"/conversations/session-1/runs/{pending['run_id']}"
+        f"/approvals/{pending['approval_id']}/decision",
+        json={"decision": ApprovalDecision.ALLOW_ONCE.value},
+    )
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Internal server error"
+    assert "private approval failure" not in response.text
+    assert "private approval failure" in caplog.text
+
+
+def test_conversation_approval_retry_recovers_result_without_duplicate_message() -> None:
+    class RetryAwareEngine(_ApprovalRecordingEngine):
+        async def resume(
+            self,
+            run_id: str,
+            approval_id: str,
+            decision: ApprovalDecision | str,
+            *,
+            caller_user_id: str | None = None,
+            caller_session_id: str | None = None,
+        ) -> RunResult:
+            if run_id in self.completed_results:
+                raise ApprovalAlreadyProcessed(approval_id, "approved")
+            return await super().resume(
+                run_id,
+                approval_id,
+                decision,
+                caller_user_id=caller_user_id,
+                caller_session_id=caller_session_id,
+            )
+
+    class FailFirstAssistantWrite(MemoryRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_assistant_write = True
+
+        async def append_message_if_absent(
+            self,
+            message: ConversationMessage,
+            *,
+            snapshot_ttl_seconds: int | None = None,
+        ) -> bool:
+            if message.role == Role.ASSISTANT and self.fail_assistant_write:
+                self.fail_assistant_write = False
+                raise RuntimeError("temporary database failure")
+            return await super().append_message_if_absent(
+                message,
+                snapshot_ttl_seconds=snapshot_ttl_seconds,
+            )
+
+    engine = RetryAwareEngine()
+    repository = FailFirstAssistantWrite()
+    app = build_test_app(ConversationService(engine, repository))
+    client = TestClient(app)
+    headers = bearer("user-1")
+    client.post("/conversations", json={"session_id": "session-1"}, headers=headers)
+    pending = client.post(
+        "/conversations/session-1/messages",
+        json={"message": "send it"},
+        headers=headers,
+    ).json()["pending_approval"]
+    endpoint = (
+        f"/conversations/session-1/runs/{pending['run_id']}"
+        f"/approvals/{pending['approval_id']}/decision"
+    )
+    request = {"decision": ApprovalDecision.ALLOW_ONCE.value}
+
+    failed = client.post(endpoint, json=request, headers=headers)
+    recovered = client.post(endpoint, json=request, headers=headers)
+    repeated = client.post(endpoint, json=request, headers=headers)
+
+    assert failed.status_code == 500
+    assert recovered.status_code == 200
+    assert repeated.status_code == 200
+    assert recovered.json()["answer"] == "sent"
+    messages = client.get("/conversations/session-1/messages", headers=headers).json()
+    assert [(message["role"], message["content"]) for message in messages] == [
+        ("user", "send it"),
+        ("assistant", "sent"),
     ]
 
 

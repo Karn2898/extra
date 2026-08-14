@@ -123,6 +123,26 @@ async def test_messages_in_insertion_order(repo: Repository) -> None:
     ]
 
 
+async def test_append_message_if_absent_is_idempotent(repo: Repository) -> None:
+    await repo.create_session("sess-1")
+    message = ConversationMessage(
+        message_id="stable-message",
+        session_id="sess-1",
+        run_id="run-1",
+        role=Role.ASSISTANT,
+        content="done",
+        created_at=datetime.now(UTC),
+    )
+
+    created = await repo.append_message_if_absent(message)
+    duplicate = await repo.append_message_if_absent(message)
+
+    assert created is True
+    assert duplicate is False
+    stored = await repo.list_conversation_messages("sess-1")
+    assert stored == [message]
+
+
 async def test_limit_returns_most_recent_oldest_first(repo: Repository) -> None:
     cid = await repo.create_conversation()
     for i in range(5):
