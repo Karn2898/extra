@@ -169,13 +169,13 @@ def _settings(**overrides: Any) -> Settings:
 
 
 def test_host_identity_requires_a_configured_secret() -> None:
-    with pytest.raises(ValidationError, match="AGENT_AUTH_SECRET"):
-        _settings(agent_auth_mode=AuthMode.HOST_TOKEN)
+    with pytest.raises(ValidationError, match="EXTRA_AUTH_SECRET"):
+        _settings(extra_auth_mode=AuthMode.HOST_TOKEN)
 
 
 def test_visitor_passes_are_not_signed_with_the_host_key() -> None:
     """A host that can mint tokens still must not be able to mint passes."""
-    settings = _settings(agent_auth_mode=AuthMode.MINT, agent_auth_secret=SECRET)
+    settings = _settings(extra_auth_mode=AuthMode.MINT, extra_auth_secret=SECRET)
 
     assert anonymous_secret(settings) != SECRET
 

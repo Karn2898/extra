@@ -40,9 +40,9 @@ Serve Extra from a path on the site your users already sign into — say
 `acme.com/agents` — and it reads the session they already have.
 
 ```bash
-AGENT_AUTH_MODE=host_token
-AGENT_AUTH_SECRET=${YOUR_JWT_SECRET}   # the key your app already signs with
-AGENT_AUTH_COOKIE=session              # your session cookie's name
+EXTRA_AUTH_MODE=host_token
+EXTRA_AUTH_SECRET=${YOUR_JWT_SECRET}   # the key your app already signs with
+EXTRA_AUTH_COOKIE=session              # your session cookie's name
 ```
 
 ```html
@@ -56,7 +56,7 @@ verifies it with your own secret.
 <Note>
 Works with any app that issues a session JWT — Open WebUI, Django, Rails, most
 Node stacks. If your user id isn't in the `sub` claim, set
-`AGENT_AUTH_CLAIM_USER_ID`.
+`EXTRA_AUTH_CLAIM_USER_ID`.
 </Note>
 
 ---
@@ -69,7 +69,7 @@ vouches for the user instead.
 ```js
 app.get("/agent-chat/token", requireLogin, (req, res) => {
   res.json({
-    token: jwt.sign({ sub: req.user.id }, process.env.AGENT_CHAT_SECRET, {
+    token: jwt.sign({ sub: req.user.id }, process.env.EXTRA_AUTH_SECRET, {
       expiresIn: "1h", // required: tokens minted for us must expire
     }),
   });
@@ -77,8 +77,8 @@ app.get("/agent-chat/token", requireLogin, (req, res) => {
 ```
 
 ```bash
-AGENT_AUTH_MODE=mint
-AGENT_AUTH_SECRET=<32+ random characters>
+EXTRA_AUTH_MODE=mint
+EXTRA_AUTH_SECRET=<32+ random characters>
 ```
 
 ```html
@@ -113,12 +113,12 @@ user out — and, in a single-page app, when it signs one *in* without a reload.
 
 | Variable | Default | |
 |---|---|---|
-| `AGENT_AUTH_MODE` | `anonymous` | `anonymous`, `host_token`, or `mint` |
-| `AGENT_AUTH_SECRET` | — | Signing key, 32+ characters. Required unless anonymous |
-| `AGENT_AUTH_COOKIE` | — | Your session cookie's name (`host_token` only) |
-| `AGENT_AUTH_CLAIM_USER_ID` | `sub` | Claim holding the user id. Also `_EMAIL`, `_DISPLAY_NAME`, `_ROLES` |
-| `AGENT_AUTH_MAX_TTL_SECONDS` | `3600` | Longest token accepted in `mint` mode |
-| `AGENT_AUTH_ANONYMOUS_SECRET` | derived | Signs anonymous passes. Set it to survive a secret rotation |
+| `EXTRA_AUTH_MODE` | `anonymous` | `anonymous`, `host_token`, or `mint` |
+| `EXTRA_AUTH_SECRET` | — | Signing key, 32+ characters. Required unless anonymous |
+| `EXTRA_AUTH_COOKIE` | — | Your session cookie's name (`host_token` only) |
+| `EXTRA_AUTH_CLAIM_USER_ID` | `sub` | Claim holding the user id. Also `_EMAIL`, `_DISPLAY_NAME`, `_ROLES` |
+| `EXTRA_AUTH_MAX_TTL_SECONDS` | `3600` | Longest token accepted in `mint` mode |
+| `EXTRA_AUTH_ANONYMOUS_SECRET` | derived | Signs anonymous passes. Set it to survive a secret rotation |
 
-Rotating `AGENT_AUTH_SECRET` is safe: widgets fetch a fresh token on their next
+Rotating `EXTRA_AUTH_SECRET` is safe: widgets fetch a fresh token on their next
 request.
