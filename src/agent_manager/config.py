@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import warnings
 from enum import StrEnum
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, NamedTuple
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -13,30 +13,43 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 ONE_HOUR_SECONDS = 3_600
 THIRTY_DAYS_SECONDS = 2_592_000
 
-_DEPRECATED_ENV_VARS: tuple[tuple[str, str, str], ...] = (
-    ("AGENT_DB_BACKEND", "EXTRA_DB_BACKEND", "extra_db_backend"),
-    ("AGENT_DB_URL", "EXTRA_DB_URL", "extra_db_url"),
-    ("AGENT_AUTH_MODE", "EXTRA_AUTH_MODE", "extra_auth_mode"),
-    ("AGENT_AUTH_SECRET", "EXTRA_AUTH_SECRET", "extra_auth_secret"),
-    ("AGENT_AUTH_ANONYMOUS_SECRET", "EXTRA_AUTH_ANONYMOUS_SECRET", "extra_auth_anonymous_secret"),
-    (
+
+class _EnvAlias(NamedTuple):
+    """Maps one deprecated environment variable name to its canonical replacement."""
+
+    old: str  # e.g. "AGENT_AUTH_MODE"  — the legacy env var operators may still have set
+    new: str  # e.g. "EXTRA_AUTH_MODE"  — the canonical env var they should migrate to
+    field: str  # e.g. "extra_auth_mode"  — the pydantic Settings field name
+
+
+_DEPRECATED_ENV_VARS: tuple[_EnvAlias, ...] = (
+    _EnvAlias("AGENT_DB_BACKEND", "EXTRA_DB_BACKEND", "extra_db_backend"),
+    _EnvAlias("AGENT_DB_URL", "EXTRA_DB_URL", "extra_db_url"),
+    _EnvAlias("AGENT_AUTH_MODE", "EXTRA_AUTH_MODE", "extra_auth_mode"),
+    _EnvAlias("AGENT_AUTH_SECRET", "EXTRA_AUTH_SECRET", "extra_auth_secret"),
+    _EnvAlias(
+        "AGENT_AUTH_ANONYMOUS_SECRET", "EXTRA_AUTH_ANONYMOUS_SECRET", "extra_auth_anonymous_secret"
+    ),
+    _EnvAlias(
         "AGENT_AUTH_ANONYMOUS_TTL_SECONDS",
         "EXTRA_AUTH_ANONYMOUS_TTL_SECONDS",
         "extra_auth_anonymous_ttl_seconds",
     ),
-    ("AGENT_AUTH_MAX_TTL_SECONDS", "EXTRA_AUTH_MAX_TTL_SECONDS", "extra_auth_max_ttl_seconds"),
-    ("AGENT_AUTH_ISSUER", "EXTRA_AUTH_ISSUER", "extra_auth_issuer"),
-    ("AGENT_AUTH_AUDIENCE", "EXTRA_AUTH_AUDIENCE", "extra_auth_audience"),
-    ("AGENT_AUTH_COOKIE", "EXTRA_AUTH_COOKIE", "extra_auth_cookie"),
-    ("AGENT_AUTH_CLAIM_USER_ID", "EXTRA_AUTH_CLAIM_USER_ID", "extra_auth_claim_user_id"),
-    ("AGENT_AUTH_CLAIM_EMAIL", "EXTRA_AUTH_CLAIM_EMAIL", "extra_auth_claim_email"),
-    (
+    _EnvAlias(
+        "AGENT_AUTH_MAX_TTL_SECONDS", "EXTRA_AUTH_MAX_TTL_SECONDS", "extra_auth_max_ttl_seconds"
+    ),
+    _EnvAlias("AGENT_AUTH_ISSUER", "EXTRA_AUTH_ISSUER", "extra_auth_issuer"),
+    _EnvAlias("AGENT_AUTH_AUDIENCE", "EXTRA_AUTH_AUDIENCE", "extra_auth_audience"),
+    _EnvAlias("AGENT_AUTH_COOKIE", "EXTRA_AUTH_COOKIE", "extra_auth_cookie"),
+    _EnvAlias("AGENT_AUTH_CLAIM_USER_ID", "EXTRA_AUTH_CLAIM_USER_ID", "extra_auth_claim_user_id"),
+    _EnvAlias("AGENT_AUTH_CLAIM_EMAIL", "EXTRA_AUTH_CLAIM_EMAIL", "extra_auth_claim_email"),
+    _EnvAlias(
         "AGENT_AUTH_CLAIM_DISPLAY_NAME",
         "EXTRA_AUTH_CLAIM_DISPLAY_NAME",
         "extra_auth_claim_display_name",
     ),
-    ("AGENT_AUTH_CLAIM_ROLES", "EXTRA_AUTH_CLAIM_ROLES", "extra_auth_claim_roles"),
-    (
+    _EnvAlias("AGENT_AUTH_CLAIM_ROLES", "EXTRA_AUTH_CLAIM_ROLES", "extra_auth_claim_roles"),
+    _EnvAlias(
         "AGENT_AUTH_CLAIM_ORGANIZATION_ID",
         "EXTRA_AUTH_CLAIM_ORGANIZATION_ID",
         "extra_auth_claim_organization_id",
@@ -59,10 +72,22 @@ class AuthMode(StrEnum):
 
 
 def normalize_database_url(url: str, backend: str) -> str:
-    if backend == "sqlite" and url.startswith("sqlite:///"):
-        return "sqlite+aiosqlite:///" + url.removeprefix("sqlite:///")
-    if backend == "postgres" and url.startswith("postgresql://"):
-        return "postgresql+asyncpg://" + url.removeprefix("postgresql://")
+    if backend == "sqlite":
+        if url.startswith("sqlite:///"):
+            return "sqlite+aiosqlite:///" + url.removeprefix("sqlite:///")
+        if not url.startswith("sqlite+"):
+            raise ValueError(
+                f"EXTRA_DB_URL {url!r} does not look like a sqlite URL "
+                f"(expected 'sqlite:///' or 'sqlite+aiosqlite:///')."
+            )
+    if backend == "postgres":
+        if url.startswith("postgresql://"):
+            return "postgresql+asyncpg://" + url.removeprefix("postgresql://")
+        if not url.startswith("postgresql+"):
+            raise ValueError(
+                f"EXTRA_DB_URL {url!r} does not look like a postgresql URL "
+                f"(expected 'postgresql://' or 'postgresql+asyncpg://')."
+            )
     return url
 
 
@@ -105,26 +130,28 @@ class Settings(BaseSettings):
     def _backfill_deprecated_agent_vars(cls, data: object) -> object:
         if not isinstance(data, dict):
             return data
-        for old_env, new_env, new_key in _DEPRECATED_ENV_VARS:
-            if new_key in data:
+        for alias in _DEPRECATED_ENV_VARS:
+            if alias.field in data:
                 continue
-            old_key = old_env.lower()
+            # Also accept the deprecated name as a Python kwarg (e.g. in tests or
+            # programmatic callers that haven't migrated yet).
+            old_key = alias.old.lower()
             if old_key in data:
                 warnings.warn(
-                    f"{old_key} is deprecated; rename it to {new_key}.",
+                    f"{alias.old} is deprecated; rename it to {alias.new}.",
                     DeprecationWarning,
-                    stacklevel=1,
+                    stacklevel=2,
                 )
-                data[new_key] = data[old_key]
+                data[alias.field] = data[old_key]
                 continue
-            old_val = os.getenv(old_env)
+            old_val = os.getenv(alias.old)
             if old_val is not None:
                 warnings.warn(
-                    f"{old_env} is deprecated; rename it to {new_env}.",
+                    f"{alias.old} is deprecated; rename it to {alias.new}.",
                     DeprecationWarning,
-                    stacklevel=1,
+                    stacklevel=2,
                 )
-                data[new_key] = old_val
+                data[alias.field] = old_val
         return data
 
     @field_validator("cors_origins", mode="before")
