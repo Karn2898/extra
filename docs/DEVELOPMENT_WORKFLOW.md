@@ -41,6 +41,13 @@ pick the next task → read its skill(s) → make a small change → run `make c
 | `make inspect` | Offline: summarize the flagship example (agents/MCPs/hooks).  |
 | `make clean`   | Remove caches and build artifacts.                           |
 
+## Running it locally
+
+`make dev-mcp` + `make dev` (and `make dev-widget` for the chat widget), one per
+terminal — restarts on save, IDE debugger attaches. See
+[development.mdx](development.mdx). `make up` / `make up-ui` run the Docker
+stack: use those to verify the image, not to develop.
+
 Current CLI checks:
 
 ```bash

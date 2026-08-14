@@ -102,11 +102,11 @@ defaults:
 
 ```
 OPENAI_API_KEY=ollama
-OPENAI_BASE_URL=http://host.docker.internal:11434/v1
+OPENAI_BASE_URL=http://127.0.0.1:11434/v1
 ```
 
-`host.docker.internal` is how a container reaches Ollama on your machine, which
-is what `make up` does. Running without Docker, use `127.0.0.1` instead.
+A container can't reach the host's loopback, so `make up` rewrites this to
+`host.docker.internal`.
 
 For a hosted provider, set `provider` and `name`, drop `OPENAI_BASE_URL`, and
 put the real key in `.env`.
