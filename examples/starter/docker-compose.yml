@@ -16,6 +16,8 @@ services:
       - .:/workspace
     env_file:
       - .env
+    environment:
+      - OPENAI_BASE_URL
     network_mode: "service:mcp"
     depends_on:
       - mcp
@@ -28,6 +30,8 @@ services:
       - .:/workspace
     env_file:
       - .env
+    environment:
+      - OPENAI_BASE_URL
     network_mode: "service:mcp"
     depends_on:
       - mcp
