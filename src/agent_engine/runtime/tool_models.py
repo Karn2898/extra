@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 ToolProviderName = Literal["local", "mcp", "unknown"]
-ToolUsageStatus = Literal["started", "succeeded", "failed"]
+ToolUsageStatus = Literal["started", "succeeded", "failed", "denied"]
 
 
 @dataclass(frozen=True)
