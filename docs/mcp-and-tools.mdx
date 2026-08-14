@@ -183,3 +183,26 @@ tools used:
   * get_order_status [local] succeeded (42ms)
   * crm_lookup [mcp: crm_mcp] succeeded (118ms)
 ```
+
+## Shared tool usage across agents
+
+Tool usage is stored in a repository, not carried in graph state, so every agent and orchestrator working on the same conversation shares it. Each one is privately told what has already been run — including in earlier turns of the same conversation, so an agent can answer "which tools have you used?":
+
+```
+## Execution record for this conversation
+
+### Tools executed
+user_management:
+- create_user [succeeded]
+
+### Agents delegated to
+- openwebui -> admin_management
+```
+
+Tools and agents are listed apart on purpose: an orchestrator's children are bound to it as tools, so a flat list made it answer "the tool I ran is admin_management" when it had only routed there.
+
+For direct questions ("which tools have you run?"), orchestrators also get a read-only `list_executed_tools` tool that returns the executed tools straight from the repository — so the answer comes from data rather than from what the model believes about its own tool list.
+
+That block is internal execution context: it is given to the model as a system message, never as a conversation turn, and never persisted as chat history. Only agent, tool name, and status are included — never arguments, results, or errors. It is refreshed before every model turn, so a supervisor's final answer reflects what the agents it just called actually ran.
+
+The store behind it is a repository port. The in-memory adapter ships with the engine; a shared backend (Redis, PostgreSQL) is an adapter swap in the composition layer, with no change to agents or tools.

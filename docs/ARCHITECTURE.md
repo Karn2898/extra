@@ -166,7 +166,7 @@ Responsibilities:
 - **Security / context gate**: filter `protected` nodes via the access plugin so
   an orchestrator never exposes a child the caller may not reach.
 - **Execute the root node as a supervisor agent**: the orchestrator's children
-  (agents or nested orchestrators) are exposed to it as callable tools; it
+  (agents or nested orchestrators) are exposed to it as callable delegations; it
   decides which child tool(s) to call, collects their answers, and synthesises a
   final response. The whole tree runs inside the root invocation.
 - **Resolve dynamic prompt values** by calling each node's declared resolvers.
@@ -175,8 +175,12 @@ Responsibilities:
 - **Enforce tool/data policy**: expose only the agent's declared tools; pass
   trusted, runtime-controlled context to tools (see §11).
 - **Call tools / MCP servers** through runtime-managed adapters.
+- **Record** every tool call in the tool-usage repository — the source of truth
+  for execution metadata, keyed by run and conversation, and the seam through
+  which a later agent or turn learns what has already been run.
 - **Return** the response plus a structured trace (`visited` = call-chain;
-  `used_tools` = real tool/MCP calls, merged up from nested agents).
+  `used_tools` = real tool/MCP calls, projected from the usage repository and so
+  including nested agents).
 
 ---
 
@@ -580,6 +584,18 @@ trusted code truncate/redact/normalize a tool result before it reaches the
 model) — for auth, policy, audit, and context enrichment, distinct from
 LLM-invoked tools. Per-tool `input_policy` (trusted parameter injection) is
 still not implemented — see §11.
+
+**Shared tool usage (✅ done, not in the original task list):**
+`agent_engine/tool_usage/` owns execution metadata: a `ToolUsageRepository` port
+(process-local adapter shipped, distributed adapters injected at the composition
+root), a `ToolUsageTracker` that records outcomes on the single tool-execution
+path, and a `ToolUsageContextProvider` that projects a conversation's usage into a private
+system-role block for the model, refreshed before every model turn, plus a
+read-only `list_executed_tools` tool so an orchestrator can answer questions about
+past execution from data rather than from its own tool bindings. `GraphState` carries no tool usage: the
+repository is the source of truth, and both the model context and
+`RunResult.used_tools` are projections of it. See
+[`MCP_AND_TOOLS.md`](MCP_AND_TOOLS.md).
 
 **Model providers (✅ done, not in the original task list):**
 `agent_engine/models/factory.py` builds chat models via `init_chat_model` for

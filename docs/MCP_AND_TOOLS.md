@@ -151,9 +151,9 @@ agent's tools at **build time** (`_build_agent_tools`):
   the `MultiServerMCPClient.get_tools()` results discovered during `build()`.
 
 Both are bound to the agent's model; the tool-call loop runs until the model
-stops requesting tools. Each call is recorded in the run's `used_tools` with its
-`provider` (`"local"` or `"mcp"`), so the origin is tracked for tracing even
-though it is hidden from the model.
+stops requesting tools. Each call is recorded in the run's tool-usage repository
+with its `provider` (`"local"` or `"mcp"`), so the origin is tracked for tracing
+even though it is hidden from the model.
 
 The engine is driven as an async context manager: `build()` connects MCP servers
 and discovers tools; `close()` (on context exit) releases them. `run()` does not
@@ -165,12 +165,173 @@ async with LangGraphEngine(base_dir) as engine:
     result = await engine.run(message)
 ```
 
-## Runtime Tool Usage Summary
+## Shared Tool Usage
 
-Every run collects deterministic tool-usage records (`RunResult.used_tools`) on
-the runtime tool-execution path — in call order, not inferred from the final
-answer or requested from the model. Records from tools called by nested agents
-are merged up into the top-level result.
+Every run collects deterministic tool-usage records on the runtime
+tool-execution path — in call order, not inferred from the final answer or
+requested from the model. The **source of truth is a repository**, not the
+LangGraph state:
+
+```text
+ToolInvoker            (coordinates one tool call)
+      │
+      ▼
+ToolUsageTracker       (execution event → domain record)
+      │
+      ▼
+ToolUsageRepository    (source of truth: run → agent → tool call)
+      │
+      ├──────────────► ToolUsageContextProvider ──► private model context
+      │
+      └──────────────► run trace (RunResult.used_tools)
+```
+
+Because every agent shares one repository instance, an agent that starts later
+sees what earlier agents did — including agents nested under an orchestrator —
+without any of it being threaded through `GraphState`. Orchestrators receive the
+same context, so a supervisor can answer a user asking what has already been
+done.
+
+### Persistence model
+
+The domain relationship is `conversation → run → agent → tool call`. One record
+per **logical invocation**, identified by `(run_id, tool_call_id)`:
+
+| Field | Meaning |
+| --- | --- |
+| `conversation_id` | The conversation the run belongs to (absent outside one) |
+| `run_id` | The exact run the invocation happened in |
+| `agent_id` | The agent that invoked it — the id the approval subsystem also records, and the name the model is shown |
+| `agent_path` | That agent's position in the graph (`openwebui/admin_management/user_management`) |
+| `tool_call_id` | Stable id of the logical invocation, unchanged across suspend/resume |
+| `tool_name` / `provider` / `server_id` | What was called, and where it came from |
+| `kind` | `tool` for a real tool/MCP call, `agent` when an orchestrator delegated to a child |
+| `status` | `succeeded`, `failed`, or `denied` |
+| `error` | Bounded error text for a failed call |
+
+Conversation scope gives continuity across the user's turns; run scope keeps
+execution-level traceability. Neither replaces the other, and both are queryable.
+
+Delegating to a child agent is an action too, so an orchestrator records it —
+that is how a later turn can reconstruct the routing that already happened.
+Those records are `kind = agent`; the caller-facing run trace reports
+`kind = tool` only, and so does the model context by default (see below).
+
+`record` is an upsert on that identity, so a graph re-entry after an approval
+resume updates the existing record instead of adding a second one. Arguments and
+results are never stored: they may carry sensitive or oversized data, and no
+consumer of tool usage needs them.
+
+`ToolUsageRepository` is a `Protocol` with three operations (`record`,
+`list_for_run`, `list_for_conversation`). The engine ships a process-local adapter
+(`InMemoryToolUsageRepository`); a distributed deployment supplies a Redis- or
+PostgreSQL-backed adapter with the same contract and injects it at the
+composition root (`build_tool_usage_repository` in `agent_manager/composition.py`,
+or the `tool_usage_repository=` argument of `LangGraphEngine`). No agent, node,
+tool-loop, or model-context code changes when the backend changes.
+
+Recording is observability, not part of the tool's contract: a repository write
+failure is logged at WARNING with the invocation's identity and swallowed, so a
+metadata problem can never turn a completed tool call into a failed one. The
+visible cost is a trace that may be missing an entry the log names explicitly.
+
+### Model context is a projection, not the record
+
+`ToolUsageContextProvider` reads the records for a `ToolUsageScope` and projects
+them into a small, private block supplied to the model as a **system-role
+message** next to the system prompt:
+
+```text
+## Execution record for this conversation
+Internal execution metadata, not chat history. Some of the tools bound to you are
+other agents: calling one delegates the work, it does not perform it. ...
+
+### Tools executed
+...
+user_management:
+- create_user [succeeded]
+
+### Agents delegated to
+...
+- openwebui -> admin_management
+```
+
+An orchestrator's children are bound to it as callable tools, so their
+descriptions name them as delegations (`Delegate this request to the 'x' agent`)
+and its instruction contract states that calling one hands the work over rather
+than performing it. The record's two sections exist for the same reason. Asked which tools it had run, one answered `admin_management` — the child
+it had merely routed to — and defended it, because from its own binding that is
+a tool. Naming only the executed tools did not help either: the model trusted its
+tool list over an unexplained record. So the record names both levels and states
+the difference, and successful routing carries no `[succeeded]` marker that could
+read as a tool result. Pass `include_delegations=False` to report executed tools
+only.
+
+Only agent, tool name, and status cross that boundary — no timestamps, ids,
+arguments, results, or error text. The block is never a user or assistant turn,
+so it does not enter the conversation history the caller persists and never
+reaches the user; a conversation with no tool usage adds nothing at all.
+
+Two policies live in the provider, and changing them touches nothing else:
+
+* **Scope** — the conversation is preferred when the caller has one, so a
+  follow-up turn (a new `run_id`) still knows what earlier turns did; a run
+  outside any conversation falls back to its own run.
+* **Size** — the most recent 50 invocations, bounding prompt growth on a long
+  conversation. A trimmed record says so, rather than passing itself off as
+  complete.
+* **Non-duplication** — an invocation the asking agent made in the run it is
+  currently executing is skipped while its own `AIMessage` + `ToolMessage` pair
+  is still in the turn. The model already has that call in full through the
+  normal tool protocol; the block would only repeat it in less detail. The same
+  agent's calls from an earlier run or an earlier node entry *are* shown, since
+  nothing in the current turn carries them.
+
+The block is re-read **before every model turn** (`ModelContext` keeps one slot
+for it next to the system prompt), so a model invocation always reflects tools
+that finished since the previous one — including during the same turn. Every
+participant receives it: leaf agents, intermediate orchestrators, and the root.
+
+This supplements the standard tool protocol; it does not replace it. An agent's
+own active call still reaches its model as `AIMessage(tool_calls)` →
+`ToolMessage(result)` → model, unchanged. The shared context solves the other
+problem: awareness across agents, across runs, and across the conversation.
+
+### Answering "which tools have run?"
+
+Reporting is a separate problem from reasoning, and it needed a separate
+mechanism. An orchestrator's children are bound to it as tools, so asked which
+tools had run it named the child agent it had delegated to — and kept doing so
+through four rounds of instruction and record wording, because from its own tool
+list that answer is true.
+
+Orchestrators are therefore given a read-only engine tool,
+`list_executed_tools`, which returns the conversation's executed tools from the
+repository:
+
+```text
+Tools executed in this conversation, oldest first:
+- user_management: add_new_user [succeeded]
+```
+
+The answer now comes from a tool result the model cannot contradict from its
+bindings, rather than from an instruction it can ignore. The two read paths
+degrade differently on purpose: the passive block falls back to empty context
+when the repository cannot be read, while the report says the record is
+unavailable — claiming "nothing has run" would invite an agent to repeat an
+action that already took effect. The tool performs no
+side effect, is not counted against child-agent call limits, and is not itself
+recorded as usage. It changes nothing about Human-in-the-Loop: orchestrator-level
+tools have never passed the approval gate — that gate belongs to the real tools
+an agent executes, which still all pass through it. A configured child named
+`list_executed_tools` wins, and the engine's tool is not bound.
+
+### Run trace
+
+`RunResult.used_tools` is a second projection of the same records — the
+caller-facing trace returned by the API and rendered by the widget, including
+tools called by nested agents, and scoped to the run. It reports real tool/MCP
+calls only; the route an orchestrator took is reported separately as `visited`.
 
 Rendering these records in `agentctl run` is ⏳ **planned** (not yet wired into
 the CLI output). The intended format:
@@ -203,8 +364,7 @@ arguments:
 * ask_question [mcp: deepwiki] failed: request timed out
 ```
 
-Every actual tool call is printed in call order. Repeated calls to the same
-tool are printed repeatedly rather than collapsed into a count.
+Every logical tool call is printed in call order.
 
 ---
 
@@ -236,7 +396,7 @@ For the MVP:
 - create remote MCP clients from `mcps.<id>.url` via `langchain-mcp-adapters` (✅ implemented);
 - discover MCP tool metadata during `build()` (✅ implemented);
 - hide local-vs-MCP origin by presenting both as LangChain tools, while tracking
-  the origin in `used_tools.provider` (✅ implemented);
+  the origin in the tool-usage records (✅ implemented);
 - bind discovered MCP tools into LangGraph/LangChain tool-calling (✅ implemented);
 - pass trusted request context through `ctx` into tool calls (⏳ planned —
   resolvers receive `ctx`, tools do not yet);
