@@ -23,6 +23,26 @@ export function reduceStreamEvent(entry: MessageEntry, event: StreamEvent): Mess
         route: event.route ?? entry.route,
         tools: event.used_tools ?? entry.tools,
       };
+    case "pending_approval":
+      if (!event.run_id || !event.approval_id || !event.agent_id || !event.tool_name) {
+        throw new Error("invalid pending approval event");
+      }
+      return {
+        ...entry,
+        typing: false,
+        route: event.route ?? entry.route,
+        tools: event.used_tools ?? entry.tools,
+        approval: {
+          run_id: event.run_id,
+          approval_id: event.approval_id,
+          agent_id: event.agent_id,
+          tool_name: event.tool_name,
+          description: event.description ?? `${event.agent_id} wants to use ${event.tool_name}.`,
+          provider: event.provider,
+          server_id: event.server_id,
+          arguments: event.arguments,
+        },
+      };
     case "error":
       throw new Error(event.error || "stream failed");
     default:

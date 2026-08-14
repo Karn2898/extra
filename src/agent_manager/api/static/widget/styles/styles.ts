@@ -138,6 +138,31 @@ export function styles(config: AgentChatConfig): string {
     .tool-badge.output-error { color: #991b1b; background: #fee2e2; }
     .tool-content { border-top: 1px solid #e4e4e7; padding: 8px 10px; }
     .tool-error { color: #991b1b; font-size: 12px; white-space: pre-wrap; }
+    .approval-card { border: 1px solid #e4e4e7; border-radius: 10px; background: #fafafa;
+      padding: 10px 11px; white-space: normal; box-shadow: 0 1px 2px rgba(0,0,0,.03); }
+    .approval-title { margin: 0; color: #3f3f46; font-size: 12.5px; font-weight: 600;
+      display: flex; align-items: center; gap: 7px; }
+    .approval-title::before { width: 6px; height: 6px; border-radius: 50%; background: #f59e0b;
+      content: ""; flex: 0 0 auto; }
+    .approval-tool { display: inline-block; margin: 6px 0 0; border: 1px solid #e4e4e7;
+      border-radius: 6px; background: #fff; color: #27272a; padding: 2px 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px; font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; }
+    .approval-description { margin: 7px 0 0; color: #71717a; font-size: 12.5px;
+      line-height: 1.45; }
+    .approval-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+      margin-top: 10px; }
+    .approval-button { min-height: 30px; border: 1px solid #d4d4d8; border-radius: 7px;
+      background: #fff; color: #52525b; cursor: pointer; font-family: inherit; font-size: 12px;
+      font-weight: 500; padding: 5px 9px; transition: background .12s, color .12s, opacity .12s; }
+    .approval-button:hover:not(:disabled) { background: #f4f4f5; }
+    .approval-button.primary { border-color: ${config.color}; background: ${config.color}; color: #fff; }
+    .approval-button.primary:hover:not(:disabled) { opacity: .88; }
+    .approval-button.danger { border-color: transparent; background: transparent; color: #71717a; }
+    .approval-button.danger:hover:not(:disabled) { background: #f4f4f5; color: #18181b; }
+    .approval-button:disabled { cursor: default; opacity: .55; }
+    .approval-error { margin: 8px 0 0; color: #b91c1c; font-size: 12px; }
+    .approval-status { display: block; margin-top: 8px; color: #71717a; font-size: 12px; }
     .msg-error { margin-top: 2px; border: 1px solid #fecaca; background: #fef2f2;
       color: #b91c1c; border-radius: 8px; padding: 10px 12px; font-size: 13.5px;
       line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2;
@@ -211,6 +236,7 @@ export function styles(config: AgentChatConfig): string {
       .launcher svg,
       .close,
       .send,
+      .approval-button,
       .panel {
         transition: none;
       }

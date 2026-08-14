@@ -52173,12 +52173,17 @@ var AgentChatClient = class {
       method: "POST",
       body: JSON.stringify({ message })
     });
-    const data = await response.json();
-    return {
-      answer: String(data.answer || ""),
-      visited: Array.isArray(data.visited) ? data.visited : void 0,
-      used_tools: Array.isArray(data.used_tools) ? data.used_tools : void 0
-    };
+    return parseRunResponse(await response.json());
+  }
+  async decideApproval(conversationId, runId, approvalId, decision) {
+    const response = await this.request(
+      `/conversations/${conversationId}/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approvalId)}/decision`,
+      {
+        method: "POST",
+        body: JSON.stringify({ decision })
+      }
+    );
+    return parseRunResponse(await response.json());
   }
   async getUsage(conversationId) {
     const response = await this.request(`/conversations/${conversationId}/usage`);
@@ -52221,6 +52226,16 @@ var AgentChatClient = class {
     }
   }
 };
+function parseRunResponse(data) {
+  return {
+    answer: String(data.answer || ""),
+    visited: Array.isArray(data.visited) ? data.visited : void 0,
+    used_tools: Array.isArray(data.used_tools) ? data.used_tools : void 0,
+    status: data.status === "pending_approval" ? "pending_approval" : "completed",
+    run_id: data.run_id == null ? null : String(data.run_id),
+    pending_approval: typeof data.pending_approval === "object" && data.pending_approval !== null ? data.pending_approval : null
+  };
+}
 function parseSseFrame(frame) {
   const dataLines = frame.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice("data:".length).trimStart());
   if (!dataLines.length) return null;
@@ -53157,6 +53172,26 @@ function reduceStreamEvent(entry, event) {
         route: event.route ?? entry.route,
         tools: event.used_tools ?? entry.tools
       };
+    case "pending_approval":
+      if (!event.run_id || !event.approval_id || !event.agent_id || !event.tool_name) {
+        throw new Error("invalid pending approval event");
+      }
+      return {
+        ...entry,
+        typing: false,
+        route: event.route ?? entry.route,
+        tools: event.used_tools ?? entry.tools,
+        approval: {
+          run_id: event.run_id,
+          approval_id: event.approval_id,
+          agent_id: event.agent_id,
+          tool_name: event.tool_name,
+          description: event.description ?? `${event.agent_id} wants to use ${event.tool_name}.`,
+          provider: event.provider,
+          server_id: event.server_id,
+          arguments: event.arguments
+        }
+      };
     case "error":
       throw new Error(event.error || "stream failed");
     default:
@@ -53223,6 +53258,10 @@ function useConversation(client, endpoint, onReplaced) {
     },
     [client, replace2]
   );
+  const decideApproval = (0, import_react9.useCallback)(
+    (conversationId, runId, approvalId, decision) => client.decideApproval(conversationId, runId, approvalId, decision),
+    [client]
+  );
   const loadHistory = (0, import_react9.useCallback)(
     async (conversationId) => {
       try {
@@ -53261,13 +53300,25 @@ function useConversation(client, endpoint, onReplaced) {
       ensureId,
       send,
       stream,
+      decideApproval,
       loadHistory,
       loadUsage,
       listThreads,
       switchTo,
       startNew
     }),
-    [peekId, ensureId, send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew]
+    [
+      peekId,
+      ensureId,
+      send,
+      stream,
+      decideApproval,
+      loadHistory,
+      loadUsage,
+      listThreads,
+      switchTo,
+      startNew
+    ]
   );
 }
 
@@ -53281,6 +53332,17 @@ var toEntry = (message) => ({
   id: newId(),
   role: message.role === "user" ? "user" : "ai",
   text: message.content
+});
+var applyRunResponse = (entry, response) => ({
+  ...entry,
+  text: response.answer,
+  typing: false,
+  error: false,
+  route: response.visited ?? entry.route,
+  tools: response.used_tools ?? entry.tools,
+  approval: response.pending_approval ?? void 0,
+  approvalSubmitting: false,
+  approvalError: void 0
 });
 function AgentChatApp({
   client,
@@ -53299,10 +53361,12 @@ function AgentChatApp({
   const [activeId, setActiveId] = (0, import_react10.useState)("");
   const entries = entriesById[activeId] ?? [];
   const usage = usageById[activeId] ?? null;
+  const awaitingApproval = entries.some((entry) => entry.approval !== void 0);
   const [threads, setThreads] = (0, import_react10.useState)([]);
   const [threadsOpen, setThreadsOpen] = (0, import_react10.useState)(false);
   const launcherRef = (0, import_react10.useRef)(null);
   const inputRef = (0, import_react10.useRef)(null);
+  const approvalRequestsRef = (0, import_react10.useRef)(/* @__PURE__ */ new Set());
   const onReplaced = (0, import_react10.useCallback)((staleId, freshId) => {
     setEntriesById(({ [staleId]: moved = [], ...rest }) => ({ ...rest, [freshId]: moved }));
     setActiveId((current) => current === staleId ? freshId : current);
@@ -53339,8 +53403,8 @@ function AgentChatApp({
     if (inline) void loadHistory();
   }, [inline, loadHistory]);
   (0, import_react10.useEffect)(() => {
-    if (open) inputRef.current?.focus({ preventScroll: true });
-  }, [open, loaded, sending]);
+    if (open && !awaitingApproval) inputRef.current?.focus({ preventScroll: true });
+  }, [open, loaded, sending, awaitingApproval]);
   const openChat = (0, import_react10.useCallback)(async () => {
     if (inline) return;
     setOpen(true);
@@ -53380,14 +53444,14 @@ function AgentChatApp({
     async (cid, text10, entryId) => {
       try {
         const answer = await conversation.send(cid, text10);
-        replaceEntry(cid, entryId, {
-          id: entryId,
-          role: "ai",
-          text: answer.answer,
-          route: answer.visited,
-          tools: answer.used_tools
-        });
-        onAnswer({ visited: answer.visited ?? [], used_tools: answer.used_tools ?? [] });
+        replaceEntry(
+          cid,
+          entryId,
+          applyRunResponse({ id: entryId, role: "ai", text: "" }, answer)
+        );
+        if (!answer.pending_approval) {
+          onAnswer({ visited: answer.visited ?? [], used_tools: answer.used_tools ?? [] });
+        }
       } catch (error) {
         const is4xx = error instanceof AgentChatHttpError && error.status >= 400 && error.status < 500;
         if (error instanceof AgentChatHttpError && error.errorType === "context_limit_exceeded") {
@@ -53399,6 +53463,49 @@ function AgentChatApp({
     },
     [conversation, onAnswer, replaceEntry]
   );
+  const decideApproval = (0, import_react10.useCallback)(
+    async (cid, entryId, approval, decision) => {
+      if (approvalRequestsRef.current.has(approval.approval_id)) return;
+      approvalRequestsRef.current.add(approval.approval_id);
+      putEntries(
+        cid,
+        (prev) => prev.map(
+          (entry) => entry.id === entryId ? { ...entry, approvalSubmitting: true, approvalError: void 0 } : entry
+        )
+      );
+      try {
+        const result = await conversation.decideApproval(
+          cid,
+          approval.run_id,
+          approval.approval_id,
+          decision
+        );
+        putEntries(
+          cid,
+          (prev) => prev.map((entry) => entry.id === entryId ? applyRunResponse(entry, result) : entry)
+        );
+        if (!result.pending_approval) {
+          onAnswer({ visited: result.visited ?? [], used_tools: result.used_tools ?? [] });
+        }
+      } catch (error) {
+        const is4xx = error instanceof AgentChatHttpError && error.status >= 400 && error.status < 500;
+        putEntries(
+          cid,
+          (prev) => prev.map(
+            (entry) => entry.id === entryId ? {
+              ...entry,
+              approvalSubmitting: false,
+              approvalError: is4xx ? error.message : GENERIC_ERROR
+            } : entry
+          )
+        );
+      } finally {
+        approvalRequestsRef.current.delete(approval.approval_id);
+        void refreshUsage(cid);
+      }
+    },
+    [conversation, onAnswer, putEntries, refreshUsage]
+  );
   const submit = (0, import_react10.useCallback)(
     async (text10) => {
       const cid = await conversation.ensureId();
@@ -53406,21 +53513,33 @@ function AgentChatApp({
       const pending = { id: newId(), role: "ai", text: "", typing: true };
       putEntries(cid, (prev) => [...prev, { id: newId(), role: "user", text: text10 }, pending]);
       setSending(true);
+      let entry = pending;
+      let receivedEvent = false;
+      let completed = false;
       try {
-        let entry = pending;
         for await (const event of conversation.stream(cid, text10)) {
+          receivedEvent = true;
+          completed || (completed = event.type === "final");
           entry = reduceStreamEvent(entry, event);
           replaceEntry(cid, pending.id, entry);
         }
         replaceEntry(cid, pending.id, { ...entry, typing: false });
-        onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
+        if (!entry.approval) {
+          onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
+        }
       } catch (error) {
         const is4xx = error instanceof AgentChatHttpError && error.status >= 400 && error.status < 500;
         if (error instanceof AgentChatHttpError && error.errorType === "context_limit_exceeded") {
           setBudgetExceeded(true);
         }
-        if (is4xx) {
-          replaceEntry(cid, pending.id, { id: pending.id, role: "ai", text: error.message, error: true });
+        if (completed) {
+          replaceEntry(cid, pending.id, { ...entry, typing: false });
+          onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
+        } else if (entry.approval) {
+          replaceEntry(cid, pending.id, { ...entry, typing: false });
+        } else if (is4xx || receivedEvent) {
+          const message = is4xx ? error.message : GENERIC_ERROR;
+          replaceEntry(cid, pending.id, { id: pending.id, role: "ai", text: message, error: true });
         } else {
           await sendWithoutStreaming(cid, text10, pending.id);
         }
@@ -53494,17 +53613,24 @@ function AgentChatApp({
                 ),
                 /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Conversation, { children: /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(ConversationContent, { children: [
                   entries.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Welcome, { title: config.greeting || DEFAULT_GREETING }) : null,
-                  entries.map((entry) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(ChatMessage, { entry }, entry.id))
+                  entries.map((entry) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+                    ChatMessage,
+                    {
+                      entry,
+                      onApproval: (approval, decision) => void decideApproval(activeId, entry.id, approval, decision)
+                    },
+                    entry.id
+                  ))
                 ] }) }),
                 /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(PromptInput, { onSubmit: (message) => void submit(message.text), children: [
                   /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                     PromptInputTextarea,
                     {
                       "aria-label": "Message",
-                      disabled: sending || budgetExceeded,
+                      disabled: sending || budgetExceeded || awaitingApproval,
                       inputRef,
                       onSubmit: () => inputRef.current?.form?.requestSubmit(),
-                      placeholder: budgetExceeded ? "Context limit reached." : "Message..."
+                      placeholder: budgetExceeded ? "Context limit reached." : awaitingApproval ? "Respond to the approval request above." : "Message..."
                     }
                   ),
                   /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(PromptInputFooter, { children: [
@@ -53512,7 +53638,7 @@ function AgentChatApp({
                       usage ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(BudgetMeter, { usage }) : null,
                       /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "prompt-hint", children: "Enter to send \xB7 Shift+Enter for a new line" })
                     ] }),
-                    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(PromptInputSubmit, { disabled: sending || budgetExceeded })
+                    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(PromptInputSubmit, { disabled: sending || budgetExceeded || awaitingApproval })
                   ] })
                 ] }),
                 /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { className: "powered", children: "Powered by Extra" })
@@ -53553,7 +53679,10 @@ function Launcher({
     }
   );
 }
-function ChatMessage({ entry }) {
+function ChatMessage({
+  entry,
+  onApproval
+}) {
   const from = entry.role === "user" ? "user" : "assistant";
   if (entry.error) {
     return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Message, { from, children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { className: "msg-error", role: "alert", children: entry.text }) });
@@ -53565,9 +53694,64 @@ function ChatMessage({ entry }) {
   return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(Message, { from: "assistant", typing: thinking, children: [
     /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(AgentActivity, { route: entry.route, tools: entry.tools }),
     thinking ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(ThinkingDots, {}) : /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(import_jsx_runtime4.Fragment, { children: [
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageContent, { children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageResponse, { children: entry.text }) }),
+      entry.approval ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+        ApprovalRequest,
+        {
+          approval: entry.approval,
+          error: entry.approvalError,
+          submitting: Boolean(entry.approvalSubmitting),
+          onDecision: (decision) => onApproval(entry.approval, decision)
+        }
+      ) : null,
+      entry.text.trim() ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageContent, { children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageResponse, { children: entry.text }) }) : null,
       entry.text.trim() ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageActions, { text: entry.text }) : null
     ] })
+  ] });
+}
+function ApprovalRequest({
+  approval,
+  submitting,
+  error,
+  onDecision
+}) {
+  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("section", { className: "approval-card", "aria-busy": submitting, "aria-label": "Tool approval request", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { className: "approval-title", children: "Approval required" }),
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { className: "approval-tool", children: approval.tool_name }),
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { className: "approval-description", children: approval.description }),
+    error ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { className: "approval-error", role: "alert", children: error }) : null,
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "approval-actions", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+        "button",
+        {
+          className: "approval-button primary",
+          disabled: submitting,
+          onClick: () => onDecision("allow_once"),
+          type: "button",
+          children: "Approve"
+        }
+      ),
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+        "button",
+        {
+          className: "approval-button danger",
+          disabled: submitting,
+          onClick: () => onDecision("deny"),
+          type: "button",
+          children: "Deny"
+        }
+      ),
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+        "button",
+        {
+          className: "approval-button",
+          disabled: submitting,
+          onClick: () => onDecision("allow_for_session"),
+          type: "button",
+          children: "Approve for this session"
+        }
+      )
+    ] }),
+    submitting ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "approval-status", children: "Applying decision\u2026" }) : null
   ] });
 }
 function ThinkingDots() {
@@ -53861,6 +54045,31 @@ function styles(config) {
     .tool-badge.output-error { color: #991b1b; background: #fee2e2; }
     .tool-content { border-top: 1px solid #e4e4e7; padding: 8px 10px; }
     .tool-error { color: #991b1b; font-size: 12px; white-space: pre-wrap; }
+    .approval-card { border: 1px solid #e4e4e7; border-radius: 10px; background: #fafafa;
+      padding: 10px 11px; white-space: normal; box-shadow: 0 1px 2px rgba(0,0,0,.03); }
+    .approval-title { margin: 0; color: #3f3f46; font-size: 12.5px; font-weight: 600;
+      display: flex; align-items: center; gap: 7px; }
+    .approval-title::before { width: 6px; height: 6px; border-radius: 50%; background: #f59e0b;
+      content: ""; flex: 0 0 auto; }
+    .approval-tool { display: inline-block; margin: 6px 0 0; border: 1px solid #e4e4e7;
+      border-radius: 6px; background: #fff; color: #27272a; padding: 2px 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px; font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; }
+    .approval-description { margin: 7px 0 0; color: #71717a; font-size: 12.5px;
+      line-height: 1.45; }
+    .approval-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+      margin-top: 10px; }
+    .approval-button { min-height: 30px; border: 1px solid #d4d4d8; border-radius: 7px;
+      background: #fff; color: #52525b; cursor: pointer; font-family: inherit; font-size: 12px;
+      font-weight: 500; padding: 5px 9px; transition: background .12s, color .12s, opacity .12s; }
+    .approval-button:hover:not(:disabled) { background: #f4f4f5; }
+    .approval-button.primary { border-color: ${config.color}; background: ${config.color}; color: #fff; }
+    .approval-button.primary:hover:not(:disabled) { opacity: .88; }
+    .approval-button.danger { border-color: transparent; background: transparent; color: #71717a; }
+    .approval-button.danger:hover:not(:disabled) { background: #f4f4f5; color: #18181b; }
+    .approval-button:disabled { cursor: default; opacity: .55; }
+    .approval-error { margin: 8px 0 0; color: #b91c1c; font-size: 12px; }
+    .approval-status { display: block; margin-top: 8px; color: #71717a; font-size: 12px; }
     .msg-error { margin-top: 2px; border: 1px solid #fecaca; background: #fef2f2;
       color: #b91c1c; border-radius: 8px; padding: 10px 12px; font-size: 13.5px;
       line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2;
@@ -53934,6 +54143,7 @@ function styles(config) {
       .launcher svg,
       .close,
       .send,
+      .approval-button,
       .panel {
         transition: none;
       }

@@ -127,6 +127,98 @@ async function mockConversationApi(
   return calls;
 }
 
+async function mockApprovalApi(page: Page, options: { failDecision?: boolean } = {}) {
+  const decisions: string[] = [];
+  let streamCount = 0;
+  let sessionApproved = false;
+
+  await page.route("**/conversations", async (route) => {
+    const body =
+      route.request().method() === "GET"
+        ? []
+        : { conversation_id: "conv-approval", session_id: "conv-approval" };
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  });
+
+  await page.route("**/conversations/*/messages/stream", async (route: Route) => {
+    streamCount += 1;
+    if (sessionApproved) {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: [
+          `event: final\ndata: ${JSON.stringify({ type: "final", content: "Session approval reused", route: ["writer"], used_tools: [] })}`,
+          "event: done\ndata: [DONE]",
+          "",
+        ].join("\n\n"),
+      });
+      return;
+    }
+    const runId = `run-${streamCount}`;
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: [
+        `event: pending_approval\ndata: ${JSON.stringify({
+          type: "pending_approval",
+          route: ["writer"],
+          run_id: runId,
+          approval_id: `approval-${streamCount}`,
+          agent_id: "writer",
+          tool_name: "send_email",
+          description: "Writer wants to send an email. It has not been executed yet.",
+          provider: "local",
+          used_tools: [],
+        })}`,
+        "event: done\ndata: [DONE]",
+        "",
+      ].join("\n\n"),
+    });
+  });
+
+  await page.route(/\/conversations\/[^/]+\/runs\/[^/]+\/approvals\/[^/]+\/decision$/, async (route) => {
+    const body = JSON.parse(route.request().postData() || "{}") as { decision?: string };
+    decisions.push(body.decision || "");
+    sessionApproved ||= body.decision === "allow_for_session";
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    if (options.failDecision) {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "private approval failure" }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        answer:
+          body.decision === "deny" ? "The tool request was denied." : "The tool completed.",
+        visited: ["writer"],
+        used_tools: [],
+        status: "completed",
+        run_id: null,
+        pending_approval: null,
+      }),
+    });
+  });
+
+  await page.route("**/conversations/*/messages", async (route: Route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+
+  await page.route("**/conversations/*/usage", async (route: Route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ used_tokens: 0, max_tokens: null, percent: 0, severity: "normal" }),
+    });
+  });
+
+  return { decisions, getStreamCount: () => streamCount };
+}
+
 async function mockConversationApiWithStaleConversation(page: Page, staleStatus = 404) {
   await pinVisitorPass(page);
   const calls: string[] = [];
@@ -462,6 +554,81 @@ test("tool activity shows the tool name without its internal provider", async ({
   await expect.poll(() => shadowText(page, ".messages")).toContain("Echo: find the docs");
   await expect.poll(() => shadowText(page, ".tool-title")).toBe("search_docs");
   await expect.poll(() => shadowText(page, ".tool-title")).not.toContain("mcp");
+});
+
+for (const action of [
+  { label: "Approve", decision: "allow_once", answer: "The tool completed." },
+  { label: "Deny", decision: "deny", answer: "The tool request was denied." },
+  {
+    label: "Approve for this session",
+    decision: "allow_for_session",
+    answer: "The tool completed.",
+  },
+]) {
+  test(`${action.label} resolves a pending tool request exactly once`, async ({ page }) => {
+    const approval = await mockApprovalApi(page);
+    await page.goto("/widget-demo.html");
+    await shadowClick(page, ".launcher");
+    await shadowFill(page, ".input", "send the email");
+    await shadowClick(page, ".send");
+
+    await expect.poll(() => shadowText(page, ".approval-card")).toContain("Approval required");
+    await expect.poll(() => shadowText(page, ".approval-actions")).toContain("Approve");
+    await expect.poll(() => shadowText(page, ".approval-actions")).toContain("Deny");
+    await expect
+      .poll(() => shadowText(page, ".approval-actions"))
+      .toContain("Approve for this session");
+    await expect.poll(() => shadowExists(page, ".input:disabled")).toBe(true);
+
+    await shadowClickText(page, ".approval-button", action.label);
+    await shadowClickText(page, ".approval-button", action.label);
+
+    await expect.poll(() => approval.decisions).toEqual([action.decision]);
+    await expect.poll(() => shadowExists(page, ".approval-card")).toBe(false);
+    await expect.poll(() => shadowText(page, ".messages")).toContain(action.answer);
+    await expect.poll(() => shadowExists(page, ".input:disabled")).toBe(false);
+    await expect.poll(() => shadowExists(page, ".approval-status")).toBe(false);
+  });
+}
+
+test("session approval prevents another prompt for the same session tool", async ({ page }) => {
+  const approval = await mockApprovalApi(page);
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "first email");
+  await shadowClick(page, ".send");
+  await expect.poll(() => shadowExists(page, ".approval-card")).toBe(true);
+
+  await shadowClickText(page, ".approval-button", "Approve for this session");
+  await expect.poll(() => shadowExists(page, ".approval-card")).toBe(false);
+
+  await shadowFill(page, ".input", "second email");
+  await shadowClick(page, ".send");
+
+  await expect.poll(() => shadowText(page, ".messages")).toContain("Session approval reused");
+  await expect.poll(() => approval.getStreamCount()).toBe(2);
+  expect(approval.decisions).toEqual(["allow_for_session"]);
+  await expect.poll(() => shadowExists(page, ".approval-card")).toBe(false);
+});
+
+test("a failed approval decision restores the controls without leaking details", async ({ page }) => {
+  const approval = await mockApprovalApi(page, { failDecision: true });
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "send the email");
+  await shadowClick(page, ".send");
+  await expect.poll(() => shadowExists(page, ".approval-card")).toBe(true);
+
+  await shadowClickText(page, ".approval-button", "Approve");
+
+  await expect.poll(() => approval.decisions).toEqual(["allow_once"]);
+  await expect.poll(() => shadowExists(page, ".approval-card")).toBe(true);
+  await expect.poll(() => shadowText(page, ".approval-error")).toBe(
+    "Something went wrong. Please try again.",
+  );
+  await expect.poll(() => shadowExists(page, ".approval-status")).toBe(false);
+  await expect.poll(() => shadowExists(page, ".approval-button:disabled")).toBe(false);
+  expect(await shadowText(page, ".approval-card")).not.toContain("private approval failure");
 });
 
 test("Shift+Enter inserts a newline and Enter sends", async ({ page }) => {
