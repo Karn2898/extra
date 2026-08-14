@@ -365,14 +365,46 @@ The `/decision` endpoint accepts a free-text `decision` (`allow`,
 single boundary; an unrecognized value returns 400. `/approve` and `/reject` are
 convenience routes for the two most common typed decisions. To grant
 `ALLOW_FOR_SESSION`, use `/decision` with `"allow for this session"`.
+If `/invoke` or `/stream` supplied `X-Session-ID`, every later decision request
+for that run must supply the same header. Omitting or changing it fails closed
+with 403 before the approval is claimed.
+
+The conversation API (`agent_manager/api/routes.py`) exposes the same engine
+capability inside the conversation ownership boundary:
+
+```text
+POST /conversations/{conversation_id}/runs/{run_id}/approvals/{approval_id}/decision
+```
+
+Its body carries one typed value: `allow_once`, `deny`, or
+`allow_for_session`. The route authorizes the conversation owner before resume,
+and the engine checks the stored approval session reference before atomically
+claiming it. A completed resume is persisted as the assistant turn; if resume
+reaches another approval, that new pending request is returned instead.
+Assistant persistence uses a deterministic per-run message id. If execution
+completed but the response or first database write failed, retrying the same
+decision recovers the result from the completed graph checkpoint and does not
+duplicate the assistant turn or tool execution.
+
+The bundled widget renders these decisions as **Approve**, **Deny**, and
+**Approve for this session**. The last option reuses the existing session
+permission key, so later calls to the same provider-qualified tool by the same
+agent in the same conversation do not prompt again.
 
 A pending-approval payload contains `run_id`, `approval_id`, `agent_id`,
 `tool_name`, a human-readable `description` (stating the tool has **not** run
-yet), `provider`, and **masked** `arguments`. Approval endpoints validate that the
-run and approval exist, the approval belongs to the run, the caller is authorized,
-the approval is still pending, and the run is resumable. Errors map to stable
-status codes (404 / 403 / 409 / 400) without leaking internals. Secrets, tokens,
-and unmasked arguments are never persisted or returned.
+yet), `provider`, optional `server_id`, and **masked** `arguments`. The streaming
+and non-streaming forms expose the same safe identity fields. Approval endpoints
+validate that the run and approval exist, the approval belongs to the run, the
+caller is authorized, the approval is still pending, and the run is resumable.
+Errors map to stable status codes (404 / 403 / 409 / 400) without leaking
+internals. Secrets, tokens, and unmasked arguments are never persisted or
+returned.
+
+Token usage is accumulated on the run across every execution leg: the initial
+leg that reaches an interrupt and each later resume. A completed conversation
+turn therefore persists the full reported usage and remains subject to the same
+conversation-budget accounting as a run that never paused.
 
 ## 9. Security notes
 
