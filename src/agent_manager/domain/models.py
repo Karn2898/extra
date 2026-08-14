@@ -33,6 +33,9 @@ class User:
     external_user_id: str | None = None
     username: str | None = None
     display_name: str | None = None
+    # Set when a visitor's conversations were handed to an account, so the same
+    # pass can never be linked twice.
+    linked_to_user_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     created_at: datetime | None = None
     updated_at: datetime | None = None

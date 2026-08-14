@@ -31,6 +31,7 @@ from agent_engine.parsers.yaml.parser import YAMLParser
 from agent_engine.runtime.hooks import RunContext
 from agent_engine.runtime.tool_models import ToolUsageRecord
 from agent_manager.application import ConversationService, PreparedConversationTurn
+from agent_manager.domain import Principal
 from agent_manager.infrastructure.persistence.memory_repository import MemoryRepository
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
@@ -38,6 +39,7 @@ CONFIG_PATH = EXAMPLE_DIR / "local_mcp_agents.yaml"
 SERVER_ID = "local_knowledge_mcp"
 SYSTEM_NAMESPACE = "Enterprise Knowledge Assistant Local MCP Auto Mode"
 USER_ID = "local-demo-user"
+CALLER = Principal.external(USER_ID)
 DEFAULT_MCP_URL = "http://127.0.0.1:8765/mcp"
 EXPECTED_TOOLS = {
     "search_internal_documents",
@@ -188,7 +190,7 @@ class ApprovalDemo:
             raise RuntimeError(f"Local MCP did not expose required tools: {', '.join(missing)}")
 
     async def invoke(self, user_message: str) -> RunResult:
-        messages_before = await self._conversations.history(self.session_id, caller_id=USER_ID)
+        messages_before = await self._conversations.history(self.session_id, CALLER)
         print(
             f"[SESSION HISTORY] session_id={self.session_id} "
             f"messages_before_run={len(messages_before)}"
@@ -196,11 +198,7 @@ class ApprovalDemo:
         print(
             f"[USER MESSAGE] session_id={self.session_id} text={_safe_user_message(user_message)}"
         )
-        turn = await self._conversations.prepare_turn(
-            self.session_id,
-            user_message,
-            caller_id=USER_ID,
-        )
+        turn = await self._conversations.prepare_turn(self.session_id, user_message, CALLER)
         print(f"[SESSION MESSAGE APPENDED] session_id={self.session_id} role=user")
         print(f"[MODEL CONTEXT] session_id={self.session_id} message_count={len(turn.history) + 1}")
         self._log_model_invocation(turn.run_id, phase="started")
@@ -210,7 +208,7 @@ class ApprovalDemo:
             context=RunContext(
                 run_id=turn.run_id,
                 conversation_id=self.session_id,
-                user_id=USER_ID,
+                user_id=CALLER.user_id,
             ),
         )
 
@@ -235,7 +233,7 @@ class ApprovalDemo:
                 turn.run_id,
                 pending.approval_id,
                 decision,
-                caller_user_id=USER_ID,
+                caller_user_id=CALLER.user_id,
             )
 
         await self._complete_turn(turn, result)
@@ -259,12 +257,11 @@ class ApprovalDemo:
             SessionApprovalScope(
                 session_id=previous,
                 system_namespace=SYSTEM_NAMESPACE,
-                user_id=USER_ID,
+                user_id=CALLER.user_id,
             )
         )
         self.session_id = await self._conversations.create(
-            user_id=USER_ID,
-            session_id=session_id or _new_session_id(),
+            CALLER, session_id=session_id or _new_session_id()
         )
         print(f"[SESSION CLOSED] session_id={previous} approvals_cleared=true")
         print(f"[SESSION STARTED] session_id={self.session_id}")
@@ -419,7 +416,7 @@ async def async_main(*, mcp_url: str, env_path: str | None) -> None:
             system_name=SYSTEM_NAMESPACE,
             config_path=str(CONFIG_PATH),
         )
-        session_id = await conversations.create(user_id=USER_ID, session_id=_new_session_id())
+        session_id = await conversations.create(CALLER, session_id=_new_session_id())
         demo = ApprovalDemo(
             engine,
             repository,

@@ -25,6 +25,7 @@ class ConversationUserRow(SQLModel, table=True):
     external_user_id: str | None = Field(default=None, index=True, max_length=256)
     username: str | None = Field(default=None, index=True, max_length=256)
     display_name: str | None = Field(default=None, max_length=256)
+    linked_to_user_id: str | None = Field(default=None, max_length=64)
     metadata_json: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
     created_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     updated_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))

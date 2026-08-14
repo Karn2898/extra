@@ -88,27 +88,57 @@ Manages multi-turn conversations with history persisted in SQLite (or Postgres v
 
 ### Caller identity
 
-Every conversation route identifies its caller by the `X-Agent-Chat-User`
-header, and a conversation can only be listed, read, or written by the caller
-that owns it — the conversation id alone grants nothing. A missing or empty
-header means anonymous; ids longer than 64 characters are rejected with `400`.
+Every conversation route requires a **verified** caller, and a conversation can
+only be listed, read, or written by the caller that owns it — the conversation
+id alone grants nothing. A request with no usable token is `401`; a request from
+another user is `403`.
 
-<Warning>
-Out of the box the header is unverified: the widget generates a random id and
-stores it in `localStorage`, which scopes conversations but proves nothing. It
-is the single source of caller identity, so a deployment that needs a real
-boundary overrides one dependency and derives the principal from a verified
-credential instead:
+Identity arrives as a signed JWT, in either of two places:
 
-```python
-from agent_manager.api.deps import get_caller_id
+- `Authorization: Bearer <token>` — a token the host app minted, or a visitor
+  pass the manager issued.
+- The host's own session cookie, named by `AGENT_AUTH_COOKIE`, when the manager
+  is served from the host's origin.
 
-app.dependency_overrides[get_caller_id] = my_authenticated_principal
+See [Identity](/docs/identity) for how a host product is wired up, including the
+zero-code path and products with no login at all.
+
+<Note>
+`X-Agent-Chat-User` was removed. It was an unverified header — anyone could
+send another user's id and read their conversations.
+</Note>
+
+### `POST /auth/anonymous`
+
+Issue a visitor pass: a signed token identifying one browser, for products with
+no login. The only route that does not require a caller.
+
+```bash
+curl -X POST http://localhost:8100/auth/anonymous
 ```
 
-Until that override is in place, treat these routes as an anonymous API and do
-not put private data behind them.
-</Warning>
+```json
+{ "token": "eyJhbGciOi…", "expires_at": "2026-09-08T10:00:00Z" }
+```
+
+### `POST /auth/link`
+
+Adopt the conversations a visitor started before signing in. Requires a verified
+caller; the body carries the visitor pass being handed over.
+
+```bash
+curl -X POST http://localhost:8100/auth/link \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"anonymous_token": "eyJhbGciOi…"}'
+```
+
+```json
+{ "conversations_moved": 2 }
+```
+
+Linking happens once — a replayed pass returns `0`. Errors: `401` the pass is not
+one of ours, `403` the caller is itself a visitor.
 
 ### `POST /conversations`
 
@@ -124,7 +154,7 @@ fixed at creation.
 ```bash
 curl -X POST http://localhost:8100/conversations \
   -H "Content-Type: application/json" \
-  -H "X-Agent-Chat-User: user-123" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{}'
 ```
 
@@ -143,7 +173,7 @@ Send a message. Prior history is assembled automatically.
 ```bash
 curl -X POST http://localhost:8100/conversations/0d5a…/messages \
   -H "Content-Type: application/json" \
-  -H "X-Agent-Chat-User: user-123" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{ "message": "Where is my order?" }'
 ```
 
@@ -170,7 +200,7 @@ an `event:` name matching its `type`; `null` fields are omitted.
 ```bash
 curl -X POST http://localhost:8100/conversations/0d5a…/messages/stream \
   -H "Content-Type: application/json" \
-  -H "X-Agent-Chat-User: user-123" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{ "message": "Where is my order?" }'
 ```
 
@@ -204,7 +234,7 @@ Retrieve message history for a conversation.
 
 ```bash
 curl http://localhost:8100/conversations/0d5a…/messages \
-  -H "X-Agent-Chat-User: user-123"
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 Response:
@@ -225,11 +255,9 @@ context into the run:
 
 - `X-Session-ID` (Engine API) becomes the run's conversation id, visible to
   tracing.
-- `X-Agent-Chat-User` (Conversation API) identifies the caller; the owner
-  recorded on the conversation becomes `run_context.user_id` and is persisted
-  with each message.
+- The verified caller (Conversation API) becomes `run_context.user_id` and is
+  persisted with each message.
 
-Populating `run_context.auth_context` (scopes, roles, inbound access token)
-from request headers is part of the security/context gate that is not wired
-up yet — see the roadmap. Hooks such as `on_run_start` can inject a modified
-`RunContext` in the meantime.
+Populating `run_context.auth_context` (roles, organization, custom claims) from
+the verified token is the next step — see the roadmap. Hooks such as
+`on_run_start` can inject a modified `RunContext` in the meantime.

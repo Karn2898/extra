@@ -13,11 +13,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
 from agent_engine.runtime.streaming import RunStreamEvent
-from agent_manager.api.deps import get_caller_id, get_service
+from agent_manager.api.deps import CallerIdentity, get_caller_identity, get_principal, get_service
 from agent_manager.api.schemas import (
+    AnonymousPassResponse,
     ConversationSummary,
     CreateConversationRequest,
     CreateConversationResponse,
+    LinkAnonymousRequest,
+    LinkAnonymousResponse,
     MessageOut,
     SendMessageRequest,
     SendMessageResponse,
@@ -28,16 +31,20 @@ from agent_manager.api.schemas import (
 from agent_manager.application import (
     ConversationAccessDenied,
     ConversationAlreadyExists,
+    ConversationLinkRefused,
     ConversationNotFound,
     ConversationService,
     ConversationTokenBudgetExceeded,
 )
+from agent_manager.domain import Principal
+from agent_manager.infrastructure.auth import TokenError
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 Service = Annotated[ConversationService, Depends(get_service)]
-CallerId = Annotated[str | None, Depends(get_caller_id)]
+Caller = Annotated[Principal, Depends(get_principal)]
+Identity = Annotated[CallerIdentity, Depends(get_caller_identity)]
 
 _BUDGET_EXCEEDED_DETAIL = {
     "error_type": "context_limit_exceeded",
@@ -50,6 +57,7 @@ _HTTP_ERRORS: dict[type[Exception], tuple[int, Any]] = {
     ConversationAccessDenied: (403, "conversation owned by another user"),
     ConversationAlreadyExists: (409, "conversation id already taken"),
     ConversationTokenBudgetExceeded: (429, _BUDGET_EXCEEDED_DETAIL),
+    ConversationLinkRefused: (403, "a visitor cannot adopt another visitor"),
 }
 
 
@@ -62,19 +70,47 @@ def _as_http_error() -> Iterator[None]:
         raise HTTPException(status_code=status, detail=detail) from None
 
 
+@router.post("/auth/anonymous", response_model=AnonymousPassResponse)
+async def issue_anonymous_pass(identity: Identity) -> AnonymousPassResponse:
+    """The only route without a caller. The pass is signed, so one visitor
+    cannot reach another's conversations by guessing an id."""
+    issued = identity.resolver.anonymous.issue()
+    return AnonymousPassResponse(token=issued.token, expires_at=issued.expires_at)
+
+
+@router.post("/auth/link", response_model=LinkAnonymousResponse)
+async def link_anonymous_conversations(
+    body: LinkAnonymousRequest, service: Service, caller: Caller, identity: Identity
+) -> LinkAnonymousResponse:
+    """Adopt the conversations a visitor started before signing in.
+
+    Both tokens are verified: a visitor pass proves which conversations, the
+    caller's own token proves who is adopting them. Linking happens once, so a
+    replayed pass moves nothing.
+    """
+    try:
+        visitor = identity.resolver.anonymous.resolve(body.anonymous_token)
+    except TokenError as exc:
+        logger.warning("visitor pass verification failed: %s", exc)
+        raise HTTPException(status_code=401, detail=str(exc)) from None
+    with _as_http_error():
+        moved = await service.link_anonymous(visitor, caller)
+    return LinkAnonymousResponse(conversations_moved=moved)
+
+
 @router.post("/conversations", response_model=CreateConversationResponse)
 async def create_conversation(
-    service: Service, caller_id: CallerId, body: CreateConversationRequest | None = None
+    service: Service, caller: Caller, body: CreateConversationRequest | None = None
 ) -> CreateConversationResponse:
     body = body or CreateConversationRequest()
     with _as_http_error():
-        session_id = await service.create(user_id=caller_id, session_id=body.session_id)
+        session_id = await service.create(caller, session_id=body.session_id)
     return CreateConversationResponse(conversation_id=session_id, session_id=session_id)
 
 
 @router.get("/conversations", response_model=list[ConversationSummary])
-async def list_conversations(service: Service, caller_id: CallerId) -> list[ConversationSummary]:
-    sessions = await service.list_conversations(caller_id)
+async def list_conversations(service: Service, caller: Caller) -> list[ConversationSummary]:
+    sessions = await service.list_conversations(caller)
 
     return [
         ConversationSummary(
@@ -87,20 +123,16 @@ async def list_conversations(service: Service, caller_id: CallerId) -> list[Conv
 
 
 @router.get("/conversations/{conversation_id}/messages", response_model=list[MessageOut])
-async def list_messages(
-    conversation_id: str, service: Service, caller_id: CallerId
-) -> list[MessageOut]:
+async def list_messages(conversation_id: str, service: Service, caller: Caller) -> list[MessageOut]:
     with _as_http_error():
-        msgs = await service.history(conversation_id, caller_id=caller_id)
+        msgs = await service.history(conversation_id, caller)
     return [MessageOut(role=m.role, content=m.content, created_at=m.created_at) for m in msgs]
 
 
 @router.get("/conversations/{conversation_id}/usage", response_model=TokenBudgetResponse)
-async def get_usage(
-    conversation_id: str, service: Service, caller_id: CallerId
-) -> TokenBudgetResponse:
+async def get_usage(conversation_id: str, service: Service, caller: Caller) -> TokenBudgetResponse:
     with _as_http_error():
-        usage = await service.usage(conversation_id, caller_id=caller_id)
+        usage = await service.usage(conversation_id, caller)
     return TokenBudgetResponse(
         used_tokens=usage.used_tokens,
         max_tokens=usage.max_tokens,
@@ -118,11 +150,11 @@ def _client_tool_record(t: Any) -> ToolRecord:
 
 @router.post("/conversations/{conversation_id}/messages", response_model=SendMessageResponse)
 async def send_message(
-    conversation_id: str, body: SendMessageRequest, service: Service, caller_id: CallerId
+    conversation_id: str, body: SendMessageRequest, service: Service, caller: Caller
 ) -> SendMessageResponse:
     try:
         with _as_http_error():
-            result = await service.send(conversation_id, body.message, caller_id=caller_id)
+            result = await service.send(conversation_id, body.message, caller)
     except HTTPException:
         raise
 
@@ -155,9 +187,9 @@ def _to_stream_event(event: RunStreamEvent) -> StreamEventOut:
 
 @router.post("/conversations/{conversation_id}/messages/stream")
 async def stream_message(
-    conversation_id: str, body: SendMessageRequest, service: Service, caller_id: CallerId
+    conversation_id: str, body: SendMessageRequest, service: Service, caller: Caller
 ) -> StreamingResponse:
-    stream = service.stream(conversation_id, body.message, caller_id=caller_id)
+    stream = service.stream(conversation_id, body.message, caller)
 
     try:
         with _as_http_error():

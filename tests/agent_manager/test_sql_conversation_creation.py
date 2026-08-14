@@ -15,18 +15,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 import agent_manager.infrastructure.persistence.tables  # noqa: F401  (register tables)
-from agent_manager.api.routes import router
 from agent_manager.application import ConversationService
 from agent_manager.infrastructure.persistence.database import create_db_engine, session_factory
 from agent_manager.infrastructure.persistence.sql_repository import SqlRepository
-from tests.agent_manager.conftest import RecordingEngine
+from tests.agent_manager.conftest import RecordingEngine, bearer, build_test_app
 
 
 @pytest.fixture
@@ -87,16 +85,14 @@ async def test_the_api_answers_409_to_the_losing_caller(db_url: str) -> None:
     single app serialises the requests and never reaches the race."""
 
     def client(db_url: str) -> AsyncClient:
-        app = FastAPI()
-        app.state.service = ConversationService(RecordingEngine(), _repository(db_url))
-        app.include_router(router)
+        app = build_test_app(ConversationService(RecordingEngine(), _repository(db_url)))
         return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
     def create(client: AsyncClient, user: str) -> Coroutine[Any, Any, Response]:
         return client.post(
             "/conversations",
             json={"session_id": "shared-id"},
-            headers={"X-Agent-Chat-User": user},
+            headers=bearer(user),
         )
 
     async with client(db_url) as alice, client(db_url) as bob:
@@ -110,21 +106,21 @@ async def test_a_rejected_create_leaves_the_other_system_s_session_alone(db_url:
     naming a live id must not rebind it to the caller's system."""
 
     def client(system: str) -> AsyncClient:
-        app = FastAPI()
-        app.state.service = ConversationService(
-            RecordingEngine(),
-            _repository(db_url),
-            system_name=system,
-            config_path=f"/{system}/agents.yml",
+        app = build_test_app(
+            ConversationService(
+                RecordingEngine(),
+                _repository(db_url),
+                system_name=system,
+                config_path=f"/{system}/agents.yml",
+            )
         )
-        app.include_router(router)
         return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
     async with client("system-a") as alice, client("system-b") as bob:
         created = await alice.post(
             "/conversations",
             json={"session_id": "shared-id"},
-            headers={"X-Agent-Chat-User": "alice"},
+            headers=bearer("alice"),
         )
         assert created.status_code == 200
         before = await _repository(db_url).get_session("shared-id")
@@ -132,7 +128,7 @@ async def test_a_rejected_create_leaves_the_other_system_s_session_alone(db_url:
         rejected = await bob.post(
             "/conversations",
             json={"session_id": "shared-id"},
-            headers={"X-Agent-Chat-User": "bob"},
+            headers=bearer("bob"),
         )
 
     assert rejected.status_code == 409

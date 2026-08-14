@@ -1,5 +1,6 @@
 """Domain layer: value objects and ports. Pure Python, no frameworks."""
 
+from agent_manager.domain.identity import IdentityNamespace, Principal
 from agent_manager.domain.models import (
     BudgetSeverity,
     ConversationContext,
@@ -20,7 +21,9 @@ __all__ = [
     "ConversationMessage",
     "ConversationSession",
     "ConversationSnapshot",
+    "IdentityNamespace",
     "Message",
+    "Principal",
     "Repository",
     "Role",
     "TokenBudgetUsage",

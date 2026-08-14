@@ -1,3 +1,4 @@
+import type { TokenSource } from "../auth/tokenSource";
 import type {
   ChatMessage,
   TokenBudget,
@@ -33,24 +34,30 @@ async function handleHttpError(response: Response): Promise<never> {
 }
 
 export class AgentChatClient {
-  private readonly headers: Record<string, string>;
-
-  /** `userId` identifies the caller on every request. It is not a credential —
-   * see `get_caller_id` on the server for how a deployment makes it one. */
   constructor(
     private readonly endpoint: string,
-    userId: string,
-  ) {
-    this.headers = { "Content-Type": "application/json", "X-Agent-Chat-User": userId };
-  }
+    private readonly tokens: TokenSource,
+  ) {}
 
+  /** A 401 usually means the token expired: renew once and retry. The rejected
+   *  attempt changed nothing, so replaying is safe. */
   private async request(path: string, init?: RequestInit): Promise<Response> {
-    const response = await fetch(`${this.endpoint}${path}`, { ...init, headers: this.headers });
-
+    let response = await this.send(path, init, await this.tokens.current());
+    if (response.status === 401) {
+      response = await this.send(path, init, await this.tokens.renew());
+    }
     if (!response.ok) {
       await handleHttpError(response);
     }
     return response;
+  }
+
+  private send(path: string, init: RequestInit | undefined, token: string | null) {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    // `include` lets a same-origin deployment authenticate by the host's own
+    // cookie, which the widget can never read.
+    return fetch(`${this.endpoint}${path}`, { ...init, headers, credentials: "include" });
   }
 
   async createConversation(): Promise<string> {

@@ -50,7 +50,8 @@
       {
         "group": "Widget",
         "pages": [
-          "docs/widget"
+          "docs/widget",
+          "docs/identity"
         ]
       },
       {

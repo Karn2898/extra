@@ -42,32 +42,31 @@ const isUnusableConversation = (error: unknown): boolean =>
 export function useConversation(
   client: AgentChatClient,
   endpoint: string,
-  userId: string,
   /** Told when a vanished conversation is replaced, so the caller can move that
    *  thread's messages onto the id the turn actually ran under. */
   onReplaced?: (staleId: string, freshId: string) => void,
 ): Conversation {
   const startConversation = useCallback(async () => {
     const created = await client.createConversation();
-    setStoredConversationId(endpoint, userId, created);
+    setStoredConversationId(endpoint, created);
     return created;
-  }, [client, endpoint, userId]);
+  }, [client, endpoint]);
 
-  const peekId = useCallback(() => getStoredConversationId(endpoint, userId), [endpoint, userId]);
+  const peekId = useCallback(() => getStoredConversationId(endpoint), [endpoint]);
 
   const ensureId = useCallback(
-    async () => getStoredConversationId(endpoint, userId) ?? startConversation(),
-    [endpoint, userId, startConversation],
+    async () => getStoredConversationId(endpoint) ?? startConversation(),
+    [endpoint, startConversation],
   );
 
   const replace = useCallback(
     async (staleId: string) => {
-      removeStoredConversationId(endpoint, userId);
+      removeStoredConversationId(endpoint);
       const fresh = await startConversation();
       onReplaced?.(staleId, fresh);
       return fresh;
     },
-    [endpoint, userId, startConversation, onReplaced],
+    [endpoint, startConversation, onReplaced],
   );
 
   const send = useCallback(
@@ -100,12 +99,12 @@ export function useConversation(
         return await client.getMessages(conversationId);
       } catch (error) {
         if (isUnusableConversation(error) && peekId() === conversationId) {
-          removeStoredConversationId(endpoint, userId);
+          removeStoredConversationId(endpoint);
         }
         return [];
       }
     },
-    [client, endpoint, userId, peekId],
+    [client, endpoint, peekId],
   );
 
   const loadUsage = useCallback(
@@ -122,13 +121,13 @@ export function useConversation(
   const listThreads = useCallback(() => client.listConversations().catch(() => []), [client]);
 
   const switchTo = useCallback(
-    (conversationId: string) => setStoredConversationId(endpoint, userId, conversationId),
-    [endpoint, userId],
+    (conversationId: string) => setStoredConversationId(endpoint, conversationId),
+    [endpoint],
   );
 
   const startNew = useCallback(
-    () => removeStoredConversationId(endpoint, userId),
-    [endpoint, userId],
+    () => removeStoredConversationId(endpoint),
+    [endpoint],
   );
 
   return useMemo(

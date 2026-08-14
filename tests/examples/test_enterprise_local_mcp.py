@@ -29,12 +29,14 @@ from agent_engine.models.factory import ModelConfigurationError
 from agent_engine.parsers.yaml.parser import YAMLParser
 from agent_engine.runtime.hooks import RunContext
 from agent_manager.application import ConversationService
+from agent_manager.domain import Principal
 from agent_manager.infrastructure.persistence.memory_repository import MemoryRepository
 
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = ROOT / "examples" / "enterprise-knowledge-assistant"
 RUNNER_PATH = EXAMPLE / "run_local_mcp_approval.py"
 SERVER_ID = "local_knowledge_mcp"
+DEMO_CALLER = Principal.external("local-demo-user")
 RUNNER = runpy.run_path(str(RUNNER_PATH))
 TOOLS = runpy.run_path(str(EXAMPLE / "mcps" / "local_knowledge_mcp" / "tools.py"))
 
@@ -171,7 +173,7 @@ async def _complete_conversation_turn(
     *,
     approve_for_session: bool,
 ) -> tuple[RunResult, bool]:
-    turn = await conversations.prepare_turn(session_id, text, caller_id="local-demo-user")
+    turn = await conversations.prepare_turn(session_id, text, DEMO_CALLER)
     result = await engine.run(
         turn.message,
         history=turn.history,
@@ -192,7 +194,7 @@ async def _complete_conversation_turn(
                 if approve_for_session
                 else ApprovalDecision.ALLOW_ONCE
             ),
-            caller_user_id="local-demo-user",
+            caller_user_id=DEMO_CALLER.user_id,
         )
     await conversations.complete_turn(turn, result)
     return result, prompted
@@ -234,7 +236,7 @@ class ApprovalHarness:
             provider="mcp",
             server_id=SERVER_ID,
             system_namespace="Enterprise Knowledge Assistant Local MCP Auto Mode",
-            user_id="local-demo-user",
+            user_id=DEMO_CALLER.user_id,
         )
         outcome = await self.coordinator.resolve(invocation, auto_mode=False)
         if outcome.execute:
@@ -332,8 +334,7 @@ async def test_auto_mode_executes_initial_and_follow_up_tools_without_approval(
             system_name="Enterprise Knowledge Assistant Local MCP Auto Mode",
         )
         session_id = await conversations.create(
-            user_id="local-demo-user",
-            session_id=f"follow-up-{follow_up.replace(' ', '-')}",
+            DEMO_CALLER, session_id=f"follow-up-{follow_up.replace(' ', '-')}"
         )
 
         first, first_prompted = await _complete_conversation_turn(
@@ -361,7 +362,7 @@ async def test_auto_mode_executes_initial_and_follow_up_tools_without_approval(
     assert "broader search" in second.answer
     assert [
         (message.role.value, message.content)
-        for message in await conversations.history(session_id, caller_id="local-demo-user")
+        for message in await conversations.history(session_id, DEMO_CALLER)
     ] == [
         (
             "user",
@@ -466,10 +467,7 @@ async def test_runner_logs_history_counts_without_message_contents(
         MemoryRepository(),
         system_name="demo",
     )
-    session_id = await conversations.create(
-        user_id="local-demo-user",
-        session_id="history-log-session",
-    )
+    session_id = await conversations.create(DEMO_CALLER, session_id="history-log-session")
     demo = approval_demo(
         cast(Any, engine),
         observable_repository(),

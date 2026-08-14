@@ -23,6 +23,9 @@ def mount_web(app: FastAPI, settings: Settings) -> None:
         allow_origins=settings.cors_origins,
         allow_methods=["*"],
         allow_headers=["*"],
+        # Safe only because `allow_origins` is an explicit allowlist, empty by
+        # default — never a wildcard.
+        allow_credentials=True,
     )
 
     @app.get("/widget.js")

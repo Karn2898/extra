@@ -221,6 +221,9 @@ installDom();
 const widget = await import(`./widget.js?test=${Date.now()}`);
 const {
   AgentChatClient,
+  TokenSource,
+  visitorPassKey,
+  attributeName,
   autoMountAgentChat,
   conversationStorageKey,
   defineAgentChat,
@@ -260,7 +263,7 @@ assert.equal(customElements.defineCount, definesBefore, "defineAgentChat is idem
     position: "bottom-right",
     avatar: "",
     mode: "floating",
-    user: "",
+    tokenUrl: "",
   });
 }
 
@@ -273,6 +276,7 @@ assert.equal(customElements.defineCount, definesBefore, "defineAgentChat is idem
   element.setAttribute("position", "bottom-left");
   element.setAttribute("avatar", "https://cdn.example/a.png");
   element.setAttribute("mode", "inline");
+  element.setAttribute("token-url", "/agent-chat/token");
   const cfg = parseConfig(element, "https://widget.example");
   assert.equal(cfg.endpoint, "https://api.example");
   assert.equal(cfg.title, "Support");
@@ -281,6 +285,17 @@ assert.equal(customElements.defineCount, definesBefore, "defineAgentChat is idem
   assert.equal(cfg.position, "bottom-left");
   assert.equal(cfg.avatar, "https://cdn.example/a.png");
   assert.equal(cfg.mode, "inline");
+  assert.equal(cfg.tokenUrl, "/agent-chat/token");
+}
+
+assert.equal(attributeName("tokenUrl"), "token-url");
+
+// Proxied under the host's site, the script's own directory is the API base —
+// the deployment that authenticates by the host cookie needs no `endpoint`.
+{
+  const element = new FakeElement("agent-chat");
+  const cfg = parseConfig(element, "https://app.acme.com/agents/");
+  assert.equal(cfg.endpoint, "https://app.acme.com/agents");
 }
 
 {
@@ -312,7 +327,7 @@ globalThis.fetch = async (url, options = {}) => {
   if (url.endsWith("/messages")) return jsonResponse({ answer: "hello back" });
   throw new Error(`unexpected fetch: ${url}`);
 };
-let client = new AgentChatClient("https://api.example");
+let client = new AgentChatClient("https://api.example", new TokenSource("https://api.example"));
 const conversationId = await client.createConversation();
 assert.equal(conversationId, "conv-1");
 const sendResponse = await client.sendMessage(conversationId, "hello");
@@ -328,7 +343,7 @@ globalThis.fetch = async (url) => {
   }
   throw new Error(`unexpected fetch: ${url}`);
 };
-client = new AgentChatClient("https://api.example");
+client = new AgentChatClient("https://api.example", new TokenSource("https://api.example"));
 const history = await client.getMessages("conv-stored");
 assert.deepEqual(history, [{ role: "assistant", content: "old answer" }]);
 
@@ -337,8 +352,127 @@ globalThis.fetch = async (url) => {
   if (url.endsWith("/conversations")) return jsonResponse({ conversation_id: "conv-2" });
   return jsonResponse({}, false, 500);
 };
-client = new AgentChatClient("https://api.example");
+client = new AgentChatClient("https://api.example", new TokenSource("https://api.example"));
 assert.ok(client);
 await assert.rejects(() => client.sendMessage("conv-2", "break"), /HTTP 500/);
+
+
+// --- identity ------------------------------------------------------------
+
+const authHeader = (call) => call.options.headers.Authorization;
+
+// A same-origin deployment authenticates by the host's own cookie: no bearer to
+// send, but the request must still carry credentials.
+resetPage();
+let calls = [];
+globalThis.fetch = async (url, options = {}) => {
+  calls.push({ url, options });
+  return jsonResponse({ conversation_id: "conv-cookie" });
+};
+await new AgentChatClient("https://api.example", new TokenSource("https://api.example")).createConversation();
+assert.equal(authHeader(calls[0]), undefined, "no bearer when relying on the host cookie");
+assert.equal(calls[0].options.credentials, "include");
+
+// A host that exposes a token endpoint has it fetched once and sent as a bearer.
+resetPage();
+calls = [];
+globalThis.fetch = async (url, options = {}) => {
+  calls.push({ url, options });
+  if (url === "/agent-chat/token") return jsonResponse({ token: "host-token" });
+  return jsonResponse({ conversation_id: "conv-host" });
+};
+const hosted = new AgentChatClient(
+  "https://api.example",
+  new TokenSource("https://api.example", "/agent-chat/token"),
+);
+await hosted.createConversation();
+await hosted.createConversation();
+assert.equal(calls.filter((c) => c.url === "/agent-chat/token").length, 1, "token is cached");
+assert.equal(authHeader(calls[1]), "Bearer host-token");
+
+// No host identity at all: the first 401 buys a visitor pass, and the rejected
+// request is replayed with it.
+resetPage();
+calls = [];
+globalThis.fetch = async (url, options = {}) => {
+  calls.push({ url, options });
+  if (url.endsWith("/auth/anonymous")) return jsonResponse({ token: "visitor-pass" });
+  if (!authHeader({ options })) return jsonResponse({}, false, 401);
+  return jsonResponse({ conversation_id: "conv-visitor" });
+};
+const visitorTokens = new TokenSource("https://api.example");
+const visitor = new AgentChatClient("https://api.example", visitorTokens);
+assert.equal(await visitor.createConversation(), "conv-visitor");
+assert.deepEqual(
+  calls.map((c) => c.url),
+  [
+    "https://api.example/conversations",
+    "https://api.example/auth/anonymous",
+    "https://api.example/conversations",
+  ],
+);
+assert.equal(localStorage.getItem(visitorPassKey("https://api.example")), "visitor-pass");
+
+visitorTokens.forget();
+assert.equal(localStorage.getItem(visitorPassKey("https://api.example")), null);
+
+// Signing in hands the pre-login conversations to the account, once.
+resetPage();
+calls = [];
+localStorage.setItem(visitorPassKey("https://api.example"), "old-pass");
+globalThis.fetch = async (url, options = {}) => {
+  calls.push({ url, options });
+  if (url === "/agent-chat/token") return jsonResponse({ token: "host-token" });
+  if (url.endsWith("/auth/link")) return jsonResponse({ conversations_moved: 2 });
+  return jsonResponse({ conversation_id: "conv-merged" });
+};
+const signedIn = new AgentChatClient(
+  "https://api.example",
+  new TokenSource("https://api.example", "/agent-chat/token"),
+);
+await signedIn.createConversation();
+
+const link = calls.find((c) => c.url.endsWith("/auth/link"));
+assert.ok(link, "the visitor pass is handed over on sign-in");
+assert.equal(authHeader(link), "Bearer host-token");
+assert.equal(JSON.parse(link.options.body).anonymous_token, "old-pass");
+assert.equal(
+  localStorage.getItem(visitorPassKey("https://api.example")),
+  null,
+  "a handed-over pass is not offered twice",
+);
+
+// Parallel requests share one resolution: one token fetch, one hand-over.
+resetPage();
+calls = [];
+localStorage.setItem(visitorPassKey("https://api.example"), "old-pass");
+globalThis.fetch = async (url, options = {}) => {
+  calls.push({ url, options });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  if (url === "/agent-chat/token") return jsonResponse({ token: "host-token" });
+  if (url.endsWith("/auth/link")) return jsonResponse({ conversations_moved: 1 });
+  return jsonResponse({ conversation_id: "conv-parallel" });
+};
+const shared = new AgentChatClient(
+  "https://api.example",
+  new TokenSource("https://api.example", "/agent-chat/token"),
+);
+await Promise.all([shared.createConversation(), shared.createConversation()]);
+assert.equal(calls.filter((c) => c.url === "/agent-chat/token").length, 1);
+assert.equal(calls.filter((c) => c.url.endsWith("/auth/link")).length, 1);
+
+// A server that never answered keeps the pass, so the next load retries.
+resetPage();
+localStorage.setItem(visitorPassKey("https://api.example"), "kept-pass");
+globalThis.fetch = async (url) => {
+  if (url === "/agent-chat/token") return jsonResponse({ token: "host-token" });
+  if (url.endsWith("/auth/link")) throw new Error("offline");
+  return jsonResponse({ conversation_id: "conv-1" });
+};
+await new AgentChatClient(
+  "https://api.example",
+  new TokenSource("https://api.example", "/agent-chat/token"),
+).createConversation();
+assert.equal(localStorage.getItem(visitorPassKey("https://api.example")), "kept-pass");
 
 console.log("widget self-check: OK");

@@ -7,7 +7,7 @@ export const DEFAULT_CONFIG: Omit<AgentChatConfig, "endpoint"> = {
   position: "bottom-right",
   avatar: "",
   mode: "floating",
-  user: "",
+  tokenUrl: "",
 };
 
 const HEX_COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
@@ -28,8 +28,8 @@ export function safeMode(value: string | null | undefined): AgentChatMode {
   return value === "inline" || value === "floating" ? value : DEFAULT_CONFIG.mode;
 }
 
-export function parseConfig(element: HTMLElement, scriptOrigin: string): AgentChatConfig {
-  const endpoint = element.getAttribute("endpoint") || scriptOrigin;
+export function parseConfig(element: HTMLElement, scriptBaseUrl: string): AgentChatConfig {
+  const endpoint = element.getAttribute("endpoint") || scriptBaseUrl;
   return {
     endpoint: normalizeEndpoint(endpoint),
     title: element.getAttribute("title") || DEFAULT_CONFIG.title,
@@ -38,14 +38,19 @@ export function parseConfig(element: HTMLElement, scriptOrigin: string): AgentCh
     position: safePosition(element.getAttribute("position")),
     avatar: element.getAttribute("avatar") || DEFAULT_CONFIG.avatar,
     mode: safeMode(element.getAttribute("mode")),
-    user: element.getAttribute("user") || DEFAULT_CONFIG.user,
+    tokenUrl: element.getAttribute("token-url") || DEFAULT_CONFIG.tokenUrl,
   };
+}
+
+/** `tokenUrl` is the `token-url` attribute; HTML attributes are kebab-case. */
+export function attributeName(configKey: string): string {
+  return configKey.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
 }
 
 export function applyConfigAttributes(element: HTMLElement, config: AgentChatConfigInput): void {
   for (const [key, value] of Object.entries(config)) {
     if (value !== undefined && value !== null) {
-      element.setAttribute(key, String(value));
+      element.setAttribute(attributeName(key), String(value));
     }
   }
 }

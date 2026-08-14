@@ -13,6 +13,23 @@ from pydantic import BaseModel
 from agent_manager.domain import BudgetSeverity, Role
 
 
+class AnonymousPassResponse(BaseModel):
+    """A visitor pass the widget stores and sends back as a bearer token."""
+
+    token: str
+    expires_at: datetime
+
+
+class LinkAnonymousRequest(BaseModel):
+    """The visitor pass whose conversations the signed-in caller is adopting."""
+
+    anonymous_token: str
+
+
+class LinkAnonymousResponse(BaseModel):
+    conversations_moved: int
+
+
 class CreateConversationRequest(BaseModel):
     session_id: str | None = None
 

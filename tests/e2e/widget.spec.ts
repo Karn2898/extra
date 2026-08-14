@@ -3,16 +3,15 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 const history: Record<string, Array<{ role: string; content: string; created_at: string }>> = {};
 
 const ENDPOINT = "http://127.0.0.1:8123";
-const E2E_USER = "e2e-user";
-// Conversation storage is scoped by user, so a test that reads or seeds it has
-// to know which user the widget will pick. Pin the anonymous id it would
-// otherwise generate.
-const CONVERSATION_KEY = `agent-chat:${ENDPOINT}:${E2E_USER}`;
+const CONVERSATION_KEY = `agent-chat:${ENDPOINT}`;
+const PASS_KEY = `agent-chat:pass:${ENDPOINT}`;
 
-async function pinUser(page: Page) {
+// The widget has no identity until the manager issues it a visitor pass. Seed
+// one so tests exercise the chat rather than the pass hand-out.
+async function pinVisitorPass(page: Page) {
   await page.addInitScript(
-    ([endpoint, user]) => localStorage.setItem(`agent-chat:user:${endpoint}`, user),
-    [ENDPOINT, E2E_USER],
+    ([key, pass]) => localStorage.setItem(key, pass),
+    [PASS_KEY, "e2e-visitor-pass"],
   );
 }
 
@@ -25,6 +24,7 @@ async function mockConversationApi(
   } = {},
 ) {
   const calls: string[] = [];
+  await pinVisitorPass(page);
 
   await page.route(/\/conversations\?/, async (route) => {
     calls.push(`GET ${new URL(route.request().url()).pathname}`);
@@ -38,7 +38,7 @@ async function mockConversationApi(
   await page.route("**/conversations", async (route) => {
     const method = route.request().method();
     calls.push(`${method} ${new URL(route.request().url()).pathname}`);
-    expect(route.request().headers()["x-agent-chat-user"]).toBeTruthy();
+    expect(route.request().headers()["authorization"]).toBe("Bearer e2e-visitor-pass");
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -128,6 +128,7 @@ async function mockConversationApi(
 }
 
 async function mockConversationApiWithStaleConversation(page: Page, staleStatus = 404) {
+  await pinVisitorPass(page);
   const calls: string[] = [];
   let created = false;
 
@@ -428,7 +429,7 @@ test("sending a message calls backend, renders assistant answer, stores conversa
   page,
 }) => {
   const calls = await mockConversationApi(page);
-  await pinUser(page);
+  await pinVisitorPass(page);
   await page.goto("/widget-demo.html");
   await shadowClick(page, ".launcher");
   await shadowFill(page, ".input", "hello browser");
@@ -764,7 +765,7 @@ test("a stored conversation owned by another caller is replaced, not retried for
   // identity that created it, so the server answers 403 and the widget has to
   // start over rather than sit on an id it can never use.
   const calls = await mockConversationApiWithStaleConversation(page, 403);
-  await pinUser(page);
+  await pinVisitorPass(page);
   await page.goto("/widget-demo.html");
   await page.evaluate((key) => localStorage.setItem(key, "conv-stale"), CONVERSATION_KEY);
 
@@ -782,7 +783,7 @@ test("a stored conversation owned by another caller is replaced, not retried for
 test("stale stored conversation is replaced before sending to the agent", async ({ page }) => {
 
   const calls = await mockConversationApiWithStaleConversation(page);
-  await pinUser(page);
+  await pinVisitorPass(page);
   await page.goto("/widget-demo.html");
   await page.evaluate((key) => localStorage.setItem(key, "conv-stale"), CONVERSATION_KEY);
 

@@ -10,7 +10,7 @@ export interface AgentChatConfig {
   position: AgentChatPosition;
   avatar: string;
   mode: AgentChatMode;
-  user: string;
+  tokenUrl: string;
 }
 
 export interface AgentChatConfigInput {
@@ -21,7 +21,7 @@ export interface AgentChatConfigInput {
   position?: string;
   avatar?: string;
   mode?: string;
-  user?: string;
+  tokenUrl?: string;
 }
 
 export interface ThreadSummary {

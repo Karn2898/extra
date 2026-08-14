@@ -33,6 +33,15 @@ class Repository(ABC):
     async def get_user(self, user_id: str) -> User | None: ...
 
     @abstractmethod
+    async def link_anonymous_user(self, anonymous_user_id: str, user_id: str) -> int:
+        """Hand a visitor's conversations to the account they just signed into.
+
+        Returns how many moved. Linking happens once: a replayed visitor pass
+        moves nothing and returns 0, so the same conversations can never be
+        attached to a second account.
+        """
+
+    @abstractmethod
     async def create_session(
         self,
         session_id: str | None = None,

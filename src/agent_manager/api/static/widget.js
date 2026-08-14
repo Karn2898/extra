@@ -2288,11 +2288,11 @@ var require_react_dom_client_development = __commonJS({
       function testStringCoercion(value) {
         return "" + value;
       }
-      function checkAttributeStringCoercion(value, attributeName) {
+      function checkAttributeStringCoercion(value, attributeName2) {
         if (willCoercionThrow(value))
           return console.error(
             "The provided `%s` attribute is an unsupported type %s. This value must be coerced to a string before using it here.",
-            attributeName,
+            attributeName2,
             typeName(value)
           ), testStringCoercion(value);
       }
@@ -2666,15 +2666,15 @@ var require_react_dom_client_development = __commonJS({
           "You provided a `checked` prop to a form field without an `onChange` handler. This will render a read-only field. If the field should be mutable use `defaultChecked`. Otherwise, set either `onChange` or `readOnly`."
         );
       }
-      function isAttributeNameSafe(attributeName) {
-        if (hasOwnProperty2.call(validatedAttributeNameCache, attributeName))
+      function isAttributeNameSafe(attributeName2) {
+        if (hasOwnProperty2.call(validatedAttributeNameCache, attributeName2))
           return true;
-        if (hasOwnProperty2.call(illegalAttributeNameCache, attributeName))
+        if (hasOwnProperty2.call(illegalAttributeNameCache, attributeName2))
           return false;
-        if (VALID_ATTRIBUTE_NAME_REGEX.test(attributeName))
-          return validatedAttributeNameCache[attributeName] = true;
-        illegalAttributeNameCache[attributeName] = true;
-        console.error("Invalid attribute name: `%s`", attributeName);
+        if (VALID_ATTRIBUTE_NAME_REGEX.test(attributeName2))
+          return validatedAttributeNameCache[attributeName2] = true;
+        illegalAttributeNameCache[attributeName2] = true;
+        console.error("Invalid attribute name: `%s`", attributeName2);
         return false;
       }
       function getValueForAttributeOnCustomComponent(node2, name2, expected) {
@@ -15401,8 +15401,8 @@ var require_react_dom_client_development = __commonJS({
         serverValue !== clientValue && (clientValue = normalizeMarkupForTextOrAttribute(clientValue), normalizeMarkupForTextOrAttribute(serverValue) !== clientValue && (serverDifferences[propName] = serverValue));
       }
       function warnForExtraAttributes(domElement, attributeNames, serverDifferences) {
-        attributeNames.forEach(function(attributeName) {
-          serverDifferences[getPropNameFromAttributeName(attributeName)] = "style" === attributeName ? getStylesObjectFromElement(domElement) : domElement.getAttribute(attributeName);
+        attributeNames.forEach(function(attributeName2) {
+          serverDifferences[getPropNameFromAttributeName(attributeName2)] = "style" === attributeName2 ? getStylesObjectFromElement(domElement) : domElement.getAttribute(attributeName2);
         });
       }
       function warnForInvalidEventListener(registrationName, listener) {
@@ -16367,9 +16367,9 @@ var require_react_dom_client_development = __commonJS({
           value$jscomp$0 !== clientValue && (clientValue = normalizeMarkupForTextOrAttribute(clientValue), normalizeMarkupForTextOrAttribute(value$jscomp$0) !== clientValue && (serverDifferences.style = getStylesObjectFromElement(domElement)));
         }
       }
-      function hydrateAttribute(domElement, propKey, attributeName, value, extraAttributes, serverDifferences) {
-        extraAttributes.delete(attributeName);
-        domElement = domElement.getAttribute(attributeName);
+      function hydrateAttribute(domElement, propKey, attributeName2, value, extraAttributes, serverDifferences) {
+        extraAttributes.delete(attributeName2);
+        domElement = domElement.getAttribute(attributeName2);
         if (null === domElement)
           switch (typeof value) {
             case "undefined":
@@ -16390,9 +16390,9 @@ var require_react_dom_client_development = __commonJS({
           }
         warnForPropDifference(propKey, domElement, value, serverDifferences);
       }
-      function hydrateBooleanAttribute(domElement, propKey, attributeName, value, extraAttributes, serverDifferences) {
-        extraAttributes.delete(attributeName);
-        domElement = domElement.getAttribute(attributeName);
+      function hydrateBooleanAttribute(domElement, propKey, attributeName2, value, extraAttributes, serverDifferences) {
+        extraAttributes.delete(attributeName2);
+        domElement = domElement.getAttribute(attributeName2);
         if (null === domElement) {
           switch (typeof value) {
             case "function":
@@ -16410,9 +16410,9 @@ var require_react_dom_client_development = __commonJS({
           }
         warnForPropDifference(propKey, domElement, value, serverDifferences);
       }
-      function hydrateBooleanishAttribute(domElement, propKey, attributeName, value, extraAttributes, serverDifferences) {
-        extraAttributes.delete(attributeName);
-        domElement = domElement.getAttribute(attributeName);
+      function hydrateBooleanishAttribute(domElement, propKey, attributeName2, value, extraAttributes, serverDifferences) {
+        extraAttributes.delete(attributeName2);
+        domElement = domElement.getAttribute(attributeName2);
         if (null === domElement)
           switch (typeof value) {
             case "undefined":
@@ -16426,14 +16426,14 @@ var require_react_dom_client_development = __commonJS({
             case "symbol":
               break;
             default:
-              if (checkAttributeStringCoercion(value, attributeName), domElement === "" + value)
+              if (checkAttributeStringCoercion(value, attributeName2), domElement === "" + value)
                 return;
           }
         warnForPropDifference(propKey, domElement, value, serverDifferences);
       }
-      function hydrateNumericAttribute(domElement, propKey, attributeName, value, extraAttributes, serverDifferences) {
-        extraAttributes.delete(attributeName);
-        domElement = domElement.getAttribute(attributeName);
+      function hydrateNumericAttribute(domElement, propKey, attributeName2, value, extraAttributes, serverDifferences) {
+        extraAttributes.delete(attributeName2);
+        domElement = domElement.getAttribute(attributeName2);
         if (null === domElement)
           switch (typeof value) {
             case "undefined":
@@ -16456,9 +16456,9 @@ var require_react_dom_client_development = __commonJS({
           }
         warnForPropDifference(propKey, domElement, value, serverDifferences);
       }
-      function hydrateSanitizedAttribute(domElement, propKey, attributeName, value, extraAttributes, serverDifferences) {
-        extraAttributes.delete(attributeName);
-        domElement = domElement.getAttribute(attributeName);
+      function hydrateSanitizedAttribute(domElement, propKey, attributeName2, value, extraAttributes, serverDifferences) {
+        extraAttributes.delete(attributeName2);
+        domElement = domElement.getAttribute(attributeName2);
         if (null === domElement)
           switch (typeof value) {
             case "undefined":
@@ -16474,7 +16474,7 @@ var require_react_dom_client_development = __commonJS({
             case "boolean":
               break;
             default:
-              if (checkAttributeStringCoercion(value, propKey), attributeName = sanitizeURL("" + value), domElement === attributeName)
+              if (checkAttributeStringCoercion(value, propKey), attributeName2 = sanitizeURL("" + value), domElement === attributeName2)
                 return;
           }
         warnForPropDifference(propKey, domElement, value, serverDifferences);
@@ -16793,9 +16793,9 @@ var require_react_dom_client_development = __commonJS({
                   case "download":
                     a: {
                       i = domElement;
-                      var attributeName = attributes = value, serverDifferences$jscomp$0 = serverDifferences;
-                      extraAttributes.delete(attributeName);
-                      i = i.getAttribute(attributeName);
+                      var attributeName2 = attributes = value, serverDifferences$jscomp$0 = serverDifferences;
+                      extraAttributes.delete(attributeName2);
+                      i = i.getAttribute(attributeName2);
                       if (null === i)
                         switch (typeof propKey) {
                           case "undefined":
@@ -16831,10 +16831,10 @@ var require_react_dom_client_development = __commonJS({
                   case "span":
                     a: {
                       i = domElement;
-                      attributeName = attributes = value;
+                      attributeName2 = attributes = value;
                       serverDifferences$jscomp$0 = serverDifferences;
-                      extraAttributes.delete(attributeName);
-                      i = i.getAttribute(attributeName);
+                      extraAttributes.delete(attributeName2);
+                      i = i.getAttribute(attributeName2);
                       if (null === i)
                         switch (typeof propKey) {
                           case "undefined":
@@ -17001,24 +17001,24 @@ var require_react_dom_client_development = __commonJS({
                     if (!(2 < value.length) || "o" !== value[0] && "O" !== value[0] || "n" !== value[1] && "N" !== value[1]) {
                       i = getAttributeAlias(value);
                       attributes = false;
-                      hostContext.context === HostContextNamespaceNone && "svg" !== tag && "math" !== tag ? extraAttributes.delete(i.toLowerCase()) : (attributeName = value.toLowerCase(), attributeName = possibleStandardNames.hasOwnProperty(
-                        attributeName
-                      ) ? possibleStandardNames[attributeName] || null : null, null !== attributeName && attributeName !== value && (attributes = true, extraAttributes.delete(attributeName)), extraAttributes.delete(i));
-                      a: if (attributeName = domElement, serverDifferences$jscomp$0 = i, i = propKey, isAttributeNameSafe(serverDifferences$jscomp$0))
-                        if (attributeName.hasAttribute(serverDifferences$jscomp$0))
-                          attributeName = attributeName.getAttribute(
+                      hostContext.context === HostContextNamespaceNone && "svg" !== tag && "math" !== tag ? extraAttributes.delete(i.toLowerCase()) : (attributeName2 = value.toLowerCase(), attributeName2 = possibleStandardNames.hasOwnProperty(
+                        attributeName2
+                      ) ? possibleStandardNames[attributeName2] || null : null, null !== attributeName2 && attributeName2 !== value && (attributes = true, extraAttributes.delete(attributeName2)), extraAttributes.delete(i));
+                      a: if (attributeName2 = domElement, serverDifferences$jscomp$0 = i, i = propKey, isAttributeNameSafe(serverDifferences$jscomp$0))
+                        if (attributeName2.hasAttribute(serverDifferences$jscomp$0))
+                          attributeName2 = attributeName2.getAttribute(
                             serverDifferences$jscomp$0
                           ), checkAttributeStringCoercion(
                             i,
                             serverDifferences$jscomp$0
-                          ), i = attributeName === "" + i ? i : attributeName;
+                          ), i = attributeName2 === "" + i ? i : attributeName2;
                         else {
                           switch (typeof i) {
                             case "function":
                             case "symbol":
                               break a;
                             case "boolean":
-                              if (attributeName = serverDifferences$jscomp$0.toLowerCase().slice(0, 5), "data-" !== attributeName && "aria-" !== attributeName)
+                              if (attributeName2 = serverDifferences$jscomp$0.toLowerCase().slice(0, 5), "data-" !== attributeName2 && "aria-" !== attributeName2)
                                 break a;
                           }
                           i = void 0 === i ? void 0 : null;
@@ -52061,7 +52061,7 @@ var DEFAULT_CONFIG = {
   position: "bottom-right",
   avatar: "",
   mode: "floating",
-  user: ""
+  tokenUrl: ""
 };
 var HEX_COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 function normalizeEndpoint(value) {
@@ -52076,8 +52076,8 @@ function safePosition(value) {
 function safeMode(value) {
   return value === "inline" || value === "floating" ? value : DEFAULT_CONFIG.mode;
 }
-function parseConfig(element7, scriptOrigin) {
-  const endpoint = element7.getAttribute("endpoint") || scriptOrigin;
+function parseConfig(element7, scriptBaseUrl) {
+  const endpoint = element7.getAttribute("endpoint") || scriptBaseUrl;
   return {
     endpoint: normalizeEndpoint(endpoint),
     title: element7.getAttribute("title") || DEFAULT_CONFIG.title,
@@ -52086,13 +52086,16 @@ function parseConfig(element7, scriptOrigin) {
     position: safePosition(element7.getAttribute("position")),
     avatar: element7.getAttribute("avatar") || DEFAULT_CONFIG.avatar,
     mode: safeMode(element7.getAttribute("mode")),
-    user: element7.getAttribute("user") || DEFAULT_CONFIG.user
+    tokenUrl: element7.getAttribute("token-url") || DEFAULT_CONFIG.tokenUrl
   };
+}
+function attributeName(configKey) {
+  return configKey.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
 }
 function applyConfigAttributes(element7, config) {
   for (const [key, value] of Object.entries(config)) {
     if (value !== void 0 && value !== null) {
-      element7.setAttribute(key, String(value));
+      element7.setAttribute(attributeName(key), String(value));
     }
   }
 }
@@ -52125,18 +52128,26 @@ async function handleHttpError(response) {
   throw new AgentChatHttpError(response.status, errorType, message);
 }
 var AgentChatClient = class {
-  /** `userId` identifies the caller on every request. It is not a credential —
-   * see `get_caller_id` on the server for how a deployment makes it one. */
-  constructor(endpoint, userId) {
+  constructor(endpoint, tokens) {
     this.endpoint = endpoint;
-    this.headers = { "Content-Type": "application/json", "X-Agent-Chat-User": userId };
+    this.tokens = tokens;
   }
+  /** A 401 usually means the token expired: renew once and retry. The rejected
+   *  attempt changed nothing, so replaying is safe. */
   async request(path2, init) {
-    const response = await fetch(`${this.endpoint}${path2}`, { ...init, headers: this.headers });
+    let response = await this.send(path2, init, await this.tokens.current());
+    if (response.status === 401) {
+      response = await this.send(path2, init, await this.tokens.renew());
+    }
     if (!response.ok) {
       await handleHttpError(response);
     }
     return response;
+  }
+  send(path2, init, token) {
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    return fetch(`${this.endpoint}${path2}`, { ...init, headers, credentials: "include" });
   }
   async createConversation() {
     const response = await this.request("/conversations", { method: "POST", body: "{}" });
@@ -52217,6 +52228,109 @@ function parseSseFrame(frame) {
   if (!data || data === "[DONE]") return null;
   return JSON.parse(data);
 }
+
+// src/agent_manager/api/static/widget/auth/tokenSource.ts
+var PASS_ENDPOINT = "/auth/anonymous";
+var LINK_ENDPOINT = "/auth/link";
+function visitorPassKey(endpoint) {
+  return `agent-chat:pass:${endpoint}`;
+}
+var TokenSource = class {
+  constructor(endpoint, tokenUrl = "", provider = null, storage = localStorage) {
+    this.endpoint = endpoint;
+    this.tokenUrl = tokenUrl;
+    this.provider = provider;
+    this.storage = storage;
+    this.cached = null;
+    this.pending = null;
+  }
+  async current() {
+    if (!this.cached) await this.resolve(() => this.storedPass());
+    return this.cached;
+  }
+  /** After a 401: whatever we sent is no good, so get another. */
+  async renew() {
+    return this.resolve(() => this.issuePass());
+  }
+  /** Drop this browser's identity — a host app signing its user out. */
+  forget() {
+    this.cached = null;
+    this.clearPass();
+  }
+  /** Concurrent callers share one resolution. Without this, parallel requests
+   *  each fetch a token and each hand over the visitor pass. */
+  resolve(fallback) {
+    this.pending ?? (this.pending = (async () => {
+      try {
+        this.cached = await this.hostToken() ?? await fallback();
+        return this.cached;
+      } finally {
+        this.pending = null;
+      }
+    })());
+    return this.pending;
+  }
+  /** A host token, plus the one-time hand-off of whatever this browser chatted
+   *  about before signing in. */
+  async hostToken() {
+    const token = await this.fromHost();
+    if (token) await this.claimVisitorHistory(token);
+    return token;
+  }
+  async claimVisitorHistory(hostToken) {
+    const pass = this.storedPass();
+    if (!pass) return;
+    try {
+      const response = await fetch(`${this.endpoint}${LINK_ENDPOINT}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${hostToken}` },
+        body: JSON.stringify({ anonymous_token: pass })
+      });
+      if (response.status < 500) this.clearPass();
+    } catch {
+    }
+  }
+  clearPass() {
+    try {
+      this.storage.removeItem(visitorPassKey(this.endpoint));
+    } catch {
+    }
+  }
+  async fromHost() {
+    if (this.provider) return this.provider();
+    if (!this.tokenUrl) return null;
+    try {
+      const response = await fetch(this.tokenUrl, {
+        credentials: "include",
+        headers: { Accept: "application/json" }
+      });
+      if (!response.ok) return null;
+      const token = (await response.json())?.token;
+      return typeof token === "string" && token ? token : null;
+    } catch {
+      return null;
+    }
+  }
+  storedPass() {
+    try {
+      return this.storage.getItem(visitorPassKey(this.endpoint));
+    } catch {
+      return null;
+    }
+  }
+  async issuePass() {
+    try {
+      const response = await fetch(`${this.endpoint}${PASS_ENDPOINT}`, { method: "POST" });
+      if (!response.ok) return null;
+      const token = (await response.json())?.token;
+      if (typeof token !== "string" || !token) return null;
+      this.storage.setItem(visitorPassKey(this.endpoint), token);
+      return token;
+    } catch {
+      return null;
+    }
+  }
+};
 
 // node_modules/lucide-react/dist/esm/createLucideIcon.mjs
 var import_react3 = __toESM(require_react(), 1);
@@ -52434,26 +52548,17 @@ function randomId() {
 }
 
 // src/agent_manager/api/static/widget/storage/conversationStorage.ts
-function conversationStorageKey(endpoint, userId) {
-  return `agent-chat:${endpoint}:${userId}`;
+function conversationStorageKey(endpoint) {
+  return `agent-chat:${endpoint}`;
 }
-function getStoredConversationId(endpoint, userId, storage = localStorage) {
-  return storage.getItem(conversationStorageKey(endpoint, userId));
+function getStoredConversationId(endpoint, storage = localStorage) {
+  return storage.getItem(conversationStorageKey(endpoint));
 }
-function setStoredConversationId(endpoint, userId, conversationId, storage = localStorage) {
-  storage.setItem(conversationStorageKey(endpoint, userId), conversationId);
+function setStoredConversationId(endpoint, conversationId, storage = localStorage) {
+  storage.setItem(conversationStorageKey(endpoint), conversationId);
 }
-function removeStoredConversationId(endpoint, userId, storage = localStorage) {
-  storage.removeItem(conversationStorageKey(endpoint, userId));
-}
-function getOrCreateUserId(endpoint, storage = localStorage) {
-  const key = `agent-chat:user:${endpoint}`;
-  let id = storage.getItem(key);
-  if (!id) {
-    id = randomId();
-    storage.setItem(key, id);
-  }
-  return id;
+function removeStoredConversationId(endpoint, storage = localStorage) {
+  storage.removeItem(conversationStorageKey(endpoint));
 }
 
 // src/agent_manager/api/static/widget/react/shadcnAiElements.tsx
@@ -53076,25 +53181,25 @@ function upsertTool(tools, next2) {
 // src/agent_manager/api/static/widget/react/useConversation.ts
 var import_react9 = __toESM(require_react(), 1);
 var isUnusableConversation = (error) => error instanceof AgentChatHttpError && (error.status === 404 || error.status === 403);
-function useConversation(client, endpoint, userId, onReplaced) {
+function useConversation(client, endpoint, onReplaced) {
   const startConversation = (0, import_react9.useCallback)(async () => {
     const created = await client.createConversation();
-    setStoredConversationId(endpoint, userId, created);
+    setStoredConversationId(endpoint, created);
     return created;
-  }, [client, endpoint, userId]);
-  const peekId = (0, import_react9.useCallback)(() => getStoredConversationId(endpoint, userId), [endpoint, userId]);
+  }, [client, endpoint]);
+  const peekId = (0, import_react9.useCallback)(() => getStoredConversationId(endpoint), [endpoint]);
   const ensureId = (0, import_react9.useCallback)(
-    async () => getStoredConversationId(endpoint, userId) ?? startConversation(),
-    [endpoint, userId, startConversation]
+    async () => getStoredConversationId(endpoint) ?? startConversation(),
+    [endpoint, startConversation]
   );
   const replace2 = (0, import_react9.useCallback)(
     async (staleId) => {
-      removeStoredConversationId(endpoint, userId);
+      removeStoredConversationId(endpoint);
       const fresh = await startConversation();
       onReplaced?.(staleId, fresh);
       return fresh;
     },
-    [endpoint, userId, startConversation, onReplaced]
+    [endpoint, startConversation, onReplaced]
   );
   const send = (0, import_react9.useCallback)(
     async (conversationId, text10) => {
@@ -53124,12 +53229,12 @@ function useConversation(client, endpoint, userId, onReplaced) {
         return await client.getMessages(conversationId);
       } catch (error) {
         if (isUnusableConversation(error) && peekId() === conversationId) {
-          removeStoredConversationId(endpoint, userId);
+          removeStoredConversationId(endpoint);
         }
         return [];
       }
     },
-    [client, endpoint, userId, peekId]
+    [client, endpoint, peekId]
   );
   const loadUsage = (0, import_react9.useCallback)(
     async (conversationId) => {
@@ -53143,12 +53248,12 @@ function useConversation(client, endpoint, userId, onReplaced) {
   );
   const listThreads = (0, import_react9.useCallback)(() => client.listConversations().catch(() => []), [client]);
   const switchTo = (0, import_react9.useCallback)(
-    (conversationId) => setStoredConversationId(endpoint, userId, conversationId),
-    [endpoint, userId]
+    (conversationId) => setStoredConversationId(endpoint, conversationId),
+    [endpoint]
   );
   const startNew = (0, import_react9.useCallback)(
-    () => removeStoredConversationId(endpoint, userId),
-    [endpoint, userId]
+    () => removeStoredConversationId(endpoint),
+    [endpoint]
   );
   return (0, import_react9.useMemo)(
     () => ({
@@ -53180,7 +53285,6 @@ var toEntry = (message) => ({
 function AgentChatApp({
   client,
   config,
-  userId,
   onAnswer,
   panelId,
   titleId
@@ -53203,7 +53307,7 @@ function AgentChatApp({
     setEntriesById(({ [staleId]: moved = [], ...rest }) => ({ ...rest, [freshId]: moved }));
     setActiveId((current) => current === staleId ? freshId : current);
   }, []);
-  const conversation = useConversation(client, config.endpoint, userId, onReplaced);
+  const conversation = useConversation(client, config.endpoint, onReplaced);
   const refreshUsage = (0, import_react10.useCallback)(
     async (cid) => {
       const next2 = await conversation.loadUsage(cid);
@@ -53382,7 +53486,7 @@ function AgentChatApp({
                   {
                     open: threadsOpen,
                     threads,
-                    activeId: getStoredConversationId(config.endpoint, userId),
+                    activeId: getStoredConversationId(config.endpoint),
                     onSelect: openThread,
                     onNew: startNewThread,
                     onClose: () => setThreadsOpen(false)
@@ -53852,9 +53956,12 @@ function styles(config) {
 var import_jsx_runtime5 = __toESM(require_jsx_runtime(), 1);
 var nextWidgetId = 0;
 var AgentChatElement = class extends HTMLElement {
-  constructor(scriptOrigin = defaultScriptOrigin()) {
+  constructor(scriptBaseUrl = defaultScriptBaseUrl()) {
     super();
-    this.scriptOrigin = scriptOrigin;
+    this.scriptBaseUrl = scriptBaseUrl;
+    /** For a host holding its token in memory instead of exposing a `token-url`.
+     *  Assign before the element connects, or re-render after. */
+    this.tokenProvider = null;
     this.connected = false;
     this.reactRoot = null;
     this.instanceKey = 0;
@@ -53863,7 +53970,7 @@ var AgentChatElement = class extends HTMLElement {
     this.titleId = `${this.widgetId}-title`;
   }
   static get observedAttributes() {
-    return ["endpoint", "title", "color", "greeting", "position", "avatar", "mode", "user"];
+    return ["endpoint", "title", "color", "greeting", "position", "avatar", "mode", "token-url"];
   }
   connectedCallback() {
     if (this.connected) return;
@@ -53883,10 +53990,18 @@ var AgentChatElement = class extends HTMLElement {
     if (previousEndpoint && previousEndpoint !== this.config.endpoint) this.instanceKey += 1;
     this.render();
   }
+  /** Forget this browser's identity and its open thread, so the next person on
+   *  this machine starts clean. Call it when the host signs a user in or out. */
+  logout() {
+    this.tokens?.forget();
+    if (this.config) removeStoredConversationId(this.config.endpoint);
+    this.instanceKey += 1;
+    if (this.connected) this.render();
+  }
   configure() {
-    this.config = parseConfig(this, this.scriptOrigin);
-    this.userId = this.config.user || getOrCreateUserId(this.config.endpoint);
-    this.client = new AgentChatClient(this.config.endpoint, this.userId);
+    this.config = parseConfig(this, this.scriptBaseUrl);
+    this.tokens = new TokenSource(this.config.endpoint, this.config.tokenUrl, this.tokenProvider);
+    this.client = new AgentChatClient(this.config.endpoint, this.tokens);
   }
   render() {
     const root7 = this.shadowRoot || this.attachShadow({ mode: "open" });
@@ -53906,7 +54021,6 @@ var AgentChatElement = class extends HTMLElement {
         {
           client: this.client,
           config: this.config,
-          userId: this.userId,
           onAnswer: (detail) => this.emitAnswer(detail),
           panelId: this.panelId,
           titleId: this.titleId
@@ -53938,18 +54052,18 @@ var AgentChatElement = class extends HTMLElement {
     }
   }
 };
-function defaultScriptOrigin() {
-  return new URL(import.meta.url).origin;
+function defaultScriptBaseUrl() {
+  return new URL(".", import.meta.url).href;
 }
 
 // src/agent_manager/api/static/widget/element/defineAgentChat.ts
-function defineAgentChat(scriptOrigin) {
+function defineAgentChat(scriptBaseUrl) {
   if (customElements.get("agent-chat")) return;
   customElements.define(
     "agent-chat",
     class extends AgentChatElement {
       constructor() {
-        super(scriptOrigin);
+        super(scriptBaseUrl);
       }
     }
   );
@@ -53977,8 +54091,8 @@ function formatAssistantText(value) {
 
 // src/agent_manager/api/static/widget/index.ts
 if (typeof document !== "undefined") {
-  const scriptOrigin = new URL(import.meta.url).origin;
-  defineAgentChat(scriptOrigin);
+  const scriptBaseUrl = new URL(".", import.meta.url).href;
+  defineAgentChat(scriptBaseUrl);
   const mount = () => autoMountAgentChat();
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", mount, { once: true });
@@ -53990,7 +54104,9 @@ export {
   AgentChatClient,
   AgentChatElement,
   DEFAULT_CONFIG,
+  TokenSource,
   applyConfigAttributes,
+  attributeName,
   autoMountAgentChat,
   conversationStorageKey,
   defineAgentChat,
@@ -53999,7 +54115,8 @@ export {
   getStoredConversationId,
   parseConfig,
   removeStoredConversationId,
-  setStoredConversationId
+  setStoredConversationId,
+  visitorPassKey
 };
 /*! Bundled license information:
 
