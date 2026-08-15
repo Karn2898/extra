@@ -18,13 +18,10 @@ from pydantic import BaseModel
 
 from agent_engine.approvals.decision import ApprovalDecision, parse_decision
 from agent_engine.approvals.errors import (
-    ApprovalAlreadyProcessed,
     ApprovalError,
-    ApprovalNotFound,
-    ApprovalRunMismatch,
     InvalidDecision,
-    RunNotFound,
-    UnauthorizedApprover,
+    approval_http_status,
+    approval_public_message,
 )
 from agent_engine.approvals.session_store import (
     InMemorySessionApprovalRepository,
@@ -95,15 +92,10 @@ def _pending_model(pa: PendingApproval | None) -> PendingApprovalModel | None:
 
 def _map_approval_error(exc: ApprovalError) -> HTTPException:
     """Map approval-lifecycle errors to stable HTTP responses (no internals)."""
-    status = {
-        RunNotFound: 404,
-        ApprovalNotFound: 404,
-        ApprovalRunMismatch: 404,
-        UnauthorizedApprover: 403,
-        ApprovalAlreadyProcessed: 409,
-        InvalidDecision: 400,
-    }.get(type(exc), 409)
-    return HTTPException(status_code=status, detail=str(exc))
+    return HTTPException(
+        status_code=approval_http_status(exc),
+        detail=approval_public_message(exc),
+    )
 
 
 class InvokeRequest(BaseModel):

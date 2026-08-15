@@ -3,25 +3,37 @@ pending-approval response model."""
 
 from __future__ import annotations
 
-from agent_engine.api.app import _map_approval_error, _pending_model
+from agent_engine.api.app import _pending_model
 from agent_engine.approvals.errors import (
     ApprovalAlreadyProcessed,
+    ApprovalError,
     ApprovalNotFound,
     ApprovalRunMismatch,
     InvalidDecision,
     RunNotFound,
     UnauthorizedApprover,
+    approval_http_status,
+    approval_public_message,
 )
 from agent_engine.engine.types import PendingApproval
 
 
 def test_error_status_mapping() -> None:
-    assert _map_approval_error(RunNotFound("r")).status_code == 404
-    assert _map_approval_error(ApprovalNotFound("a")).status_code == 404
-    assert _map_approval_error(ApprovalRunMismatch("a", "r")).status_code == 404
-    assert _map_approval_error(UnauthorizedApprover("a")).status_code == 403
-    assert _map_approval_error(ApprovalAlreadyProcessed("a", "approved")).status_code == 409
-    assert _map_approval_error(InvalidDecision("maybe")).status_code == 400
+    assert approval_http_status(RunNotFound("r")) == 404
+    assert approval_http_status(ApprovalNotFound("a")) == 404
+    assert approval_http_status(ApprovalRunMismatch("a", "r")) == 404
+    assert approval_http_status(UnauthorizedApprover("a")) == 403
+    assert approval_http_status(ApprovalAlreadyProcessed("a", "approved")) == 409
+    assert approval_http_status(InvalidDecision("maybe")) == 400
+
+
+def test_error_messages_are_stable_and_sanitized() -> None:
+    exc = ApprovalRunMismatch("private-approval-id", "private-run-id")
+    assert approval_public_message(exc) == "approval not found"
+    assert "private" not in approval_public_message(exc)
+    assert approval_public_message(ApprovalError("private internal failure")) == (
+        "approval could not be processed"
+    )
 
 
 def test_pending_model_none_passthrough() -> None:

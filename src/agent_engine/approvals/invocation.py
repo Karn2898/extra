@@ -85,6 +85,7 @@ class ToolInvocation:
     organization_id: str = ""
     run_id: str | None = None
     approval_id: str | None = None
+    human_description: str = ""
 
     @property
     def tool_identity(self) -> str:
@@ -118,8 +119,7 @@ class ToolInvocation:
         States plainly that the tool has not run yet, so the approver understands
         they are authorizing a pending action rather than reviewing a past one.
         """
-        where = f" on server '{self.server_id}'" if self.server_id else ""
-        return (
-            f"Agent '{self.agent_id}' wants to call tool '{self.tool_name}'"
-            f"{where}. It has NOT been executed yet and needs your approval."
+        summary = (
+            self.human_description.strip() or "Use this tool to complete the requested action."
         )
+        return f"{summary} This action has not been executed."

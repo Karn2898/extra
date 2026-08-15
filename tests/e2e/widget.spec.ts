@@ -127,7 +127,10 @@ async function mockConversationApi(
   return calls;
 }
 
-async function mockApprovalApi(page: Page, options: { failDecision?: boolean } = {}) {
+async function mockApprovalApi(
+  page: Page,
+  options: { decisionStatus?: number; decisionDetail?: string } = {},
+) {
   const decisions: string[] = [];
   let streamCount = 0;
   let sessionApproved = false;
@@ -166,7 +169,7 @@ async function mockApprovalApi(page: Page, options: { failDecision?: boolean } =
           approval_id: `approval-${streamCount}`,
           agent_id: "writer",
           tool_name: "send_email",
-          description: "Writer wants to send an email. It has not been executed yet.",
+          description: "Send an email to the selected recipient. This action has not been executed.",
           provider: "local",
           used_tools: [],
         })}`,
@@ -181,11 +184,11 @@ async function mockApprovalApi(page: Page, options: { failDecision?: boolean } =
     decisions.push(body.decision || "");
     sessionApproved ||= body.decision === "allow_for_session";
     await new Promise((resolve) => setTimeout(resolve, 25));
-    if (options.failDecision) {
+    if (options.decisionStatus) {
       await route.fulfill({
-        status: 500,
+        status: options.decisionStatus,
         contentType: "application/json",
-        body: JSON.stringify({ detail: "private approval failure" }),
+        body: JSON.stringify({ detail: options.decisionDetail ?? "private approval failure" }),
       });
       return;
     }
@@ -573,6 +576,13 @@ for (const action of [
     await shadowClick(page, ".send");
 
     await expect.poll(() => shadowText(page, ".approval-card")).toContain("Approval required");
+    await expect
+      .poll(() => shadowText(page, ".approval-description"))
+      .toBe("Send an email to the selected recipient. This action has not been executed.");
+    await expect.poll(() => shadowText(page, ".approval-tool")).toBe("Tool: send_email");
+    expect(await shadowText(page, ".approval-card")).not.toContain("writer");
+    expect(await shadowText(page, ".approval-card")).not.toContain("mail-prod");
+    expect(await shadowText(page, ".approval-card")).not.toContain("provider");
     await expect.poll(() => shadowText(page, ".approval-actions")).toContain("Approve");
     await expect.poll(() => shadowText(page, ".approval-actions")).toContain("Deny");
     await expect
@@ -612,7 +622,7 @@ test("session approval prevents another prompt for the same session tool", async
 });
 
 test("a failed approval decision restores the controls without leaking details", async ({ page }) => {
-  const approval = await mockApprovalApi(page, { failDecision: true });
+  const approval = await mockApprovalApi(page, { decisionStatus: 500 });
   await page.goto("/widget-demo.html");
   await shadowClick(page, ".launcher");
   await shadowFill(page, ".input", "send the email");
@@ -628,7 +638,33 @@ test("a failed approval decision restores the controls without leaking details",
   );
   await expect.poll(() => shadowExists(page, ".approval-status")).toBe(false);
   await expect.poll(() => shadowExists(page, ".approval-button:disabled")).toBe(false);
+  await expect.poll(() => shadowExists(page, ".input:disabled")).toBe(true);
   expect(await shadowText(page, ".approval-card")).not.toContain("private approval failure");
+});
+
+test("a terminal approval failure releases the composer and leaves a safe error", async ({
+  page,
+}) => {
+  const approval = await mockApprovalApi(page, {
+    decisionStatus: 404,
+    decisionDetail: "approval not found",
+  });
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "send the email");
+  await shadowClick(page, ".send");
+  await expect.poll(() => shadowExists(page, ".approval-card")).toBe(true);
+
+  await shadowClickText(page, ".approval-button", "Approve");
+
+  await expect.poll(() => approval.decisions).toEqual(["allow_once"]);
+  await expect.poll(() => shadowExists(page, ".approval-card")).toBe(false);
+  await expect
+    .poll(() => shadowText(page, ".msg-error"))
+    .toBe("This approval is no longer available. You can continue chatting.");
+  await expect.poll(() => shadowExists(page, ".input:disabled")).toBe(false);
+  await shadowFill(page, ".input", "continue chatting");
+  await expect.poll(() => shadowValue(page, ".input")).toBe("continue chatting");
 });
 
 test("Shift+Enter inserts a newline and Enter sends", async ({ page }) => {

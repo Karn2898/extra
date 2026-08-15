@@ -48,6 +48,18 @@ const DEFAULT_GREETING = "How can I help you today?";
 const GENERIC_ERROR = "Something went wrong. Please try again.";
 const COPIED_RESET_MS = 2000;
 
+const isTerminalApprovalError = (error: unknown): error is AgentChatHttpError =>
+  error instanceof AgentChatHttpError &&
+  error.status >= 400 &&
+  error.status < 500 &&
+  ![408, 425, 429].includes(error.status);
+
+const terminalApprovalMessage = (status: number): string => {
+  if (status === 403) return "You are not authorized to decide this approval.";
+  if (status === 409) return "This approval was already processed. You can continue chatting.";
+  return "This approval is no longer available. You can continue chatting.";
+};
+
 const newId = randomId;
 
 const toEntry = (message: ChatMessage): MessageEntry => ({
@@ -239,7 +251,7 @@ export function AgentChatApp({
         ),
       );
       try {
-        const result = await conversation.decideApproval(
+        const result = await client.decideApproval(
           cid,
           approval.run_id,
           approval.approval_id,
@@ -252,15 +264,24 @@ export function AgentChatApp({
           onAnswer({ visited: result.visited ?? [], used_tools: result.used_tools ?? [] });
         }
       } catch (error) {
-        const is4xx = error instanceof AgentChatHttpError && error.status >= 400 && error.status < 500;
+        const terminal = isTerminalApprovalError(error);
         putEntries(cid, (prev) =>
           prev.map((entry) =>
             entry.id === entryId
-              ? {
-                  ...entry,
-                  approvalSubmitting: false,
-                  approvalError: is4xx ? error.message : GENERIC_ERROR,
-                }
+              ? terminal
+                ? {
+                    ...entry,
+                    text: terminalApprovalMessage(error.status),
+                    error: true,
+                    approval: undefined,
+                    approvalSubmitting: false,
+                    approvalError: undefined,
+                  }
+                : {
+                    ...entry,
+                    approvalSubmitting: false,
+                    approvalError: GENERIC_ERROR,
+                  }
               : entry,
           ),
         );
@@ -269,7 +290,7 @@ export function AgentChatApp({
         void refreshUsage(cid);
       }
     },
-    [conversation, onAnswer, putEntries, refreshUsage],
+    [client, onAnswer, putEntries, refreshUsage],
   );
 
   const submit = useCallback(
@@ -527,8 +548,8 @@ function ApprovalRequest({
   return (
     <section className="approval-card" aria-busy={submitting} aria-label="Tool approval request">
       <p className="approval-title">Approval required</p>
-      <p className="approval-tool">{approval.tool_name}</p>
       <p className="approval-description">{approval.description}</p>
+      <p className="approval-tool">Tool: {approval.tool_name}</p>
       {error ? (
         <p className="approval-error" role="alert">
           {error}

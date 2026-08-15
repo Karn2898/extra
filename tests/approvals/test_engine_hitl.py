@@ -113,6 +113,33 @@ class ChangingToolCallIdModel(FakeChatModel):
         return response
 
 
+class ChainedApprovalModel(FakeChatModel):
+    """Calls two different tools in sequence before returning an answer."""
+
+    def bind_tools(self, tools: list[Any]) -> ChainedApprovalModel:
+        return ChainedApprovalModel([tool.name for tool in tools])
+
+    def _respond(self, messages: list[Any]) -> AIMessage:
+        completed_calls = sum(isinstance(message, ToolMessage) for message in messages)
+        if completed_calls < len(self._tool_names):
+            tool_name = self._tool_names[completed_calls]
+            return AIMessage(
+                content="",
+                tool_calls=[
+                    LCToolCall(
+                        name=tool_name,
+                        args={"message": tool_name},
+                        id=f"provider-call-{tool_name}",
+                    )
+                ],
+                usage_metadata={"input_tokens": 2, "output_tokens": 1, "total_tokens": 3},
+            )
+        return AIMessage(
+            content="done",
+            usage_metadata={"input_tokens": 2, "output_tokens": 1, "total_tokens": 3},
+        )
+
+
 def _factory(provider: str, name: str, temperature: float | None, **_: Any) -> BaseChatModel:
     return cast(BaseChatModel, FakeChatModel())
 
@@ -121,6 +148,12 @@ def _changing_id_factory(
     provider: str, name: str, temperature: float | None, **_: Any
 ) -> BaseChatModel:
     return cast(BaseChatModel, ChangingToolCallIdModel())
+
+
+def _chained_factory(
+    provider: str, name: str, temperature: float | None, **_: Any
+) -> BaseChatModel:
+    return cast(BaseChatModel, ChainedApprovalModel())
 
 
 def _write_counting_tool(base_dir: Path, tool_id: str, counter: Path) -> None:
@@ -142,8 +175,24 @@ def _spec(tool_id: str, *, auto_mode: bool = False) -> SystemSpec:
         description="writer agent",
         model=_MODEL,
         prompts=BasePromptSet(),
-        tools=(ToolSpec(tool_id, f"{tool_id} description"),),
+        tools=(ToolSpec(tool_id, "Send an email to the selected recipient."),),
         auto_mode=auto_mode,
+    )
+    return SystemSpec(meta=SystemMeta(name="hitl"), defaults=None, graph=GraphNode(node=agent))
+
+
+def _chained_spec() -> SystemSpec:
+    agent = AgentSpec(
+        id="writer",
+        name="writer",
+        description="writer agent",
+        model=_MODEL,
+        prompts=BasePromptSet(),
+        tools=(
+            ToolSpec("send_email", "Send an email to the selected recipient."),
+            ToolSpec("archive_email", "Archive the email after sending it."),
+        ),
+        auto_mode=False,
     )
     return SystemSpec(meta=SystemMeta(name="hitl"), defaults=None, graph=GraphNode(node=agent))
 
@@ -171,7 +220,10 @@ async def test_tool_requires_approval_and_does_not_execute(tmp_path: Path) -> No
     assert result.pending_approval is not None
     assert result.pending_approval.tool_name == "send_email"
     assert result.pending_approval.agent_id == "writer"
-    assert result.pending_approval.description  # human-readable, "not executed yet"
+    assert result.pending_approval.description == (
+        "Send an email to the selected recipient. This action has not been executed."
+    )
+    assert "writer" not in result.pending_approval.description
     # The provider must NOT have been invoked before approval.
     assert _executions(counter) == 0
 
@@ -195,6 +247,35 @@ async def test_allow_once_resumes_same_run_and_executes_once(tmp_path: Path) -> 
     assert resumed.visited == ["writer"]  # same run, agent not re-selected as a new route
     assert (resumed.input_tokens, resumed.output_tokens) == (6, 3)
     assert recovered == resumed
+
+
+async def test_retrying_first_decision_recovers_second_pending_approval(tmp_path: Path) -> None:
+    first_counter = tmp_path / "first.log"
+    second_counter = tmp_path / "second.log"
+    _write_counting_tool(tmp_path, "send_email", first_counter)
+    _write_counting_tool(tmp_path, "archive_email", second_counter)
+
+    async with LangGraphEngine(tmp_path, model_factory=_chained_factory) as engine:
+        await engine.build(_chained_spec())
+        first = await engine.run("hi", context=RunContext(run_id="run-chained"))
+        assert first.pending_approval is not None
+
+        second = await engine.resume(
+            "run-chained",
+            first.pending_approval.approval_id,
+            "allow once",
+        )
+        assert second.pending_approval is not None
+        recovered = await engine.get_processed_result(
+            "run-chained",
+            first.pending_approval.approval_id,
+        )
+
+    assert second.status == "pending_approval"
+    assert second.pending_approval.tool_name == "archive_email"
+    assert recovered == second
+    assert _executions(first_counter) == 1
+    assert _executions(second_counter) == 0
 
 
 async def test_resume_is_stable_when_provider_changes_tool_call_id(tmp_path: Path) -> None:

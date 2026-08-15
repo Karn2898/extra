@@ -13,13 +13,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
 from agent_engine.approvals.errors import (
-    ApprovalAlreadyProcessed,
     ApprovalError,
-    ApprovalNotFound,
-    ApprovalRunMismatch,
-    InvalidDecision,
-    RunNotFound,
-    UnauthorizedApprover,
+    approval_http_status,
+    approval_public_message,
 )
 from agent_engine.engine.types import PendingApproval, RunResult
 from agent_engine.runtime.streaming import RunStreamEvent
@@ -70,15 +66,6 @@ _HTTP_ERRORS: dict[type[Exception], tuple[int, Any]] = {
     ConversationAlreadyExists: (409, "conversation id already taken"),
     ConversationTokenBudgetExceeded: (429, _BUDGET_EXCEEDED_DETAIL),
     ConversationLinkRefused: (403, "a visitor cannot adopt another visitor"),
-}
-
-_APPROVAL_HTTP_ERRORS: dict[type[ApprovalError], tuple[int, str]] = {
-    RunNotFound: (404, "run not found"),
-    ApprovalNotFound: (404, "approval not found"),
-    ApprovalRunMismatch: (404, "approval not found"),
-    UnauthorizedApprover: (403, "not authorized to decide this approval"),
-    ApprovalAlreadyProcessed: (409, "approval already processed"),
-    InvalidDecision: (400, "invalid approval decision"),
 }
 
 
@@ -240,10 +227,10 @@ async def decide_approval(
             "approval decision rejected",
             extra={"run_id": run_id, "approval_id": approval_id},
         )
-        status, detail = _APPROVAL_HTTP_ERRORS.get(
-            type(exc), (409, "approval could not be processed")
-        )
-        raise HTTPException(status_code=status, detail=detail) from None
+        raise HTTPException(
+            status_code=approval_http_status(exc),
+            detail=approval_public_message(exc),
+        ) from None
     except Exception:
         logger.exception(
             "approval decision failed",

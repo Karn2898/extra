@@ -53258,10 +53258,6 @@ function useConversation(client, endpoint, onReplaced) {
     },
     [client, replace2]
   );
-  const decideApproval = (0, import_react9.useCallback)(
-    (conversationId, runId, approvalId, decision) => client.decideApproval(conversationId, runId, approvalId, decision),
-    [client]
-  );
   const loadHistory = (0, import_react9.useCallback)(
     async (conversationId) => {
       try {
@@ -53300,7 +53296,6 @@ function useConversation(client, endpoint, onReplaced) {
       ensureId,
       send,
       stream,
-      decideApproval,
       loadHistory,
       loadUsage,
       listThreads,
@@ -53312,7 +53307,6 @@ function useConversation(client, endpoint, onReplaced) {
       ensureId,
       send,
       stream,
-      decideApproval,
       loadHistory,
       loadUsage,
       listThreads,
@@ -53327,6 +53321,12 @@ var import_jsx_runtime4 = __toESM(require_jsx_runtime(), 1);
 var DEFAULT_GREETING = "How can I help you today?";
 var GENERIC_ERROR = "Something went wrong. Please try again.";
 var COPIED_RESET_MS = 2e3;
+var isTerminalApprovalError = (error) => error instanceof AgentChatHttpError && error.status >= 400 && error.status < 500 && ![408, 425, 429].includes(error.status);
+var terminalApprovalMessage = (status) => {
+  if (status === 403) return "You are not authorized to decide this approval.";
+  if (status === 409) return "This approval was already processed. You can continue chatting.";
+  return "This approval is no longer available. You can continue chatting.";
+};
 var newId = randomId;
 var toEntry = (message) => ({
   id: newId(),
@@ -53474,7 +53474,7 @@ function AgentChatApp({
         )
       );
       try {
-        const result = await conversation.decideApproval(
+        const result = await client.decideApproval(
           cid,
           approval.run_id,
           approval.approval_id,
@@ -53488,14 +53488,21 @@ function AgentChatApp({
           onAnswer({ visited: result.visited ?? [], used_tools: result.used_tools ?? [] });
         }
       } catch (error) {
-        const is4xx = error instanceof AgentChatHttpError && error.status >= 400 && error.status < 500;
+        const terminal = isTerminalApprovalError(error);
         putEntries(
           cid,
           (prev) => prev.map(
-            (entry) => entry.id === entryId ? {
+            (entry) => entry.id === entryId ? terminal ? {
+              ...entry,
+              text: terminalApprovalMessage(error.status),
+              error: true,
+              approval: void 0,
+              approvalSubmitting: false,
+              approvalError: void 0
+            } : {
               ...entry,
               approvalSubmitting: false,
-              approvalError: is4xx ? error.message : GENERIC_ERROR
+              approvalError: GENERIC_ERROR
             } : entry
           )
         );
@@ -53504,7 +53511,7 @@ function AgentChatApp({
         void refreshUsage(cid);
       }
     },
-    [conversation, onAnswer, putEntries, refreshUsage]
+    [client, onAnswer, putEntries, refreshUsage]
   );
   const submit = (0, import_react10.useCallback)(
     async (text10) => {
@@ -53716,8 +53723,11 @@ function ApprovalRequest({
 }) {
   return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("section", { className: "approval-card", "aria-busy": submitting, "aria-label": "Tool approval request", children: [
     /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { className: "approval-title", children: "Approval required" }),
-    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { className: "approval-tool", children: approval.tool_name }),
     /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { className: "approval-description", children: approval.description }),
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("p", { className: "approval-tool", children: [
+      "Tool: ",
+      approval.tool_name
+    ] }),
     error ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { className: "approval-error", role: "alert", children: error }) : null,
     /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "approval-actions", children: [
       /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(

@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agent_engine.approvals.decision import ApprovalDecision
-from agent_engine.approvals.errors import ApprovalAlreadyProcessed
+from agent_engine.approvals.errors import ApprovalAlreadyProcessed, ApprovalNotFound
 from agent_engine.engine.engine import Engine
 from agent_engine.engine.types import ChatMessage, PendingApproval, RunResult
 from agent_engine.runtime.hooks.models import RunContext
@@ -620,6 +620,40 @@ def test_conversation_approval_sanitizes_engine_failure(
     assert response.json()["detail"] == "Internal server error"
     assert "private approval failure" not in response.text
     assert "private approval failure" in caplog.text
+
+
+def test_conversation_approval_sanitizes_typed_approval_failure() -> None:
+    class MissingApprovalEngine(_ApprovalRecordingEngine):
+        async def resume(
+            self,
+            run_id: str,
+            approval_id: str,
+            decision: ApprovalDecision | str,
+            *,
+            caller_user_id: str | None = None,
+            caller_session_id: str | None = None,
+        ) -> RunResult:
+            del run_id, decision, caller_user_id, caller_session_id
+            raise ApprovalNotFound(f"private-{approval_id}")
+
+    engine = MissingApprovalEngine()
+    app = build_test_app(ConversationService(engine, MemoryRepository()))
+    client = TestClient(app, headers=bearer("user-1"))
+    client.post("/conversations", json={"session_id": "session-1"})
+    pending = client.post(
+        "/conversations/session-1/messages",
+        json={"message": "send it"},
+    ).json()["pending_approval"]
+
+    response = client.post(
+        f"/conversations/session-1/runs/{pending['run_id']}"
+        f"/approvals/{pending['approval_id']}/decision",
+        json={"decision": ApprovalDecision.ALLOW_ONCE.value},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "approval not found"
+    assert "private" not in response.text
 
 
 def test_conversation_approval_retry_recovers_result_without_duplicate_message() -> None:

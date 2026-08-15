@@ -152,16 +152,17 @@ The widget connects to the streaming endpoint (`POST /conversations/{id}/message
 ## Tool approvals
 
 When a tool requires human approval, the widget pauses the current run and
-shows three actions:
+shows the tool's human-readable description and three actions:
 
 - **Approve** — allow only this tool invocation.
 - **Deny** — reject this invocation without running the tool.
 - **Approve for this session** — allow this invocation and stop asking for the
   same scoped tool during the current conversation.
 
-The decision resumes the existing run; it does not submit the user message a
-second time. Session approval remains scoped by the backend to the current
-system, identity, conversation, agent, and provider-qualified tool.
+The decision resumes the existing run through the conversation approval API; it
+does not resend the user's message. Hosts must keep the same authenticated
+conversation identity for the decision. Afterward, the run either completes or
+shows the next approval request.
 
 ---
 

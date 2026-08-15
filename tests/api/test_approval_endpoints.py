@@ -185,6 +185,8 @@ def test_session_bound_approval_requires_the_same_session(client: TestClient) ->
     )
 
     assert omitted.status_code == 403
+    assert omitted.json()["detail"] == "not authorized to decide this approval"
+    assert approval_id not in omitted.text
     assert wrong.status_code == 403
     assert allowed.status_code == 200
 

@@ -76,3 +76,23 @@ class CheckpointNotFound(ApprovalError):
     def __init__(self, thread_id: str) -> None:
         self.thread_id = thread_id
         super().__init__(f"no checkpoint found for thread: {thread_id}")
+
+
+_HTTP_POLICY: dict[type[ApprovalError], tuple[int, str]] = {
+    RunNotFound: (404, "run not found"),
+    ApprovalNotFound: (404, "approval not found"),
+    ApprovalRunMismatch: (404, "approval not found"),
+    UnauthorizedApprover: (403, "not authorized to decide this approval"),
+    ApprovalAlreadyProcessed: (409, "approval already processed"),
+    InvalidDecision: (400, "invalid approval decision"),
+}
+
+
+def approval_http_status(exc: ApprovalError) -> int:
+    """Return the stable HTTP status for an approval-lifecycle failure."""
+    return _HTTP_POLICY.get(type(exc), (409, "approval could not be processed"))[0]
+
+
+def approval_public_message(exc: ApprovalError) -> str:
+    """Return a sanitized client message without exposing exception details."""
+    return _HTTP_POLICY.get(type(exc), (409, "approval could not be processed"))[1]

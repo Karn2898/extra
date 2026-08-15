@@ -7,7 +7,6 @@ import {
   setStoredConversationId,
 } from "../storage/conversationStorage";
 import type {
-  ApprovalDecision,
   ChatMessage,
   TokenBudget,
   SendMessageResponse,
@@ -26,12 +25,6 @@ export interface Conversation {
   ensureId(): Promise<string>;
   send(conversationId: string, text: string): Promise<SendMessageResponse>;
   stream(conversationId: string, text: string): AsyncGenerator<StreamEvent>;
-  decideApproval(
-    conversationId: string,
-    runId: string,
-    approvalId: string,
-    decision: ApprovalDecision,
-  ): Promise<SendMessageResponse>;
   loadHistory(conversationId: string): Promise<ChatMessage[]>;
   loadUsage(conversationId: string): Promise<TokenBudget | null>;
   listThreads(): Promise<ThreadSummary[]>;
@@ -100,16 +93,6 @@ export function useConversation(
     [client, replace],
   );
 
-  const decideApproval = useCallback(
-    (
-      conversationId: string,
-      runId: string,
-      approvalId: string,
-      decision: ApprovalDecision,
-    ) => client.decideApproval(conversationId, runId, approvalId, decision),
-    [client],
-  );
-
   const loadHistory = useCallback(
     async (conversationId: string) => {
       try {
@@ -153,7 +136,6 @@ export function useConversation(
       ensureId,
       send,
       stream,
-      decideApproval,
       loadHistory,
       loadUsage,
       listThreads,
@@ -165,7 +147,6 @@ export function useConversation(
       ensureId,
       send,
       stream,
-      decideApproval,
       loadHistory,
       loadUsage,
       listThreads,

@@ -159,8 +159,7 @@ class MemoryRepository(Repository):
         """Append once under the adapter's single-event-loop execution model."""
         if any(
             existing.message_id == message.message_id
-            for messages in self._messages.values()
-            for existing in messages
+            for existing in self._messages.get(message.session_id, [])
         ):
             return False
         await self.append_message(message, snapshot_ttl_seconds=snapshot_ttl_seconds)

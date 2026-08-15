@@ -546,7 +546,19 @@ class LangGraphEngine(Engine):
             return None
         token_usage = (run.input_tokens, run.output_tokens)
         if run.status == RunStatus.PENDING_APPROVAL:
-            return await self._pending_result(ctx, values, token_usage=token_usage)
+            approval = await self.get_pending_approval(run_id)
+            if approval is None:
+                return None
+            return RunResult(
+                system_name=self._system_name,
+                visited=values.get("visited", []),
+                answer="",
+                used_tools=tuple(values.get("used_tools", [])),
+                input_tokens=token_usage[0],
+                output_tokens=token_usage[1],
+                status="pending_approval",
+                pending_approval=approval,
+            )
         return self._completed_result(values, token_usage=token_usage)
 
     async def resume(

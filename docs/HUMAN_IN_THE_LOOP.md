@@ -188,6 +188,11 @@ When a call requires approval, the `ApprovalProvider` for this runtime
 
 To resume, `Engine.resume(run_id, approval_id, decision)`:
 
+> **Compatibility note:** Session-bound approvals now fail closed. Callers of
+> `resume(...)` and the approval HTTP endpoints must propagate the same session
+> identity used when the approval was created (for the engine API, via
+> `caller_session_id` / `X-Session-ID`). Omitting or changing it returns 403.
+
 1. **Atomically claims** the approval (`PENDING → RESUMING`) — exactly one caller
    wins (see §7).
 2. Resumes the **same** LangGraph thread from its checkpoint via

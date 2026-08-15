@@ -122,6 +122,7 @@ class _ToolCall:
     tool_call_id: str
     run_id: str
     exec_id: str
+    description: str
 
 
 def _elapsed_ms(start: float) -> int:
@@ -265,6 +266,7 @@ class AgentNode:
             tool_call_id=tool_call_id,
             run_id=run_id,
             exec_id=execution_id_for(tool_call_id),
+            description=tool.description,
         )
 
     def _enforce_limits(self, call: _ToolCall) -> str | None:
@@ -485,6 +487,7 @@ class AgentNode:
             organization_id=organization_id or "",
             run_id=run_context.run_id if run_context else None,
             approval_id=(approval_id_value if isinstance(approval_id_value, str) else None),
+            human_description=call.description,
         )
         outcome = await self._approval_coordinator.resolve(
             invocation, auto_mode=self._spec.auto_mode
