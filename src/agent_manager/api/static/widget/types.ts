@@ -125,8 +125,10 @@ export interface AgentChatIdentityErrorDetail {
   reason: "unauthorized" | "unreachable" | "malformed";
   status?: number;
   url: string;
-  /** Whether the widget fell back to an anonymous visitor anyway. */
-  fellBackToAnonymous: boolean;
+  /** Whether an anonymous fallback is permitted at all — capability, not
+   *  outcome. The fallback can itself fail, and a host session cookie may end
+   *  up authenticating the next request instead. */
+  anonymousFallbackEnabled: boolean;
 }
 
 /** Detail of the `agent-chat:answer` event a host page can listen for. */

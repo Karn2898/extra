@@ -226,6 +226,7 @@ const widget = await import(`./widget.js?test=${Date.now()}`);
 const {
   AgentChatClient,
   TokenSource,
+  applyConfigAttributes,
   visitorPassKey,
   attributeName,
   autoMountAgentChat,
@@ -557,5 +558,40 @@ const strict = new TokenSource("https://api.example", {
 });
 assert.equal(await strict.renew(), null, "no token rather than an anonymous one");
 assert.equal(mintedPass, false, "never asks for a visitor pass");
+
+
+// require-identity is opt-in in BOTH directions. The generic config mapper
+// stringifies booleans, so `requireIdentity: false` arrives as the string
+// "false" — reading presence alone would flip an explicit opt-out into opt-in
+// and make a login-less product fail closed.
+{
+  const absent = new FakeElement("agent-chat");
+  assert.equal(parseConfig(absent, "https://w.example").requireIdentity, false);
+
+  const bare = new FakeElement("agent-chat");
+  bare.setAttribute("require-identity", "");
+  assert.equal(parseConfig(bare, "https://w.example").requireIdentity, true);
+
+  const explicitTrue = new FakeElement("agent-chat");
+  explicitTrue.setAttribute("require-identity", "true");
+  assert.equal(parseConfig(explicitTrue, "https://w.example").requireIdentity, true);
+
+  const explicitFalse = new FakeElement("agent-chat");
+  explicitFalse.setAttribute("require-identity", "false");
+  assert.equal(
+    parseConfig(explicitFalse, "https://w.example").requireIdentity,
+    false,
+    'require-identity="false" must stay false',
+  );
+
+  // ...and end to end through the mapper the auto-mount path uses.
+  const mapped = new FakeElement("agent-chat");
+  applyConfigAttributes(mapped, { requireIdentity: false });
+  assert.equal(
+    parseConfig(mapped, "https://w.example").requireIdentity,
+    false,
+    "window.agentChatConfig { requireIdentity: false } must not fail closed",
+  );
+}
 
 console.log("widget self-check: OK");

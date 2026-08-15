@@ -40,8 +40,20 @@ export function parseConfig(element: HTMLElement, scriptBaseUrl: string): AgentC
     avatar: element.getAttribute("avatar") || DEFAULT_CONFIG.avatar,
     mode: safeMode(element.getAttribute("mode")),
     tokenUrl: element.getAttribute("token-url") || DEFAULT_CONFIG.tokenUrl,
-    requireIdentity: element.hasAttribute("require-identity"),
+    requireIdentity: flag(element, "require-identity"),
   };
+}
+
+/** A boolean attribute that also honours an explicit value.
+ *
+ * Bare presence means true, as HTML expects. But `applyConfigAttributes`
+ * stringifies whatever the host put in `window.agentChatConfig`, so
+ * `requireIdentity: false` arrives as `require-identity="false"` — and reading
+ * presence alone would turn an explicit opt-out into an opt-in.
+ */
+function flag(element: HTMLElement, name: string): boolean {
+  const value = element.getAttribute(name);
+  return value !== null && value.toLowerCase() !== "false";
 }
 
 /** `tokenUrl` is the `token-url` attribute; HTML attributes are kebab-case. */

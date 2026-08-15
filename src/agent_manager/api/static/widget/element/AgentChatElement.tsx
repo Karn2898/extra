@@ -92,13 +92,13 @@ export class AgentChatElement extends HTMLElement {
    *  swallowed: an unreachable `token-url` otherwise looks exactly like a
    *  working anonymous chat, which is how a broken integration ships. */
   private emitIdentityFailure(failure: IdentityFailure): void {
-    const fellBackToAnonymous = !this.config.requireIdentity;
-    const detail: AgentChatIdentityErrorDetail = { ...failure, fellBackToAnonymous };
+    const anonymousFallbackEnabled = !this.config.requireIdentity;
+    const detail: AgentChatIdentityErrorDetail = { ...failure, anonymousFallbackEnabled };
     if (failure.reason !== "unauthorized") {
       console.warn(
         `[agent-chat] could not obtain an identity from ${failure.url}` +
           `${failure.status ? ` (HTTP ${failure.status})` : ""}: ${failure.reason}.` +
-          `${fellBackToAnonymous ? " Falling back to an anonymous visitor." : ""}`,
+          `${anonymousFallbackEnabled ? " May fall back to an anonymous visitor." : ""}`,
       );
     }
     try {

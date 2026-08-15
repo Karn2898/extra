@@ -52088,8 +52088,12 @@ function parseConfig(element7, scriptBaseUrl) {
     avatar: element7.getAttribute("avatar") || DEFAULT_CONFIG.avatar,
     mode: safeMode(element7.getAttribute("mode")),
     tokenUrl: element7.getAttribute("token-url") || DEFAULT_CONFIG.tokenUrl,
-    requireIdentity: element7.hasAttribute("require-identity")
+    requireIdentity: flag(element7, "require-identity")
   };
+}
+function flag(element7, name2) {
+  const value = element7.getAttribute(name2);
+  return value !== null && value.toLowerCase() !== "false";
 }
 function attributeName(configKey) {
   return configKey.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
@@ -54262,11 +54266,11 @@ var AgentChatElement = class extends HTMLElement {
    *  swallowed: an unreachable `token-url` otherwise looks exactly like a
    *  working anonymous chat, which is how a broken integration ships. */
   emitIdentityFailure(failure) {
-    const fellBackToAnonymous = !this.config.requireIdentity;
-    const detail = { ...failure, fellBackToAnonymous };
+    const anonymousFallbackEnabled = !this.config.requireIdentity;
+    const detail = { ...failure, anonymousFallbackEnabled };
     if (failure.reason !== "unauthorized") {
       console.warn(
-        `[agent-chat] could not obtain an identity from ${failure.url}${failure.status ? ` (HTTP ${failure.status})` : ""}: ${failure.reason}.${fellBackToAnonymous ? " Falling back to an anonymous visitor." : ""}`
+        `[agent-chat] could not obtain an identity from ${failure.url}${failure.status ? ` (HTTP ${failure.status})` : ""}: ${failure.reason}.${anonymousFallbackEnabled ? " May fall back to an anonymous visitor." : ""}`
       );
     }
     try {

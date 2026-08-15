@@ -103,7 +103,8 @@ anonymous chat:
 
 ```js
 document.querySelector("agent-chat").addEventListener("agent-chat:identity-error", (e) => {
-  // { reason: "unauthorized" | "unreachable" | "malformed", status, url, fellBackToAnonymous }
+  // { reason: "unauthorized" | "unreachable" | "malformed", status, url,
+  //   anonymousFallbackEnabled }   <- whether falling back is allowed, not that it worked
   console.log(e.detail);
 });
 ```
