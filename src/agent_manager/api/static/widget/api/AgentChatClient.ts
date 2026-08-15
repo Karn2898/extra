@@ -85,10 +85,16 @@ export class AgentChatClient {
     return (await response.json()) as ChatMessage[];
   }
 
-  async sendMessage(conversationId: string, message: string): Promise<SendMessageResponse> {
+  async sendMessage(
+    conversationId: string,
+    message: string,
+    signal?: AbortSignal,
+    editMessageId?: string,
+  ): Promise<SendMessageResponse> {
     const response = await this.request(`/conversations/${conversationId}/messages`, {
       method: "POST",
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, edit_message_id: editMessageId }),
+      signal,
     });
 
     return parseRunResponse(await response.json());
@@ -110,6 +116,35 @@ export class AgentChatClient {
     return parseRunResponse(await response.json());
   }
 
+  async *streamApproval(
+    conversationId: string,
+    runId: string,
+    approvalId: string,
+    decision: ApprovalDecision,
+    signal?: AbortSignal,
+  ): AsyncGenerator<StreamEvent> {
+    const response = await this.request(
+      `/conversations/${conversationId}/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approvalId)}/decision/stream`,
+      {
+        method: "POST",
+        body: JSON.stringify({ decision }),
+        signal,
+      },
+    );
+    yield* readSseResponse(response);
+  }
+
+  async cancelApproval(
+    conversationId: string,
+    runId: string,
+    approvalId: string,
+  ): Promise<void> {
+    await this.request(
+      `/conversations/${conversationId}/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approvalId)}/cancel`,
+      { method: "POST", body: "{}" },
+    );
+  }
+
   async getUsage(conversationId: string): Promise<TokenBudget> {
     const response = await this.request(`/conversations/${conversationId}/usage`);
     const data = await response.json();
@@ -121,37 +156,52 @@ export class AgentChatClient {
     };
   }
 
-  async *streamMessage(conversationId: string, message: string): AsyncGenerator<StreamEvent> {
+  async *streamMessage(
+    conversationId: string,
+    message: string,
+    signal?: AbortSignal,
+    editMessageId?: string,
+  ): AsyncGenerator<StreamEvent> {
     const response = await this.request(`/conversations/${conversationId}/messages/stream`, {
       method: "POST",
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, edit_message_id: editMessageId }),
+      signal,
     });
 
-    if (!response.body) {
-      throw new Error("Streaming response has no body");
-    }
+    yield* readSseResponse(response);
+  }
+}
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const frames = buffer.split(/\n\n/);
-        buffer = frames.pop() ?? "";
-        for (const frame of frames) {
-          const event = parseSseFrame(frame);
-          if (event) yield event;
-        }
+async function* readSseResponse(response: Response): AsyncGenerator<StreamEvent> {
+  if (!response.body) {
+    throw new Error("Streaming response has no body");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const frames = buffer.split(/\r?\n\r?\n/);
+      buffer = frames.pop() ?? "";
+      for (const frame of frames) {
+        const event = parseSseFrame(frame);
+        if (event) yield event;
       }
-      buffer += decoder.decode();
-      const event = parseSseFrame(buffer);
-      if (event) yield event;
-    } finally {
-      reader.releaseLock();
     }
+    buffer += decoder.decode();
+    const event = parseSseFrame(buffer);
+    if (event) yield event;
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      // An AbortSignal may already have cancelled the response body.
+    }
+    reader.releaseLock();
   }
 }
 

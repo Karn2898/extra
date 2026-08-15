@@ -1,4 +1,11 @@
-import { CheckCircleIcon, CircleIcon, SendIcon, WrenchIcon, XCircleIcon } from "lucide-react";
+import {
+  CheckCircleIcon,
+  CircleIcon,
+  SendIcon,
+  SquareIcon,
+  WrenchIcon,
+  XCircleIcon,
+} from "lucide-react";
 import type {
   ComponentProps,
   FormEvent,
@@ -78,12 +85,15 @@ export interface PromptInputMessage {
 export function PromptInput({
   children,
   className,
+  submitEnabled = true,
   onSubmit,
 }: PropsWithChildren<{
   className?: string;
+  submitEnabled?: boolean;
   onSubmit: (message: PromptInputMessage) => void;
 }>) {
   function submit(form: HTMLFormElement) {
+    if (!submitEnabled) return;
     const input = form.elements.namedItem("message") as HTMLTextAreaElement | null;
     const text = input?.value.trim() ?? "";
     if (!text) return;
@@ -148,10 +158,24 @@ export function PromptInputFooter({ children }: PropsWithChildren) {
   return <div className="prompt-footer">{children}</div>;
 }
 
-export function PromptInputSubmit({ disabled }: { disabled: boolean }) {
+export function PromptInputSubmit({
+  disabled,
+  running = false,
+  onStop,
+}: {
+  disabled: boolean;
+  running?: boolean;
+  onStop?: () => void;
+}) {
   return (
-    <button aria-label="Send message" className="send" disabled={disabled} type="submit">
-      <SendIcon aria-hidden="true" />
+    <button
+      aria-label={running ? "Stop generating" : "Send message"}
+      className="send"
+      disabled={disabled}
+      onClick={running ? onStop : undefined}
+      type={running ? "button" : "submit"}
+    >
+      {running ? <SquareIcon aria-hidden="true" /> : <SendIcon aria-hidden="true" />}
     </button>
   );
 }

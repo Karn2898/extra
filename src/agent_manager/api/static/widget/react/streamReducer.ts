@@ -8,6 +8,16 @@ const TOOL_STATUS: Record<string, string> = {
 
 export function reduceStreamEvent(entry: MessageEntry, event: StreamEvent): MessageEntry {
   switch (event.type) {
+    case "turn_started":
+      return entry;
+    case "resume_started":
+      return {
+        ...entry,
+        typing: true,
+        approval: undefined,
+        approvalSubmitting: false,
+        approvalError: undefined,
+      };
     case "answer_delta":
       return { ...entry, text: entry.text + (event.content ?? "") };
     case "route":

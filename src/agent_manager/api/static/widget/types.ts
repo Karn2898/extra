@@ -32,8 +32,11 @@ export interface ThreadSummary {
 }
 
 export interface ChatMessage {
+  message_id: string;
+  run_id?: string | null;
   role: ChatRole;
   content: string;
+  status: string;
   created_at?: string;
 }
 
@@ -49,14 +52,18 @@ export interface TokenBudget {
 
 export interface MessageEntry {
   id: string;
+  messageId?: string;
+  runId?: string;
   role: "user" | "ai";
   text: string;
+  status?: "cancelled";
   typing?: boolean;
   error?: boolean;
   route?: string[];
   tools?: ToolRecord[];
   approval?: PendingApproval;
   approvalSubmitting?: boolean;
+  approvalCancelling?: boolean;
   approvalError?: string;
 }
 
@@ -94,6 +101,8 @@ export interface SendMessageResponse {
 export interface StreamEvent {
   type:
     | "route"
+    | "turn_started"
+    | "resume_started"
     | "answer_delta"
     | "tool_started"
     | "tool_succeeded"
@@ -111,6 +120,7 @@ export interface StreamEvent {
   system_name?: string;
   used_tools?: ToolRecord[];
   run_id?: string;
+  message_id?: string;
   approval_id?: string;
   agent_id?: string;
   description?: string;
