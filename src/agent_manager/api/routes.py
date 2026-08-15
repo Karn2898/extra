@@ -293,10 +293,7 @@ async def stream_approval_decision(
                 "approval resume stream rejected",
                 extra={"run_id": run_id, "approval_id": approval_id},
             )
-            _, detail = _APPROVAL_HTTP_ERRORS.get(
-                type(exc), (409, "approval could not be processed")
-            )
-            payload = {"type": "error", "error": detail}
+            payload = {"type": "error", "error": approval_public_message(exc)}
             yield f"event: error\ndata: {json.dumps(payload)}\n\n"
         except Exception:
             logger.exception(
@@ -338,10 +335,10 @@ async def cancel_pending_approval(
             "approval cancellation rejected",
             extra={"run_id": run_id, "approval_id": approval_id},
         )
-        status, detail = _APPROVAL_HTTP_ERRORS.get(
-            type(exc), (409, "approval could not be cancelled")
-        )
-        raise HTTPException(status_code=status, detail=detail) from None
+        raise HTTPException(
+            status_code=approval_http_status(exc),
+            detail=approval_public_message(exc),
+        ) from None
     except Exception:
         logger.exception(
             "approval cancellation failed",
