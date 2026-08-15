@@ -46,10 +46,10 @@ export function parseConfig(element: HTMLElement, scriptBaseUrl: string): AgentC
 
 /** A boolean attribute that also honours an explicit value.
  *
- * Bare presence means true, as HTML expects. But `applyConfigAttributes`
- * stringifies whatever the host put in `window.agentChatConfig`, so
- * `requireIdentity: false` arrives as `require-identity="false"` — and reading
- * presence alone would turn an explicit opt-out into an opt-in.
+ * Bare presence means true, as HTML expects. Strict HTML would also call
+ * `require-identity="false"` true — `<input disabled="false">` is disabled —
+ * but a human writing that plainly means the opposite, so it is read as false.
+ * `applyConfigAttributes` no longer emits it either way.
  */
 function flag(element: HTMLElement, name: string): boolean {
   const value = element.getAttribute(name);
@@ -63,8 +63,14 @@ export function attributeName(configKey: string): string {
 
 export function applyConfigAttributes(element: HTMLElement, config: AgentChatConfigInput): void {
   for (const [key, value] of Object.entries(config)) {
-    if (value !== undefined && value !== null) {
-      element.setAttribute(attributeName(key), String(value));
+    if (value === undefined || value === null) continue;
+    // A boolean attribute says "off" by being absent — that is what HTML means
+    // by one. Writing require-identity="false" would produce markup that reads
+    // as opting out while HTML semantics say it is on.
+    if (value === false) {
+      element.removeAttribute(attributeName(key));
+      continue;
     }
+    element.setAttribute(attributeName(key), value === true ? "" : String(value));
   }
 }

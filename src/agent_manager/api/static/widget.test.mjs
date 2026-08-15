@@ -57,6 +57,10 @@ class FakeElement {
     return this.attributes.has(name);
   }
 
+  removeAttribute(name) {
+    this.attributes.delete(name);
+  }
+
   getAttribute(name) {
     return this.attributes.has(name) ? this.attributes.get(name) : null;
   }
@@ -584,14 +588,22 @@ assert.equal(mintedPass, false, "never asks for a visitor pass");
     'require-identity="false" must stay false',
   );
 
-  // ...and end to end through the mapper the auto-mount path uses.
+  // ...and end to end through the mapper the auto-mount path uses. A boolean
+  // that is off must not appear in the markup at all: HTML says an attribute
+  // that exists is on, whatever its value.
   const mapped = new FakeElement("agent-chat");
   applyConfigAttributes(mapped, { requireIdentity: false });
+  assert.equal(mapped.hasAttribute("require-identity"), false, "off means absent");
   assert.equal(
     parseConfig(mapped, "https://w.example").requireIdentity,
     false,
     "window.agentChatConfig { requireIdentity: false } must not fail closed",
   );
+
+  const mappedOn = new FakeElement("agent-chat");
+  applyConfigAttributes(mappedOn, { requireIdentity: true });
+  assert.equal(mappedOn.getAttribute("require-identity"), "", "on is bare presence");
+  assert.equal(parseConfig(mappedOn, "https://w.example").requireIdentity, true);
 }
 
 console.log("widget self-check: OK");

@@ -52100,9 +52100,12 @@ function attributeName(configKey) {
 }
 function applyConfigAttributes(element7, config) {
   for (const [key, value] of Object.entries(config)) {
-    if (value !== void 0 && value !== null) {
-      element7.setAttribute(attributeName(key), String(value));
+    if (value === void 0 || value === null) continue;
+    if (value === false) {
+      element7.removeAttribute(attributeName(key));
+      continue;
     }
+    element7.setAttribute(attributeName(key), value === true ? "" : String(value));
   }
 }
 
