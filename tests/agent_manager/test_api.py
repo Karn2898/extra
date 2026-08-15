@@ -253,6 +253,31 @@ def test_the_host_session_cookie_authenticates_a_same_origin_deployment() -> Non
     assert TestClient(app).get(f"/conversations/{cid}/messages").status_code == 401
 
 
+def test_a_visitor_pass_does_not_shadow_the_host_session_cookie() -> None:
+    """Someone who browsed before signing in is holding a visitor pass, and the
+    widget keeps sending it. If that outranked the cookie they would stay
+    anonymous for as long as the pass lived — including across reloads, since
+    nothing on the client knows a cookie appeared."""
+    app = build_test_app(
+        ConversationService(RecordingEngine(), MemoryRepository()),
+        agent_auth_mode=AuthMode.HOST_TOKEN,
+        agent_auth_cookie=HOST_COOKIE,
+        agent_auth_claim_user_id="id",
+    )
+    visitor_pass = TestClient(app).post("/auth/anonymous").json()["token"]
+
+    # Browsed anonymously, then signed in: both credentials now travel together.
+    dana = TestClient(app, cookies=session_cookie(id="u_8412"))
+    dana.headers["Authorization"] = f"Bearer {visitor_pass}"
+    cid = dana.post("/conversations").json()["conversation_id"]
+
+    # The conversation belongs to Dana, not to the visitor she used to be.
+    as_dana = TestClient(app, cookies=session_cookie(id="u_8412"))
+    assert [t["conversation_id"] for t in as_dana.get("/conversations").json()] == [cid]
+    still_a_visitor = {"Authorization": f"Bearer {visitor_pass}"}
+    assert TestClient(app).get("/conversations", headers=still_a_visitor).json() == []
+
+
 def test_a_visitor_pass_is_an_identity_of_its_own(unauthenticated: TestClient) -> None:
     """Products with no login still get isolation: passes are signed, not guessed."""
     client = unauthenticated

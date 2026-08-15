@@ -37,13 +37,19 @@ def get_caller_identity(request: Request) -> CallerIdentity:
 def get_principal(request: Request) -> Principal:
     """The proven caller every conversation route authorizes against.
 
-    A bearer token first, then the host's session cookie. Trusting that cookie is
-    safe because it only reaches us from the host's own origin: cross-site
-    requests cannot read a JSON response, and the widget's `application/json`
-    writes are preflighted against a CORS allowlist that denies by default.
+    The host's session cookie where a deployment names one, otherwise a bearer
+    token. Trusting that cookie is safe because it only reaches us from the
+    host's own origin: cross-site requests cannot read a JSON response, and the
+    widget's `application/json` writes are preflighted against a CORS allowlist
+    that denies by default.
     """
     identity = get_caller_identity(request)
-    token = _bearer_token(request) or _cookie_token(request, identity.cookie_name)
+    # Where a deployment names a session cookie, that cookie is the host's real
+    # identity and wins. A bearer token there is at most a visitor pass the
+    # widget kept from before the user signed in, and letting it take
+    # precedence would hold someone anonymous for as long as the pass lived —
+    # across reloads, because nothing on the client knows the cookie appeared.
+    token = _cookie_token(request, identity.cookie_name) or _bearer_token(request)
     if token is None:
         raise HTTPException(status_code=401, detail=UNAUTHENTICATED_DETAIL)
     try:
