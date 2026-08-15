@@ -52061,7 +52061,8 @@ var DEFAULT_CONFIG = {
   position: "bottom-right",
   avatar: "",
   mode: "floating",
-  tokenUrl: ""
+  tokenUrl: "",
+  requireIdentity: false
 };
 var HEX_COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 function normalizeEndpoint(value) {
@@ -52086,7 +52087,8 @@ function parseConfig(element7, scriptBaseUrl) {
     position: safePosition(element7.getAttribute("position")),
     avatar: element7.getAttribute("avatar") || DEFAULT_CONFIG.avatar,
     mode: safeMode(element7.getAttribute("mode")),
-    tokenUrl: element7.getAttribute("token-url") || DEFAULT_CONFIG.tokenUrl
+    tokenUrl: element7.getAttribute("token-url") || DEFAULT_CONFIG.tokenUrl,
+    requireIdentity: element7.hasAttribute("require-identity")
   };
 }
 function attributeName(configKey) {
@@ -52251,13 +52253,16 @@ function visitorPassKey(endpoint) {
   return `agent-chat:pass:${endpoint}`;
 }
 var TokenSource = class {
-  constructor(endpoint, tokenUrl = "", provider = null, storage = localStorage) {
+  constructor(endpoint, options = {}) {
     this.endpoint = endpoint;
-    this.tokenUrl = tokenUrl;
-    this.provider = provider;
-    this.storage = storage;
     this.cached = null;
     this.pending = null;
+    this.tokenUrl = options.tokenUrl ?? "";
+    this.provider = options.provider ?? null;
+    this.storage = options.storage ?? localStorage;
+    this.requireIdentity = options.requireIdentity ?? false;
+    this.onIdentityFailure = options.onIdentityFailure ?? (() => {
+    });
   }
   async current() {
     if (!this.cached) await this.resolve(() => this.storedPass());
@@ -52277,7 +52282,8 @@ var TokenSource = class {
   resolve(fallback) {
     this.pending ?? (this.pending = (async () => {
       try {
-        this.cached = await this.hostToken() ?? await fallback();
+        const host = await this.hostToken();
+        this.cached = host ?? (this.requireIdentity ? null : await fallback());
         return this.cached;
       } finally {
         this.pending = null;
@@ -52314,17 +52320,31 @@ var TokenSource = class {
   async fromHost() {
     if (this.provider) return this.provider();
     if (!this.tokenUrl) return null;
+    let response;
     try {
-      const response = await fetch(this.tokenUrl, {
+      response = await fetch(this.tokenUrl, {
         credentials: "include",
         headers: { Accept: "application/json" }
       });
-      if (!response.ok) return null;
-      const token = (await response.json())?.token;
-      return typeof token === "string" && token ? token : null;
     } catch {
-      return null;
+      return this.failed({ reason: "unreachable", url: this.tokenUrl });
     }
+    if (!response.ok) {
+      const reason = response.status === 401 || response.status === 403 ? "unauthorized" : "unreachable";
+      return this.failed({ reason, status: response.status, url: this.tokenUrl });
+    }
+    const token = await response.json().then((body) => body?.token).catch(() => null);
+    if (typeof token !== "string" || !token) {
+      return this.failed({ reason: "malformed", status: response.status, url: this.tokenUrl });
+    }
+    return token;
+  }
+  /** Report and degrade. A configured identity that cannot be obtained is worth
+   *  saying out loud — silence here is what makes a broken `token-url` look
+   *  like a working anonymous chat. */
+  failed(failure) {
+    this.onIdentityFailure(failure);
+    return null;
   }
   storedPass() {
     try {
@@ -54190,7 +54210,17 @@ var AgentChatElement = class extends HTMLElement {
     this.titleId = `${this.widgetId}-title`;
   }
   static get observedAttributes() {
-    return ["endpoint", "title", "color", "greeting", "position", "avatar", "mode", "token-url"];
+    return [
+      "endpoint",
+      "title",
+      "color",
+      "greeting",
+      "position",
+      "avatar",
+      "mode",
+      "token-url",
+      "require-identity"
+    ];
   }
   connectedCallback() {
     if (this.connected) return;
@@ -54220,8 +54250,35 @@ var AgentChatElement = class extends HTMLElement {
   }
   configure() {
     this.config = parseConfig(this, this.scriptBaseUrl);
-    this.tokens = new TokenSource(this.config.endpoint, this.config.tokenUrl, this.tokenProvider);
+    this.tokens = new TokenSource(this.config.endpoint, {
+      tokenUrl: this.config.tokenUrl,
+      provider: this.tokenProvider,
+      requireIdentity: this.config.requireIdentity,
+      onIdentityFailure: (failure) => this.emitIdentityFailure(failure)
+    });
     this.client = new AgentChatClient(this.config.endpoint, this.tokens);
+  }
+  /** A configured identity that could not be obtained is reported, never
+   *  swallowed: an unreachable `token-url` otherwise looks exactly like a
+   *  working anonymous chat, which is how a broken integration ships. */
+  emitIdentityFailure(failure) {
+    const fellBackToAnonymous = !this.config.requireIdentity;
+    const detail = { ...failure, fellBackToAnonymous };
+    if (failure.reason !== "unauthorized") {
+      console.warn(
+        `[agent-chat] could not obtain an identity from ${failure.url}${failure.status ? ` (HTTP ${failure.status})` : ""}: ${failure.reason}.${fellBackToAnonymous ? " Falling back to an anonymous visitor." : ""}`
+      );
+    }
+    try {
+      this.dispatchEvent(
+        new CustomEvent("agent-chat:identity-error", {
+          detail,
+          bubbles: true,
+          composed: true
+        })
+      );
+    } catch {
+    }
   }
   render() {
     const root7 = this.shadowRoot || this.attachShadow({ mode: "open" });

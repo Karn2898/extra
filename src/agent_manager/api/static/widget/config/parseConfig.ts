@@ -8,6 +8,7 @@ export const DEFAULT_CONFIG: Omit<AgentChatConfig, "endpoint"> = {
   avatar: "",
   mode: "floating",
   tokenUrl: "",
+  requireIdentity: false,
 };
 
 const HEX_COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
@@ -39,6 +40,7 @@ export function parseConfig(element: HTMLElement, scriptBaseUrl: string): AgentC
     avatar: element.getAttribute("avatar") || DEFAULT_CONFIG.avatar,
     mode: safeMode(element.getAttribute("mode")),
     tokenUrl: element.getAttribute("token-url") || DEFAULT_CONFIG.tokenUrl,
+    requireIdentity: element.hasAttribute("require-identity"),
   };
 }
 

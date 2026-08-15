@@ -53,6 +53,10 @@ class FakeElement {
       this.attributeChangedCallback?.(name, old, String(value));
     }
   }
+  hasAttribute(name) {
+    return this.attributes.has(name);
+  }
+
   getAttribute(name) {
     return this.attributes.has(name) ? this.attributes.get(name) : null;
   }
@@ -264,6 +268,7 @@ assert.equal(customElements.defineCount, definesBefore, "defineAgentChat is idem
     avatar: "",
     mode: "floating",
     tokenUrl: "",
+    requireIdentity: false,
   });
 }
 
@@ -398,7 +403,7 @@ globalThis.fetch = async (url, options = {}) => {
 };
 const hosted = new AgentChatClient(
   "https://api.example",
-  new TokenSource("https://api.example", "/agent-chat/token"),
+  new TokenSource("https://api.example", { tokenUrl: "/agent-chat/token" }),
 );
 await hosted.createConversation();
 await hosted.createConversation();
@@ -443,7 +448,7 @@ globalThis.fetch = async (url, options = {}) => {
 };
 const signedIn = new AgentChatClient(
   "https://api.example",
-  new TokenSource("https://api.example", "/agent-chat/token"),
+  new TokenSource("https://api.example", { tokenUrl: "/agent-chat/token" }),
 );
 await signedIn.createConversation();
 
@@ -470,7 +475,7 @@ globalThis.fetch = async (url, options = {}) => {
 };
 const shared = new AgentChatClient(
   "https://api.example",
-  new TokenSource("https://api.example", "/agent-chat/token"),
+  new TokenSource("https://api.example", { tokenUrl: "/agent-chat/token" }),
 );
 await Promise.all([shared.createConversation(), shared.createConversation()]);
 assert.equal(calls.filter((c) => c.url === "/agent-chat/token").length, 1);
@@ -486,8 +491,71 @@ globalThis.fetch = async (url) => {
 };
 await new AgentChatClient(
   "https://api.example",
-  new TokenSource("https://api.example", "/agent-chat/token"),
+  new TokenSource("https://api.example", { tokenUrl: "/agent-chat/token" }),
 ).createConversation();
 assert.equal(localStorage.getItem(visitorPassKey("https://api.example")), "kept-pass");
+
+
+// A configured token-url that fails is reported, not swallowed — the silence
+// here is what made a broken integration look like a working anonymous chat.
+resetPage();
+let failures = [];
+globalThis.fetch = async (url) => {
+  if (url === "/agent-chat/token") return jsonResponse({}, false, 404);
+  if (url.endsWith("/auth/anonymous")) return jsonResponse({ token: "pass" });
+  return jsonResponse({ conversation_id: "c1" });
+};
+const reporting = new TokenSource("https://api.example", {
+  tokenUrl: "/agent-chat/token",
+  onIdentityFailure: (f) => failures.push(f),
+});
+assert.equal(await reporting.renew(), "pass", "still falls back by default");
+assert.deepEqual(failures, [{ reason: "unreachable", status: 404, url: "/agent-chat/token" }]);
+
+// 401 is the ordinary signed-out case, reported but distinguishable.
+resetPage();
+failures = [];
+globalThis.fetch = async (url) => {
+  if (url === "/agent-chat/token") return jsonResponse({}, false, 401);
+  if (url.endsWith("/auth/anonymous")) return jsonResponse({ token: "pass" });
+  return jsonResponse({});
+};
+await new TokenSource("https://api.example", {
+  tokenUrl: "/agent-chat/token",
+  onIdentityFailure: (f) => failures.push(f),
+}).renew();
+assert.equal(failures[0].reason, "unauthorized");
+
+// An endpoint answering 200 with the wrong shape is an integration bug too.
+resetPage();
+failures = [];
+globalThis.fetch = async (url) => {
+  if (url === "/agent-chat/token") return jsonResponse({ access_token: "wrong-key" });
+  if (url.endsWith("/auth/anonymous")) return jsonResponse({ token: "pass" });
+  return jsonResponse({});
+};
+await new TokenSource("https://api.example", {
+  tokenUrl: "/agent-chat/token",
+  onIdentityFailure: (f) => failures.push(f),
+}).renew();
+assert.equal(failures[0].reason, "malformed");
+
+// require-identity: no anonymous consolation prize.
+resetPage();
+let mintedPass = false;
+globalThis.fetch = async (url) => {
+  if (url === "/agent-chat/token") return jsonResponse({}, false, 401);
+  if (url.endsWith("/auth/anonymous")) {
+    mintedPass = true;
+    return jsonResponse({ token: "pass" });
+  }
+  return jsonResponse({});
+};
+const strict = new TokenSource("https://api.example", {
+  tokenUrl: "/agent-chat/token",
+  requireIdentity: true,
+});
+assert.equal(await strict.renew(), null, "no token rather than an anonymous one");
+assert.equal(mintedPass, false, "never asks for a visitor pass");
 
 console.log("widget self-check: OK");

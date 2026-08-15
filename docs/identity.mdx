@@ -87,6 +87,34 @@ EXTRA_AUTH_SECRET=<32+ random characters>
 
 Not logged in? Return `401` — the widget falls back to an anonymous pass.
 
+<Note>
+`token-url` is resolved like any other browser request: relative to the page.
+That is correct in production, where your app and its API share an origin. If
+your **dev** setup serves the frontend separately from your API, point it at the
+same base your own frontend uses.
+</Note>
+
+### When identity fails
+
+Anything other than a clean token is reported — a wrong URL, an endpoint
+answering with the wrong shape, an unreachable host. The widget logs a warning
+and raises an event, so a broken integration cannot quietly look like a working
+anonymous chat:
+
+```js
+document.querySelector("agent-chat").addEventListener("agent-chat:identity-error", (e) => {
+  // { reason: "unauthorized" | "unreachable" | "malformed", status, url, fellBackToAnonymous }
+  console.log(e.detail);
+});
+```
+
+By default it then continues as an anonymous visitor. If a chat with no proven
+user is unacceptable in your product, opt out of that fallback entirely:
+
+```html
+<agent-chat title="Support" token-url="/agent-chat/token" require-identity></agent-chat>
+```
+
 <Warning>
 Sign `req.user.id` from the session, never a value from the request. An endpoint
 that accepts `?user=` lets anyone get a token as anyone.

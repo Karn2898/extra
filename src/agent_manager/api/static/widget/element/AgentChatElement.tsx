@@ -1,18 +1,32 @@
 import { createRoot, type Root } from "react-dom/client";
 
 import { AgentChatClient } from "../api/AgentChatClient";
-import { TokenSource, type TokenProvider } from "../auth/tokenSource";
+import { TokenSource, type IdentityFailure, type TokenProvider } from "../auth/tokenSource";
 import { parseConfig } from "../config/parseConfig";
 import { AgentChatApp } from "../react/AgentChatApp";
 import { removeStoredConversationId } from "../storage/conversationStorage";
 import { styles } from "../styles/styles";
-import type { AgentChatAnswerDetail, AgentChatConfig } from "../types";
+import type {
+  AgentChatAnswerDetail,
+  AgentChatConfig,
+  AgentChatIdentityErrorDetail,
+} from "../types";
 
 let nextWidgetId = 0;
 
 export class AgentChatElement extends HTMLElement {
   static get observedAttributes(): string[] {
-    return ["endpoint", "title", "color", "greeting", "position", "avatar", "mode", "token-url"];
+    return [
+      "endpoint",
+      "title",
+      "color",
+      "greeting",
+      "position",
+      "avatar",
+      "mode",
+      "token-url",
+      "require-identity",
+    ];
   }
 
   /** For a host holding its token in memory instead of exposing a `token-url`.
@@ -65,8 +79,39 @@ export class AgentChatElement extends HTMLElement {
 
   private configure(): void {
     this.config = parseConfig(this, this.scriptBaseUrl);
-    this.tokens = new TokenSource(this.config.endpoint, this.config.tokenUrl, this.tokenProvider);
+    this.tokens = new TokenSource(this.config.endpoint, {
+      tokenUrl: this.config.tokenUrl,
+      provider: this.tokenProvider,
+      requireIdentity: this.config.requireIdentity,
+      onIdentityFailure: (failure) => this.emitIdentityFailure(failure),
+    });
     this.client = new AgentChatClient(this.config.endpoint, this.tokens);
+  }
+
+  /** A configured identity that could not be obtained is reported, never
+   *  swallowed: an unreachable `token-url` otherwise looks exactly like a
+   *  working anonymous chat, which is how a broken integration ships. */
+  private emitIdentityFailure(failure: IdentityFailure): void {
+    const fellBackToAnonymous = !this.config.requireIdentity;
+    const detail: AgentChatIdentityErrorDetail = { ...failure, fellBackToAnonymous };
+    if (failure.reason !== "unauthorized") {
+      console.warn(
+        `[agent-chat] could not obtain an identity from ${failure.url}` +
+          `${failure.status ? ` (HTTP ${failure.status})` : ""}: ${failure.reason}.` +
+          `${fellBackToAnonymous ? " Falling back to an anonymous visitor." : ""}`,
+      );
+    }
+    try {
+      this.dispatchEvent(
+        new CustomEvent<AgentChatIdentityErrorDetail>("agent-chat:identity-error", {
+          detail,
+          bubbles: true,
+          composed: true,
+        }),
+      );
+    } catch {
+      // Reporting must never break the chat.
+    }
   }
 
   private render(): void {
