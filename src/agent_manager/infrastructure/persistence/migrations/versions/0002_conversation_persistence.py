@@ -1,4 +1,4 @@
-"""conversation users, sessions, cold messages, and hot snapshots
+"""conversation users, sessions, messages, snapshots, and durable runs
 
 Revision ID: 0002
 Revises: 0001
@@ -41,6 +41,7 @@ def upgrade() -> None:
         sa.Column("system_name", sa.String(length=256), nullable=True),
         sa.Column("config_path", sa.String(length=1024), nullable=True),
         sa.Column("title", sa.String(length=512), nullable=True),
+        sa.Column("head_message_id", sa.String(length=64), nullable=True),
         sa.Column("metadata_json", sa.JSON(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
@@ -115,8 +116,24 @@ def upgrade() -> None:
         ["expires_at"],
     )
 
+    op.create_table(
+        "agent_runs",
+        sa.Column("run_id", sa.String(length=64), primary_key=True),
+        sa.Column("thread_id", sa.String(length=64), nullable=False),
+        sa.Column("system_name", sa.String(length=256), nullable=False),
+        sa.Column("status", sa.String(length=32), nullable=False),
+        sa.Column("input_tokens", sa.Integer(), nullable=True),
+        sa.Column("output_tokens", sa.Integer(), nullable=True),
+        sa.Column("created_at", sa.Float(), nullable=False),
+        sa.Column("updated_at", sa.Float(), nullable=False),
+    )
+    op.create_index("ix_agent_runs_status", "agent_runs", ["status"])
+
 
 def downgrade() -> None:
+    op.drop_index("ix_agent_runs_status", table_name="agent_runs")
+    op.drop_table("agent_runs")
+
     op.drop_index("ix_conversation_snapshots_expires_at", table_name="conversation_snapshots")
     op.drop_index("ix_conversation_snapshots_user_id", table_name="conversation_snapshots")
     op.drop_table("conversation_snapshots")

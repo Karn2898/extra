@@ -6,16 +6,28 @@ Both the engine transport and the database backend can change with no edits here
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
+import logging
 import uuid
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import cast
 
 from agent_engine.approvals.decision import ApprovalDecision
-from agent_engine.approvals.errors import ApprovalAlreadyProcessed
-from agent_engine.engine.engine import ApprovalEngine, Engine
+from agent_engine.approvals.errors import ApprovalAlreadyProcessed, RunNotFound
+from agent_engine.approvals.models import RunRecord, RunStatus
+from agent_engine.engine.engine import (
+    ApprovalCancellationEngine,
+    ApprovalEngine,
+    ApprovalStreamingEngine,
+    Engine,
+    RunStatusEngine,
+)
 from agent_engine.engine.types import ChatMessage, RunResult
+from agent_engine.runs.repository import RunRepository
 from agent_engine.runtime.hooks import RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
 from agent_engine.runtime.tool_models import ToolUsageRecord
@@ -23,13 +35,14 @@ from agent_manager.application.context import build_history
 from agent_manager.domain import (
     ConversationMessage,
     ConversationSession,
-    Message,
     Principal,
     Repository,
     Role,
     TokenBudgetUsage,
     thread_title,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class ConversationNotFound(Exception):
@@ -52,12 +65,21 @@ class ConversationLinkRefused(Exception):
     """Raised when a visitor's conversations cannot be handed to the caller."""
 
 
+class ConversationMessageNotFound(Exception):
+    """Raised when an edit target is not on the conversation's active branch."""
+
+
+class ConversationBranchConflict(Exception):
+    """Raised when another turn moved the branch head before this append."""
+
+
 @dataclass(frozen=True)
 class PreparedConversationTurn:
     """A persisted user turn plus the prior structured model context."""
 
     session_id: str
     run_id: str
+    message_id: str
     user_id: str
     message: str
     history: tuple[ChatMessage, ...]
@@ -75,6 +97,7 @@ class ConversationService:
         snapshot_ttl_seconds: int | None = 86_400,
         system_name: str | None = None,
         config_path: str | None = None,
+        run_repository: RunRepository | None = None,
     ) -> None:
         self._engine = engine
         self._repository = repository
@@ -84,6 +107,7 @@ class ConversationService:
         self._snapshot_ttl_seconds = snapshot_ttl_seconds
         self._system_name = system_name
         self._config_path = config_path
+        self._run_repository = run_repository
 
     async def create(self, principal: Principal, *, session_id: str | None = None) -> str:
         """Create a conversation, or return the caller's own existing one.
@@ -116,9 +140,12 @@ class ConversationService:
         await self._register(principal)
         return await self._repository.link_anonymous_user(visitor.user_id, principal.user_id)
 
-    async def history(self, conversation_id: str, principal: Principal) -> list[Message]:
+    async def history(
+        self, conversation_id: str, principal: Principal
+    ) -> list[ConversationMessage]:
         await self._authorize(conversation_id, principal)
-        return await self._repository.list_messages(conversation_id)
+        messages = await self._repository.list_conversation_messages(conversation_id)
+        return await self._with_run_statuses(messages)
 
     async def usage(self, conversation_id: str, principal: Principal) -> TokenBudgetUsage:
         await self._authorize(conversation_id, principal)
@@ -130,17 +157,33 @@ class ConversationService:
     ) -> list[ConversationSession]:
         return await self._repository.list_sessions(principal.user_id, limit=limit)
 
-    async def send(self, conversation_id: str, text: str, principal: Principal) -> RunResult:
-        turn = await self.prepare_turn(conversation_id, text, principal)
-        result = await self._engine.run(
-            turn.message,
-            history=turn.history,
-            context=RunContext(
-                run_id=turn.run_id,
-                conversation_id=turn.session_id,
-                user_id=turn.user_id,
-            ),
+    async def send(
+        self,
+        conversation_id: str,
+        text: str,
+        principal: Principal,
+        *,
+        edit_message_id: str | None = None,
+    ) -> RunResult:
+        turn = await self.prepare_turn(
+            conversation_id, text, principal, edit_message_id=edit_message_id
         )
+        try:
+            result = await self._engine.run(
+                turn.message,
+                history=turn.history,
+                context=RunContext(
+                    run_id=turn.run_id,
+                    conversation_id=turn.session_id,
+                    user_id=turn.user_id,
+                ),
+            )
+        except asyncio.CancelledError:
+            await self.cancel_turn(turn)
+            raise
+        except Exception:
+            await self.fail_turn(turn)
+            raise
         if result.pending_approval is None:
             await self.complete_turn(turn, result)
         return result
@@ -150,6 +193,8 @@ class ConversationService:
         conversation_id: str,
         text: str,
         principal: Principal,
+        *,
+        edit_message_id: str | None = None,
     ) -> PreparedConversationTurn:
         """Persist a user message and return its isolated prior model context."""
         await self._authorize(conversation_id, principal)
@@ -162,31 +207,76 @@ class ConversationService:
                 raise ConversationTokenBudgetExceeded(conversation_id)
 
         # Load prior history before saving the new message, or it gets inlined twice.
-        prior_context = await self._repository.get_context(
-            conversation_id,
-            max_messages=self._window,
-            max_chars=self._max_chars,
-        )
-        if not prior_context.messages:
-            await self._repository.rename_session(conversation_id, thread_title(text))
+        session = await self._require(conversation_id)
+        expected_head = session.head_message_id
+        parent_message_id = expected_head
+        if edit_message_id is None:
+            prior_context = await self._repository.get_context(
+                conversation_id,
+                max_messages=self._window,
+                max_chars=self._max_chars,
+            )
+        else:
+            branch = await self._repository.list_conversation_messages(conversation_id)
+            target = next(
+                (
+                    message
+                    for message in branch
+                    if message.message_id == edit_message_id and message.role == Role.USER
+                ),
+                None,
+            )
+            if target is None:
+                raise ConversationMessageNotFound(edit_message_id)
+            parent_message_id = target.parent_message_id
+            prior_context = await self._repository.get_context_at(
+                conversation_id,
+                parent_message_id,
+                max_messages=self._window,
+                max_chars=self._max_chars,
+            )
         run_id = uuid.uuid4().hex
+        message_id = uuid.uuid4().hex
         now = datetime.now(UTC)
-        await self._repository.append_message(
-            ConversationMessage(
-                message_id=uuid.uuid4().hex,
-                session_id=conversation_id,
-                run_id=run_id,
-                user_id=user_id,
-                role=Role.USER,
-                content=text,
-                created_at=now,
-            ),
-            snapshot_ttl_seconds=self._snapshot_ttl_seconds,
-        )
+        await self._register_run(run_id)
+        try:
+            appended = await self._repository.append_message_if_head(
+                ConversationMessage(
+                    message_id=message_id,
+                    session_id=conversation_id,
+                    run_id=run_id,
+                    user_id=user_id,
+                    role=Role.USER,
+                    content=text,
+                    created_at=now,
+                    parent_message_id=parent_message_id,
+                    status="running",
+                ),
+                expected_head,
+                snapshot_ttl_seconds=self._snapshot_ttl_seconds,
+            )
+        except BaseException:
+            await self._transition_run(run_id, RunStatus.CANCELLED)
+            raise
+        if not appended:
+            await self._transition_run(run_id, RunStatus.CANCELLED)
+            raise ConversationBranchConflict(conversation_id)
+        if not prior_context.messages:
+            try:
+                await self._repository.rename_session(conversation_id, thread_title(text))
+            except Exception:
+                # The user message and run are already durable. A cosmetic
+                # title failure must not orphan an accepted turn.
+                logger.warning(
+                    "conversation title update failed",
+                    extra={"conversation_id": conversation_id},
+                    exc_info=True,
+                )
 
         return PreparedConversationTurn(
             session_id=conversation_id,
             run_id=run_id,
+            message_id=message_id,
             user_id=user_id,
             message=text,
             history=build_history(prior_context.messages, self._window),
@@ -204,6 +294,7 @@ class ConversationService:
             session_id=turn.session_id,
             run_id=turn.run_id,
             user_id=turn.user_id,
+            parent_message_id=turn.message_id,
             content=result.answer,
             input_tokens=result.input_tokens,
             output_tokens=result.output_tokens,
@@ -241,10 +332,12 @@ class ConversationService:
                 raise
             result = recovered
         if result.pending_approval is None:
+            parent_message_id = await self._user_message_id_for_run(session.session_id, run_id)
             await self._persist_assistant_turn(
                 session_id=session.session_id,
                 run_id=run_id,
                 user_id=session.user_id,
+                parent_message_id=parent_message_id,
                 content=result.answer,
                 input_tokens=result.input_tokens,
                 output_tokens=result.output_tokens,
@@ -253,38 +346,149 @@ class ConversationService:
             )
         return result
 
-    async def stream(
-        self, conversation_id: str, text: str, principal: Principal
-    ) -> AsyncIterator[RunStreamEvent]:
-        turn = await self.prepare_turn(conversation_id, text, principal)
+    async def cancel_pending_approval(
+        self,
+        conversation_id: str,
+        run_id: str,
+        approval_id: str,
+        principal: Principal,
+    ) -> None:
+        """Terminally cancel a pending approval owned by this conversation."""
+        session = await self._authorize(conversation_id, principal)
+        engine = self._require_approval_cancellation_engine()
+        await engine.cancel_pending_approval(
+            run_id,
+            approval_id,
+            caller_user_id=session.user_id,
+            caller_session_id=session.session_id,
+        )
 
-        final: RunStreamEvent | None = None
+    async def stream_approval(
+        self,
+        conversation_id: str,
+        run_id: str,
+        approval_id: str,
+        decision: ApprovalDecision,
+        principal: Principal,
+    ) -> AsyncIterator[RunStreamEvent]:
+        """Authorize and return an owned stream for the same suspended run."""
+        session = await self._authorize(conversation_id, principal)
+        engine = self._require_approval_streaming_engine()
+        parent_message_id = await self._user_message_id_for_run(session.session_id, run_id)
+
+        async def events() -> AsyncIterator[RunStreamEvent]:
+            engine_stream = engine.resume_stream(
+                run_id,
+                approval_id,
+                decision,
+                caller_user_id=session.user_id,
+                caller_session_id=session.session_id,
+            )
+            try:
+                async for event in engine_stream:
+                    if event.type == "final":
+                        await self._persist_assistant_turn(
+                            session_id=session.session_id,
+                            run_id=run_id,
+                            user_id=session.user_id,
+                            parent_message_id=parent_message_id,
+                            content=event.content or "",
+                            input_tokens=event.input_tokens,
+                            output_tokens=event.output_tokens,
+                            visited=event.route or (),
+                            used_tools=event.used_tools,
+                        )
+                    yield event
+            finally:
+                if isinstance(engine_stream, AsyncGenerator):
+                    await engine_stream.aclose()
+
+        return events()
+
+    async def stream(
+        self,
+        conversation_id: str,
+        text: str,
+        principal: Principal,
+        *,
+        edit_message_id: str | None = None,
+    ) -> AsyncIterator[RunStreamEvent]:
+        turn = await self.prepare_turn(
+            conversation_id, text, principal, edit_message_id=edit_message_id
+        )
+
+        stream = self.stream_turn(turn)
+        suspended = False
+        exhausted = False
         try:
-            async for event in self._engine.stream(
-                turn.message,
-                history=turn.history,
-                context=RunContext(
-                    run_id=turn.run_id,
-                    conversation_id=turn.session_id,
-                    user_id=turn.user_id,
-                ),
-            ):
+            async for event in stream:
+                suspended = suspended or event.type == "pending_approval"
+                yield event
+            exhausted = True
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            await self.fail_turn(turn)
+            raise
+        finally:
+            try:
+                await cast(AsyncGenerator[RunStreamEvent, None], stream).aclose()
+            finally:
+                if not exhausted and not suspended:
+                    await self.cancel_turn(turn)
+
+    async def cancel_turn(self, turn: PreparedConversationTurn) -> None:
+        """Atomically cancel a prepared or executing run when its owner leaves."""
+        await self._transition_run(turn.run_id, RunStatus.CANCELLED)
+
+    async def fail_turn(self, turn: PreparedConversationTurn) -> None:
+        """Fail a prepared run when execution raises before the engine records it."""
+        await self._transition_run(turn.run_id, RunStatus.FAILED)
+
+    async def stream_turn(self, turn: PreparedConversationTurn) -> AsyncIterator[RunStreamEvent]:
+        """Execute one already-persisted turn under its request-owned stream."""
+
+        engine_stream = self._engine.stream(
+            turn.message,
+            history=turn.history,
+            context=RunContext(
+                run_id=turn.run_id,
+                conversation_id=turn.session_id,
+                user_id=turn.user_id,
+            ),
+        )
+        try:
+            async for event in engine_stream:
                 if event.type == "final":
-                    final = event
+                    await self._persist_stream_final(turn, event)
 
                 yield event
         finally:
-            if final is not None:
-                await self._persist_assistant_turn(
-                    session_id=turn.session_id,
-                    run_id=turn.run_id,
-                    user_id=turn.user_id,
-                    content=final.content or "",
-                    input_tokens=final.input_tokens,
-                    output_tokens=final.output_tokens,
-                    visited=final.route or (),
-                    used_tools=final.used_tools,
-                )
+            if isinstance(engine_stream, AsyncGenerator):
+                await engine_stream.aclose()
+
+    async def _persist_stream_final(
+        self, turn: PreparedConversationTurn, final: RunStreamEvent
+    ) -> None:
+        """Finish persistence before exposing a terminal answer downstream."""
+        persistence = asyncio.create_task(
+            self._persist_assistant_turn(
+                session_id=turn.session_id,
+                run_id=turn.run_id,
+                user_id=turn.user_id,
+                parent_message_id=turn.message_id,
+                content=final.content or "",
+                input_tokens=final.input_tokens,
+                output_tokens=final.output_tokens,
+                visited=final.route or (),
+                used_tools=final.used_tools,
+            )
+        )
+        try:
+            await asyncio.shield(persistence)
+        except asyncio.CancelledError:
+            await persistence
+            raise
 
     async def _persist_assistant_turn(
         self,
@@ -292,6 +496,7 @@ class ConversationService:
         session_id: str,
         run_id: str,
         user_id: str | None,
+        parent_message_id: str | None,
         content: str,
         input_tokens: int | None,
         output_tokens: int | None,
@@ -312,6 +517,8 @@ class ConversationService:
                 role=Role.ASSISTANT,
                 content=content,
                 created_at=datetime.now(UTC),
+                parent_message_id=parent_message_id,
+                status="completed",
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 metadata={
@@ -321,6 +528,56 @@ class ConversationService:
             ),
             snapshot_ttl_seconds=self._snapshot_ttl_seconds,
         )
+
+    async def _user_message_id_for_run(self, session_id: str, run_id: str) -> str | None:
+        message = await self._repository.get_user_message_for_run(session_id, run_id)
+        return message.message_id if message is not None else None
+
+    async def _with_run_statuses(
+        self, messages: list[ConversationMessage]
+    ) -> list[ConversationMessage]:
+        completed = {
+            message.run_id
+            for message in messages
+            if message.role == Role.ASSISTANT and message.run_id is not None
+        }
+        statuses: dict[str, str] = {}
+        if self._run_repository is not None:
+            for run_id in {message.run_id for message in messages if message.run_id is not None}:
+                record = await self._run_repository.get(run_id)
+                if record is not None:
+                    statuses[run_id] = record.status.value
+        elif isinstance(self._engine, RunStatusEngine):
+            for run_id in {message.run_id for message in messages if message.run_id is not None}:
+                with suppress(RunNotFound):
+                    statuses[run_id] = await self._engine.get_run_status(run_id)
+        return [
+            dataclasses.replace(
+                message,
+                status=statuses.get(
+                    message.run_id or "",
+                    "completed" if message.run_id in completed else message.status,
+                ),
+            )
+            for message in messages
+        ]
+
+    async def _register_run(self, run_id: str) -> None:
+        if self._run_repository is None:
+            return
+        created = await self._run_repository.create_if_absent(
+            RunRecord(
+                run_id=run_id,
+                thread_id=run_id,
+                system_name=self._system_name or "",
+            )
+        )
+        if not created:
+            raise RuntimeError(f"generated run id already exists: {run_id}")
+
+    async def _transition_run(self, run_id: str, target: RunStatus) -> None:
+        if self._run_repository is not None:
+            await self._run_repository.transition_if_allowed(run_id, target)
 
     async def _register(self, principal: Principal) -> None:
         await self._repository.upsert_user(
@@ -332,6 +589,16 @@ class ConversationService:
     def _require_approval_engine(self) -> ApprovalEngine:
         if not isinstance(self._engine, ApprovalEngine):
             raise RuntimeError("the configured engine does not support approval resume")
+        return self._engine
+
+    def _require_approval_cancellation_engine(self) -> ApprovalCancellationEngine:
+        if not isinstance(self._engine, ApprovalCancellationEngine):
+            raise RuntimeError("the configured engine does not support approval cancellation")
+        return self._engine
+
+    def _require_approval_streaming_engine(self) -> ApprovalStreamingEngine:
+        if not isinstance(self._engine, ApprovalStreamingEngine):
+            raise RuntimeError("the configured engine does not support approval streaming")
         return self._engine
 
     async def _require(self, conversation_id: str) -> ConversationSession:

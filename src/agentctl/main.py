@@ -94,7 +94,7 @@ def generate(config: str) -> None:
     default=None,
     help="Stable conversation session id. Generated and printed if omitted.",
 )
-@click.option("--user-id", default=None, help="Optional user id for persisted local runs.")
+@click.option("--user-id", default=None, help="Optional user id for conversation runs.")
 def run(
     config: str,
     message: str,
@@ -157,6 +157,8 @@ async def _run_async(
             LangGraphEngine(
                 base_dir,
                 session_approval_repository=repositories.session_approvals,
+                tool_usage_repository=repositories.tool_usage,
+                run_repository=repositories.runs,
             ) as engine,
         ):
             await engine.build(spec)
@@ -169,6 +171,7 @@ async def _run_async(
                 snapshot_ttl_seconds=settings.snapshot_ttl_seconds,
                 system_name=spec.meta.name,
                 config_path=str(Path(config).resolve()),
+                run_repository=repositories.runs,
             )
             await service.create(caller, session_id=effective_session_id)
             if stream:

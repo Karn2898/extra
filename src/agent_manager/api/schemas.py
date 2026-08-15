@@ -48,13 +48,17 @@ class ConversationSummary(BaseModel):
 
 
 class MessageOut(BaseModel):
+    message_id: str
+    run_id: str | None = None
     role: Role
     content: str
+    status: str
     created_at: datetime
 
 
 class SendMessageRequest(BaseModel):
     message: str
+    edit_message_id: str | None = None
 
 
 class ToolRecord(BaseModel):
@@ -90,6 +94,11 @@ class ApprovalDecisionRequest(BaseModel):
     decision: ApprovalDecision
 
 
+class CancelRunResponse(BaseModel):
+    run_id: str
+    status: str = "cancelled"
+
+
 class TokenBudgetResponse(BaseModel):
     used_tokens: int
     max_tokens: int | None = None
@@ -109,6 +118,7 @@ class StreamEventOut(BaseModel):
     system_name: str | None = None
     used_tools: list[ToolRecord] | None = None
     run_id: str | None = None
+    message_id: str | None = None
     approval_id: str | None = None
     agent_id: str | None = None
     description: str | None = None

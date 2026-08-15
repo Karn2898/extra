@@ -143,6 +143,72 @@ async def test_append_message_if_absent_is_idempotent(repo: Repository) -> None:
     assert stored == [message]
 
 
+async def test_branch_head_selects_one_immutable_ancestry(repo: Repository) -> None:
+    await repo.create_session("branch")
+    now = datetime.now(UTC)
+    root = ConversationMessage("root", "branch", Role.USER, "U1", now)
+    answer = ConversationMessage(
+        "answer",
+        "branch",
+        Role.ASSISTANT,
+        "A1",
+        now + timedelta(microseconds=1),
+        parent_message_id="root",
+    )
+    original = ConversationMessage(
+        "original",
+        "branch",
+        Role.USER,
+        "U2",
+        now + timedelta(microseconds=2),
+        run_id="run-original",
+        parent_message_id="answer",
+    )
+    for message in (root, answer, original):
+        await repo.append_message(message)
+
+    edited = ConversationMessage(
+        "edited",
+        "branch",
+        Role.USER,
+        "U2 edited",
+        now + timedelta(microseconds=3),
+        parent_message_id="answer",
+    )
+    assert await repo.append_message_if_head(edited, "original") is True
+    assert (
+        await repo.append_message_if_head(
+            ConversationMessage("racer", "branch", Role.USER, "racer", now),
+            "original",
+        )
+        is False
+    )
+
+    assert [message.message_id for message in await repo.list_conversation_messages("branch")] == [
+        "root",
+        "answer",
+        "edited",
+    ]
+    assert await repo.get_message("original") == original
+    assert await repo.get_user_message_for_run("branch", "run-original") == original
+
+    late_original_answer = ConversationMessage(
+        "late-answer",
+        "branch",
+        Role.ASSISTANT,
+        "late A2",
+        now + timedelta(microseconds=4),
+        parent_message_id="original",
+    )
+    assert await repo.append_message_if_absent(late_original_answer) is True
+    assert [message.message_id for message in await repo.list_conversation_messages("branch")] == [
+        "root",
+        "answer",
+        "edited",
+    ]
+    assert await repo.get_message("late-answer") == late_original_answer
+
+
 async def test_limit_returns_most_recent_oldest_first(repo: Repository) -> None:
     cid = await repo.create_conversation()
     for i in range(5):

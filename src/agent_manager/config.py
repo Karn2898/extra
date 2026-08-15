@@ -39,7 +39,9 @@ class Settings(BaseSettings):
 
     agent_db_backend: Literal["sqlite", "postgres"] = "sqlite"
     agent_db_url: str | None = None
-    database_url: str = "sqlite+aiosqlite:///chat.db"
+    # Persistence is opt-in. Without either URL the manager uses its process-local
+    # repository adapters and never opens a database connection.
+    database_url: str | None = None
     context_window: int = 10
     context_max_chars: int | None = None
     context_max_tokens: int | None = None
@@ -88,5 +90,11 @@ class Settings(BaseSettings):
         return cls(_env_file=None, **values)  # type: ignore[call-arg]
 
     @property
-    def effective_database_url(self) -> str:
-        return normalize_database_url(self.agent_db_url or self.database_url, self.agent_db_backend)
+    def effective_database_url(self) -> str | None:
+        url = self.agent_db_url or self.database_url
+        return normalize_database_url(url, self.agent_db_backend) if url else None
+
+    @property
+    def uses_process_memory(self) -> bool:
+        url = self.effective_database_url
+        return url is None or ":memory:" in url

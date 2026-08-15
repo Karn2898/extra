@@ -5,9 +5,9 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncGenerator, AsyncIterator, Iterator
 from contextlib import contextmanager
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -23,6 +23,7 @@ from agent_manager.api.deps import CallerIdentity, get_caller_identity, get_prin
 from agent_manager.api.schemas import (
     AnonymousPassResponse,
     ApprovalDecisionRequest,
+    CancelRunResponse,
     ConversationSummary,
     CreateConversationRequest,
     CreateConversationResponse,
@@ -39,7 +40,9 @@ from agent_manager.api.schemas import (
 from agent_manager.application import (
     ConversationAccessDenied,
     ConversationAlreadyExists,
+    ConversationBranchConflict,
     ConversationLinkRefused,
+    ConversationMessageNotFound,
     ConversationNotFound,
     ConversationService,
     ConversationTokenBudgetExceeded,
@@ -65,6 +68,8 @@ _HTTP_ERRORS: dict[type[Exception], tuple[int, Any]] = {
     ConversationAccessDenied: (403, "conversation owned by another user"),
     ConversationAlreadyExists: (409, "conversation id already taken"),
     ConversationTokenBudgetExceeded: (429, _BUDGET_EXCEEDED_DETAIL),
+    ConversationMessageNotFound: (404, "message not found on active conversation branch"),
+    ConversationBranchConflict: (409, "conversation branch changed; reload and try again"),
     ConversationLinkRefused: (403, "a visitor cannot adopt another visitor"),
 }
 
@@ -134,7 +139,17 @@ async def list_conversations(service: Service, caller: Caller) -> list[Conversat
 async def list_messages(conversation_id: str, service: Service, caller: Caller) -> list[MessageOut]:
     with _as_http_error():
         msgs = await service.history(conversation_id, caller)
-    return [MessageOut(role=m.role, content=m.content, created_at=m.created_at) for m in msgs]
+    return [
+        MessageOut(
+            message_id=m.message_id,
+            run_id=m.run_id,
+            role=m.role,
+            content=m.content,
+            status=m.status,
+            created_at=m.created_at,
+        )
+        for m in msgs
+    ]
 
 
 @router.get("/conversations/{conversation_id}/usage", response_model=TokenBudgetResponse)
@@ -189,7 +204,12 @@ async def send_message(
 ) -> SendMessageResponse:
     try:
         with _as_http_error():
-            result = await service.send(conversation_id, body.message, caller)
+            result = await service.send(
+                conversation_id,
+                body.message,
+                caller,
+                edit_message_id=body.edit_message_id,
+            )
     except HTTPException:
         raise
 
@@ -240,6 +260,97 @@ async def decide_approval(
     return _run_response(result)
 
 
+@router.post(
+    "/conversations/{conversation_id}/runs/{run_id}/approvals/{approval_id}/decision/stream"
+)
+async def stream_approval_decision(
+    conversation_id: str,
+    run_id: str,
+    approval_id: str,
+    body: ApprovalDecisionRequest,
+    service: Service,
+    caller: Caller,
+) -> StreamingResponse:
+    with _as_http_error():
+        stream = cast(
+            AsyncGenerator[RunStreamEvent, None],
+            await service.stream_approval(
+                conversation_id,
+                run_id,
+                approval_id,
+                body.decision,
+                caller,
+            ),
+        )
+
+    async def event_source() -> AsyncIterator[str]:
+        try:
+            async for event in stream:
+                payload = _to_stream_event(event).model_dump(exclude_none=True)
+                yield f"event: {event.type}\ndata: {json.dumps(payload)}\n\n"
+        except ApprovalError as exc:
+            logger.info(
+                "approval resume stream rejected",
+                extra={"run_id": run_id, "approval_id": approval_id},
+            )
+            _, detail = _APPROVAL_HTTP_ERRORS.get(
+                type(exc), (409, "approval could not be processed")
+            )
+            payload = {"type": "error", "error": detail}
+            yield f"event: error\ndata: {json.dumps(payload)}\n\n"
+        except Exception:
+            logger.exception(
+                "approval resume stream failed",
+                extra={"run_id": run_id, "approval_id": approval_id},
+            )
+            payload = {"type": "error", "error": _INTERNAL_ERROR_MESSAGE}
+            yield f"event: error\ndata: {json.dumps(payload)}\n\n"
+        finally:
+            await stream.aclose()
+        yield "event: done\ndata: [DONE]\n\n"
+
+    return StreamingResponse(event_source(), media_type="text/event-stream")
+
+
+@router.post(
+    "/conversations/{conversation_id}/runs/{run_id}/approvals/{approval_id}/cancel",
+    response_model=CancelRunResponse,
+)
+async def cancel_pending_approval(
+    conversation_id: str,
+    run_id: str,
+    approval_id: str,
+    service: Service,
+    caller: Caller,
+) -> CancelRunResponse:
+    try:
+        with _as_http_error():
+            await service.cancel_pending_approval(
+                conversation_id,
+                run_id,
+                approval_id,
+                caller,
+            )
+    except HTTPException:
+        raise
+    except ApprovalError as exc:
+        logger.info(
+            "approval cancellation rejected",
+            extra={"run_id": run_id, "approval_id": approval_id},
+        )
+        status, detail = _APPROVAL_HTTP_ERRORS.get(
+            type(exc), (409, "approval could not be cancelled")
+        )
+        raise HTTPException(status_code=status, detail=detail) from None
+    except Exception:
+        logger.exception(
+            "approval cancellation failed",
+            extra={"run_id": run_id, "approval_id": approval_id},
+        )
+        raise HTTPException(status_code=500, detail=_INTERNAL_ERROR_MESSAGE) from None
+    return CancelRunResponse(run_id=run_id)
+
+
 def _to_stream_event(event: RunStreamEvent) -> StreamEventOut:
     return StreamEventOut(
         type=event.type,
@@ -266,27 +377,46 @@ def _to_stream_event(event: RunStreamEvent) -> StreamEventOut:
 async def stream_message(
     conversation_id: str, body: SendMessageRequest, service: Service, caller: Caller
 ) -> StreamingResponse:
-    stream = service.stream(conversation_id, body.message, caller)
-
-    try:
-        with _as_http_error():
-            first = await stream.__anext__()
-    except StopAsyncIteration:
-        first = None
+    with _as_http_error():
+        turn = await service.prepare_turn(
+            conversation_id,
+            body.message,
+            caller,
+            edit_message_id=body.edit_message_id,
+        )
+    stream = cast(
+        AsyncGenerator[RunStreamEvent, None],
+        service.stream_turn(turn),
+    )
 
     async def event_source() -> AsyncIterator[str]:
+        suspended = False
+        exhausted = False
         try:
-            if first is not None:
-                payload = _to_stream_event(first).model_dump(exclude_none=True)
-                yield f"event: {first.type}\ndata: {json.dumps(payload)}\n\n"
+            started = StreamEventOut(
+                type="turn_started",
+                run_id=turn.run_id,
+                message_id=turn.message_id,
+            ).model_dump(exclude_none=True)
+            yield f"event: turn_started\ndata: {json.dumps(started)}\n\n"
             async for event in stream:
+                suspended = suspended or event.type == "pending_approval"
                 payload = _to_stream_event(event).model_dump(exclude_none=True)
                 yield f"event: {event.type}\ndata: {json.dumps(payload)}\n\n"
+            exhausted = True
         except Exception:
+            await service.fail_turn(turn)
             logger.exception("conversation stream failed")
             payload = {"type": "error", "error": _INTERNAL_ERROR_MESSAGE}
             yield f"event: error\ndata: {json.dumps(payload)}\n\n"
         finally:
-            yield "event: done\ndata: [DONE]\n\n"
+            # StreamingResponse cancellation closes the application-owned
+            # generator, which in turn cancels and awaits the graph producer.
+            try:
+                await stream.aclose()
+            finally:
+                if not exhausted and not suspended:
+                    await service.cancel_turn(turn)
+        yield "event: done\ndata: [DONE]\n\n"
 
     return StreamingResponse(event_source(), media_type="text/event-stream")
