@@ -68,6 +68,7 @@ Renders as a fixed panel directly in the page — no launcher button.
 The element also exposes these hooks for host apps:
 
 - `element.tokenProvider = async () => token` — for a SPA holding its token in memory instead of exposing `token-url`.
+- `element.refreshIdentity()` — re-resolves the caller after a SPA signs a user in or switches user.
 - `element.logout()` — clears the stored identity and thread when the host signs a user out.
 - `agent-chat:identity-error` event — raised when a configured `token-url` cannot be used.
 

@@ -70,9 +70,17 @@ export class TokenSource {
     return this.resolve(() => this.issuePass());
   }
 
-  /** Drop this browser's identity — a host app signing its user out. */
-  forget(): void {
+  /** Forget the token in hand, so the next request works out who the caller is
+   *  again. Keeps the visitor pass: that pass is what the sign-in merge hands
+   *  over, and dropping it here would strand whatever this browser chatted
+   *  about before logging in. */
+  reset(): void {
     this.cached = null;
+  }
+
+  /** Drop this browser's identity entirely — a host app signing its user out. */
+  forget(): void {
+    this.reset();
     this.clearPass();
   }
 

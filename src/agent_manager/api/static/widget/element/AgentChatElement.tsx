@@ -68,8 +68,21 @@ export class AgentChatElement extends HTMLElement {
     this.render();
   }
 
+  /** Work out who the caller is again — for a single-page app that signs a user
+   *  in, or switches user, without reloading the page.
+   *
+   *  Deliberately not `logout()`: that discards the visitor pass, which is what
+   *  the sign-in merge hands over, so using it here would throw away the
+   *  conversations the visitor had before logging in. The open thread is kept
+   *  too — the merge re-owns it, so the user carries straight on in it. */
+  refreshIdentity(): void {
+    this.tokens?.reset();
+    this.instanceKey += 1;
+    if (this.connected) this.render();
+  }
+
   /** Forget this browser's identity and its open thread, so the next person on
-   *  this machine starts clean. Call it when the host signs a user in or out. */
+   *  this machine starts clean. Call it when the host signs a user out. */
   logout(): void {
     this.tokens?.forget();
     if (this.config) removeStoredConversationId(this.config.endpoint);

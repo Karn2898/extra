@@ -129,14 +129,24 @@ Someone who chats before logging in doesn't lose it. On their first
 authenticated request the widget hands their pass over and those conversations
 move onto their account. Automatic, and it only happens once.
 
-## Signing out
+## Signing in and out
+
+A normal page navigation needs nothing — the widget works out who the caller is
+on every load. A single-page app that signs a user **in or out without
+reloading** should say so, or the widget keeps the identity it already resolved:
 
 ```js
-document.querySelector("agent-chat").logout();
+const chat = document.querySelector("agent-chat");
+
+chat.refreshIdentity();  // signed in, or switched user
+chat.logout();           // signed out
 ```
 
-Clears the stored identity and the open thread. Call it when your app signs a
-user out — and, in a single-page app, when it signs one *in* without a reload.
+<Warning>
+Use `refreshIdentity()` on sign-**in**, not `logout()`. `logout()` discards the
+visitor pass, and that pass is what carries a visitor's earlier conversations
+onto their account — calling it here throws them away instead of merging them.
+</Warning>
 
 ## Settings
 

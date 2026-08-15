@@ -606,4 +606,57 @@ assert.equal(mintedPass, false, "never asks for a visitor pass");
   assert.equal(parseConfig(mappedOn, "https://w.example").requireIdentity, true);
 }
 
+
+
+// Signing in without a page reload must switch identity — the cached anonymous
+// pass otherwise survives the login and the user sees a stranger's empty chat.
+{
+  resetPage();
+  localStorage.setItem(visitorPassKey("https://api.example"), "old-pass");
+  let loggedIn = false;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, auth: options.headers?.Authorization });
+    if (url === "/agent-chat/token") {
+      return loggedIn ? jsonResponse({ token: "host-token" }) : jsonResponse({}, false, 401);
+    }
+    if (url.endsWith("/auth/anonymous")) return jsonResponse({ token: "anon-pass" });
+    if (url.endsWith("/auth/link")) return jsonResponse({ conversations_moved: 1 });
+    return jsonResponse({ conversation_id: "c1" });
+  };
+  const tokens = new TokenSource("https://api.example", { tokenUrl: "/agent-chat/token" });
+  const client = new AgentChatClient("https://api.example", tokens);
+
+  await client.createConversation();
+  const sentWhileSignedOut = calls.filter((c) => c.url.endsWith("/conversations")).pop().auth;
+  assert.equal(sentWhileSignedOut, "Bearer old-pass", "anonymous before login");
+
+  loggedIn = true;
+  tokens.reset(); // what refreshIdentity() does
+  await client.createConversation();
+  const sentAfterLogin = calls.filter((c) => c.url.endsWith("/conversations")).pop().auth;
+  assert.equal(sentAfterLogin, "Bearer host-token", "the signed-in user, not the visitor");
+
+  // ...and the pass survived long enough to be handed over.
+  assert.ok(
+    calls.some((c) => c.url.endsWith("/auth/link")),
+    "pre-login conversations are merged, not stranded",
+  );
+}
+
+// reset() keeps the visitor pass; only forget() discards it. Getting this
+// backwards silently throws away the conversations the merge exists to rescue.
+{
+  resetPage();
+  const key = visitorPassKey("https://api.example");
+  localStorage.setItem(key, "pass");
+  const tokens = new TokenSource("https://api.example");
+
+  tokens.reset();
+  assert.equal(localStorage.getItem(key), "pass", "reset keeps the pass");
+
+  tokens.forget();
+  assert.equal(localStorage.getItem(key), null, "forget drops it");
+}
+
 console.log("widget self-check: OK");
