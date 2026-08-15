@@ -44,7 +44,7 @@ DENY                do not run it; store nothing
 Agent / LangGraph node
         │  requests a concrete tool call
         ▼
-AgentNode._invoke_tool           (the single choke point for local + MCP tools)
+ToolInvoker.invoke               (the single choke point for local + MCP tools)
         │
         ▼
 ApprovalCoordinator.resolve()    (centralized; no tool-specific logic)
@@ -54,12 +54,22 @@ ApprovalCoordinator.resolve()    (centralized; no tool-specific logic)
         ▼
    execute=True  ──► idempotency guard ─► provider (LocalTool / MCP tools/call)
    execute=False ──► structured "[denied]" tool result (no execution)
+        │
+        ▼
+ToolUsageTracker                 (records the outcome; never decides anything)
 ```
 
 There is **no** path that reaches a provider without passing through
 `ApprovalCoordinator.resolve()`. The engine uses a custom tool loop
 (`run_tool_loop`), not a bypassing LangGraph `ToolNode`, and both local and MCP
-tools are invoked from the same `_invoke_tool`.
+tools are invoked from the same `ToolInvoker.invoke`.
+
+Approval and tool-usage tracking are separate subsystems that share identifiers
+(`run_id`, `tool_call_id`, agent, tool) but no responsibilities: approval decides
+*whether* an invocation may run, tracking records *what happened to it*. See
+[MCP_AND_TOOLS.md](MCP_AND_TOOLS.md) for the tracking side; a suspended
+invocation is recorded only once it is decided, and a resumed one keeps the
+approval's `tool_call_id`, so approve/resume never produces a second record.
 
 Components (all small, single-responsibility):
 
@@ -74,6 +84,7 @@ Components (all small, single-responsibility):
 | `RunRepository` | Abstract run-persistence contract; owns idempotent registration semantics |
 | `ApprovalManager` | Pending-approval lifecycle + atomic resume claim |
 | `ToolExecutionManager` | Execution idempotency ledger |
+| `ToolInvoker` | Coordinates one tool call: identity, limits, gate, execution, recording |
 | `CheckpointProviderFactory` | Selects the checkpointer once at startup |
 
 The policy, session repository, and provider are all injected behind interfaces

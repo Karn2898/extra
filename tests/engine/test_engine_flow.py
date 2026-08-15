@@ -38,6 +38,9 @@ from agent_engine.engine.langgraph.filters import AccessFilter
 from agent_engine.engine.types import RunResult
 from agent_engine.runtime.hooks import AuthContext, RunContext
 from agent_engine.runtime.state import GraphState
+from agent_engine.tool_usage.context import ToolUsageContextProvider
+from agent_engine.tool_usage.in_memory import InMemoryToolUsageRepository
+from agent_engine.tool_usage.tracker import ToolUsageTracker
 from tests.fixtures.utils import fake_model_factory
 
 # ---------------------------------------------------------------------------
@@ -94,6 +97,10 @@ def orchestrator(node_id: str, children: list[GraphNode]) -> GraphNode:
 
 def system(graph: GraphNode) -> SystemSpec:
     return SystemSpec(meta=SystemMeta(name="test-system"), defaults=None, graph=graph)
+
+
+def usage_context() -> ToolUsageContextProvider:
+    return ToolUsageContextProvider(InMemoryToolUsageRepository())
 
 
 def write_tool(base_dir: Path, tool_id: str) -> None:
@@ -341,7 +348,6 @@ def test_access_filter_keeps_protected_when_allowed(tmp_path: Path) -> None:
 def test_graph_state_accepts_generic_run_context() -> None:
     state: GraphState = {
         "message": "hello",
-        "used_tools": [],
         "run_context": {"metadata": {"allowed_nodes": ("admin",)}},
     }
 
@@ -474,8 +480,10 @@ async def test_orchestrator_loads_both_prompts(tmp_path: Path) -> None:
         children=[],
         filters=[],
         base_dir=tmp_path,
+        usage_context=usage_context(),
+        usage_tracker=ToolUsageTracker(InMemoryToolUsageRepository()),
     )
-    await node_both({"message": "hi", "visited": [], "used_tools": []})
+    await node_both({"message": "hi", "visited": []})
     expected_both = (
         f"System persona content\n\nOrchestrator routing content\n{_ORCHESTRATOR_CONTRACT}"
     )
@@ -499,8 +507,10 @@ async def test_orchestrator_loads_both_prompts(tmp_path: Path) -> None:
         children=[],
         filters=[],
         base_dir=tmp_path,
+        usage_context=usage_context(),
+        usage_tracker=ToolUsageTracker(InMemoryToolUsageRepository()),
     )
-    await node_sys({"message": "hi", "visited": [], "used_tools": []})
+    await node_sys({"message": "hi", "visited": []})
     expected_sys = f"System persona content\n\n\n{_ORCHESTRATOR_CONTRACT}"
     assert model_sys.captured_prompt == expected_sys
 
@@ -523,8 +533,10 @@ async def test_orchestrator_loads_both_prompts(tmp_path: Path) -> None:
         children=[],
         filters=[],
         base_dir=tmp_path,
+        usage_context=usage_context(),
+        usage_tracker=ToolUsageTracker(InMemoryToolUsageRepository()),
     )
-    await node_orch({"message": "hi", "visited": [], "used_tools": []})
+    await node_orch({"message": "hi", "visited": []})
     expected_orch = f"orch desc\n\nOrchestrator routing content\n{_ORCHESTRATOR_CONTRACT}"
     assert model_orch.captured_prompt == expected_orch
 
@@ -544,7 +556,9 @@ async def test_orchestrator_loads_both_prompts(tmp_path: Path) -> None:
         children=[],
         filters=[],
         base_dir=tmp_path,
+        usage_context=usage_context(),
+        usage_tracker=ToolUsageTracker(InMemoryToolUsageRepository()),
     )
-    await node_desc({"message": "hi", "visited": [], "used_tools": []})
+    await node_desc({"message": "hi", "visited": []})
     expected_desc = f"orch desc\n\n\n{_ORCHESTRATOR_CONTRACT}"
     assert model_desc.captured_prompt == expected_desc

@@ -137,6 +137,10 @@ current_execution: ContextVar[ExecutionLimiter | None] = ContextVar(
     "current_execution", default=None
 )
 
+#: Opaque id for one node activation. Graph replay creates a fresh activation,
+#: while all model/tool iterations inside that activation share the same id.
+current_invocation: ContextVar[str | None] = ContextVar("current_invocation", default=None)
+
 
 def _signature(agent_id: str, tool_name: str, args: object) -> str:
     """Opaque, stable signature for duplicate detection: agent + tool + args.
@@ -147,7 +151,7 @@ def _signature(agent_id: str, tool_name: str, args: object) -> str:
         serialized = json.dumps(args, sort_keys=True, default=str)
     except (TypeError, ValueError):
         serialized = repr(args)
-    return f"{agent_id}\x1f{tool_name}\x1f{serialized}"
+    return f"{current_invocation.get()}\x1f{agent_id}\x1f{tool_name}\x1f{serialized}"
 
 
 def log_limit(exc: ExecutionLimitExceeded) -> None:

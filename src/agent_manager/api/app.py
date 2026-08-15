@@ -46,6 +46,7 @@ def create_app(config_path: str, settings: Settings | None = None) -> FastAPI:
             LangGraphEngine(
                 base_dir,
                 session_approval_repository=repositories.session_approvals,
+                tool_usage_repository=repositories.tool_usage,
             ) as engine,
         ):
             await engine.build(spec)

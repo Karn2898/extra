@@ -56,6 +56,7 @@ from agent_engine.engine.langgraph.helpers import (
 from agent_engine.engine.langgraph.nodes import AgentNode, ChildEntry, OrchestratorNode
 from agent_engine.engine.langgraph.run_lifecycle import RunLifecycle
 from agent_engine.engine.langgraph.stream_channel import StreamChannel
+from agent_engine.engine.langgraph.tool_invoker import AgentToolBinding, ToolInvoker
 from agent_engine.engine.types import ChatMessage, PendingApproval, RunResult
 from agent_engine.loaders.import_roots import register_import_roots
 from agent_engine.loaders.resolver_loader import ResolverLoader
@@ -79,6 +80,12 @@ from agent_engine.runtime.streaming import (
     TokenUsage,
     current_streams,
 )
+from agent_engine.runtime.tool_models import ToolUsageRecord
+from agent_engine.tool_usage.context import ToolUsageContextProvider
+from agent_engine.tool_usage.in_memory import InMemoryToolUsageRepository
+from agent_engine.tool_usage.repository import ToolUsageRepository
+from agent_engine.tool_usage.trace import as_usage_records
+from agent_engine.tool_usage.tracker import ToolUsageTracker
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +123,6 @@ def _initial_state(
             {"role": history_message.role.value, "content": history_message.content}
             for history_message in history
         ],
-        "used_tools": [],
     }
     if expose_run_context:
         state["run_context"] = _state_run_context(ctx)
@@ -246,6 +252,7 @@ class LangGraphEngine(Engine):
         run_repository: RunRepository | None = None,
         session_approval_repository: SessionApprovalRepository | None = None,
         session_approval_store: SessionApprovalStore | None = None,
+        tool_usage_repository: ToolUsageRepository | None = None,
     ) -> None:
         if session_approval_repository is not None and session_approval_store is not None:
             raise ValueError("pass session_approval_repository or session_approval_store, not both")
@@ -291,6 +298,12 @@ class LangGraphEngine(Engine):
             session_repository=self._session_approval_repository,
             session_store=session_approval_store,
         )
+        # One usage repository per engine, so every agent of every run reads and
+        # writes the same store; the writer and the reader are separate roles on
+        # top of it.
+        self._tool_usage_repository = tool_usage_repository or InMemoryToolUsageRepository()
+        self._tool_usage_tracker = ToolUsageTracker(self._tool_usage_repository)
+        self._tool_usage_context = ToolUsageContextProvider(self._tool_usage_repository)
 
     async def build(self, spec: SystemSpec) -> None:
         self._system_name = spec.meta.name
@@ -396,8 +409,9 @@ class LangGraphEngine(Engine):
         """
         return cast(dict[str, Any], await app.ainvoke(graph_input, self._thread_config(ctx)))
 
-    def _completed_result(
+    async def _completed_result(
         self,
+        ctx: RunContext,
         result: dict[str, Any],
         *,
         token_usage: tuple[int | None, int | None] = (None, None),
@@ -408,10 +422,20 @@ class LangGraphEngine(Engine):
             system_name=self._system_name,
             visited=result.get("visited", []),
             answer=result.get("answer", ""),
-            used_tools=tuple(result.get("used_tools", [])),
+            used_tools=await self._used_tools(ctx),
             input_tokens=input_tokens,
             output_tokens=output_tokens,
         )
+
+    async def _used_tools(self, ctx: RunContext) -> tuple[ToolUsageRecord, ...]:
+        """The run's tool trace, read from the usage repository.
+
+        The trace is a projection of persisted usage — including tools called by
+        nested agents — rather than something the graph state carried up.
+        """
+        if ctx.run_id is None:
+            return ()
+        return as_usage_records(await self._tool_usage_repository.list_for_run(ctx.run_id))
 
     async def _record_token_usage(
         self,
@@ -450,7 +474,7 @@ class LangGraphEngine(Engine):
                 pending = await self._pending_result(ctx, result, token_usage=token_usage)
                 if pending is not None:
                     return pending
-                run_result = self._completed_result(result, token_usage=token_usage)
+                run_result = await self._completed_result(ctx, result, token_usage=token_usage)
                 await lifecycle.succeed(ctx, run_result)
                 return run_result
             except Exception as exc:
@@ -499,7 +523,7 @@ class LangGraphEngine(Engine):
             system_name=self._system_name,
             visited=result.get("visited", []),
             answer="",
-            used_tools=tuple(result.get("used_tools", [])),
+            used_tools=await self._used_tools(ctx),
             input_tokens=token_usage[0],
             output_tokens=token_usage[1],
             status="pending_approval",
@@ -553,13 +577,13 @@ class LangGraphEngine(Engine):
                 system_name=self._system_name,
                 visited=values.get("visited", []),
                 answer="",
-                used_tools=tuple(values.get("used_tools", [])),
+                used_tools=await self._used_tools(ctx),
                 input_tokens=token_usage[0],
                 output_tokens=token_usage[1],
                 status="pending_approval",
                 pending_approval=approval,
             )
-        return self._completed_result(values, token_usage=token_usage)
+        return await self._completed_result(ctx, values, token_usage=token_usage)
 
     async def resume(
         self,
@@ -613,7 +637,7 @@ class LangGraphEngine(Engine):
                 pending = await self._pending_result(ctx, result, token_usage=token_usage)
                 if pending is not None:
                     return pending
-                run_result = self._completed_result(result, token_usage=token_usage)
+                run_result = await self._completed_result(ctx, result, token_usage=token_usage)
                 await lifecycle.succeed(ctx, run_result)
                 log(
                     logger,
@@ -692,7 +716,7 @@ class LangGraphEngine(Engine):
             if pending is not None:
                 channel.emit(_pending_approval_event(self._system_name, pending))
                 return
-            run_result = self._completed_result(result, token_usage=token_usage)
+            run_result = await self._completed_result(ctx, result, token_usage=token_usage)
             await lifecycle.succeed(
                 ctx,
                 run_result,
@@ -818,6 +842,7 @@ class LangGraphEngine(Engine):
                     name=child.node.name or child.node.id,
                     protected=child.node.protected,
                     callable=callable_node,
+                    description=child.node.description,
                 )
             )
 
@@ -828,6 +853,8 @@ class LangGraphEngine(Engine):
             children=children,
             filters=self._filters,
             base_dir=self._base_dir,
+            usage_context=self._tool_usage_context,
+            usage_tracker=self._tool_usage_tracker,
             fallback_model=fallback_model,
         )
 
@@ -841,14 +868,37 @@ class LangGraphEngine(Engine):
             spec=spec,
             node_path=node_path,
             bound_model=bound_model,
-            tool_map={t.name: t for t in tools},
-            mcp_tool_names=mcp_names,
-            mcp_server_by_tool=server_by_tool,
             resolver_loader=self._resolver_loader,
-            hook_manager=self._hook_manager,
             base_dir=self._base_dir,
+            tool_invoker=self._build_tool_invoker(
+                spec,
+                node_path,
+                AgentToolBinding(
+                    tools={t.name: t for t in tools},
+                    mcp_tool_names=frozenset(mcp_names),
+                    mcp_server_by_tool=server_by_tool,
+                ),
+            ),
+            usage_context=self._tool_usage_context,
+        )
+
+    def _build_tool_invoker(
+        self, spec: AgentSpec, node_path: str, binding: AgentToolBinding
+    ) -> ToolInvoker:
+        """Give the agent the one collaborator that runs its tool calls.
+
+        Every invoker shares the engine's approval, idempotency, and usage
+        collaborators, so agents of the same run agree on what already happened.
+        """
+        assert self._hook_manager is not None
+        return ToolInvoker(
+            spec=spec,
+            node_path=node_path,
+            binding=binding,
+            hook_manager=self._hook_manager,
             execution_manager=self._execution_manager,
             approval_coordinator=self._approval_coordinator,
+            usage_tracker=self._tool_usage_tracker,
             system_namespace=self._system_name,
         )
 

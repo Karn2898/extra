@@ -10,30 +10,94 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 
 from agent_engine.core.spec import AgentSpec, GraphNode, OrchestratorSpec
 from agent_engine.runtime.execution import ExecutionLimitExceeded, current_execution, log_limit
+from agent_engine.runtime.hooks import current_run_context
 from agent_engine.runtime.state import GraphState
 from agent_engine.runtime.streaming import current_streams
+from agent_engine.tool_usage.context import ToolUsageContextProvider, ToolUsageScope
 
 logger = logging.getLogger(__name__)
 
 
-def model_context(
-    system_prompt: str,
-    history: list[dict[str, str]],
-    user_message: str,
-) -> list[Any]:
-    """Build ordered provider-native messages from structured prior turns."""
-    messages: list[Any] = [SystemMessage(content=system_prompt)]
-    for message in history:
-        role = message.get("role")
-        content = message.get("content", "")
-        if role == "user":
-            messages.append(HumanMessage(content=content))
-        elif role == "assistant":
-            messages.append(AIMessage(content=content))
-        else:
-            raise ValueError(f"Unsupported conversation history role: {role!r}")
-    messages.append(HumanMessage(content=user_message))
-    return messages
+def current_usage_scope(agent_id: str | None = None) -> ToolUsageScope:
+    """The ambient scope to report tool usage for: this conversation, this run."""
+    ctx = current_run_context.get()
+    if ctx is None:
+        return ToolUsageScope(agent_id=agent_id)
+    return ToolUsageScope(run_id=ctx.run_id, conversation_id=ctx.conversation_id, agent_id=agent_id)
+
+
+ExecutionContextRefresher = Callable[[], Awaitable[str | None]]
+
+
+def execution_context_refresher(
+    provider: ToolUsageContextProvider, agent_id: str
+) -> ExecutionContextRefresher:
+    """Bind a usage provider to one agent's ambient scope, ready to re-read.
+
+    Nodes hold the result and know nothing about scopes, records, or wording;
+    they only ask for the latest execution context.
+    """
+
+    async def refresh() -> str | None:
+        context = await provider.get(current_usage_scope(agent_id))
+        return context.render()
+
+    return refresh
+
+
+class ModelContext:
+    """The ordered messages for one node's model turns.
+
+    Layout: system instructions, an optional private execution-context system
+    message, prior conversation turns, then the current user message. Keeping the
+    execution slot beside the system prompt — never as a user or assistant turn —
+    is what stops runtime metadata from entering the conversation history the
+    caller persists or reaching the user. The slot can be refreshed between model
+    turns, so a node learns what its children ran while it was waiting.
+    """
+
+    _EXECUTION_SLOT = 1
+
+    def __init__(
+        self,
+        system_prompt: str,
+        history: list[dict[str, str]],
+        user_message: str,
+    ) -> None:
+        self._messages: list[Any] = [SystemMessage(content=system_prompt)]
+        self._has_execution_context = False
+        for message in history:
+            role = message.get("role")
+            content = message.get("content", "")
+            if role == "user":
+                self._messages.append(HumanMessage(content=content))
+            elif role == "assistant":
+                self._messages.append(AIMessage(content=content))
+            else:
+                raise ValueError(f"Unsupported conversation history role: {role!r}")
+        self._messages.append(HumanMessage(content=user_message))
+
+    @property
+    def messages(self) -> list[Any]:
+        """The live message list handed to the model."""
+        return self._messages
+
+    def append(self, message: Any) -> None:
+        """Add one model response or tool result to the running turn."""
+        self._messages.append(message)
+
+    def set_execution_context(self, text: str | None) -> None:
+        """Install, replace, or drop the private execution-context message.
+
+        It stays adjacent to the system prompt, so providers that require a
+        single leading system block still see consecutive system messages.
+        """
+        if self._has_execution_context:
+            self._messages.pop(self._EXECUTION_SLOT)
+            self._has_execution_context = False
+        if text:
+            self._messages.insert(self._EXECUTION_SLOT, SystemMessage(content=text))
+            self._has_execution_context = True
 
 
 def node_id(node: GraphNode, parent_path: str | None) -> str:
@@ -76,10 +140,12 @@ async def invoke_model(model: Any, messages: list[Any], state: GraphState) -> An
 
 async def run_tool_loop(
     model: Any,
-    messages: list[Any],
+    context: ModelContext,
     state: GraphState,
     node_path: str,
     invoke_tool: Callable[[dict[str, Any]], Awaitable[str]],
+    *,
+    refresh_execution_context: ExecutionContextRefresher | None = None,
 ) -> Any:
     """Drive the model → tools → model loop until the model stops calling tools.
 
@@ -87,9 +153,14 @@ async def run_tool_loop(
     caller supplies its own: an agent runs real/MCP tools, an orchestrator runs
     child agents exposed as tools. The final (tool-call-free) model response is
     returned.
+
+    ``refresh_execution_context`` is re-read before every model turn, so the turn
+    that synthesises an answer reflects what the tools (or child agents) called in
+    this same turn actually did.
     """
     limiter = current_execution.get()
-    response = await invoke_model(model, messages, state)
+    await _refresh(context, refresh_execution_context)
+    response = await invoke_model(model, context.messages, state)
     while getattr(response, "tool_calls", None):
         if limiter is not None:
             try:
@@ -97,14 +168,23 @@ async def run_tool_loop(
             except ExecutionLimitExceeded as exc:
                 log_limit(exc)
                 break
-        messages.append(response)
+        context.append(response)
         for tc in response.tool_calls:
             logger.debug("[%s] ← tool_call: %s(%s)", node_path, tc["name"], tc["args"])
             content = await invoke_tool(tc)
             logger.debug("[%s] → tool_result[%s]: %s", node_path, tc["name"], content[:300])
-            messages.append(ToolMessage(content=content, tool_call_id=tc["id"]))
-        response = await invoke_model(model, messages, state)
+            context.append(ToolMessage(content=content, tool_call_id=tc["id"], name=tc["name"]))
+        await _refresh(context, refresh_execution_context)
+        response = await invoke_model(model, context.messages, state)
     return response
+
+
+async def _refresh(
+    context: ModelContext,
+    refresh_execution_context: ExecutionContextRefresher | None,
+) -> None:
+    if refresh_execution_context is not None:
+        context.set_execution_context(await refresh_execution_context())
 
 
 def emit_route(state: GraphState, route: tuple[str, ...]) -> None:
