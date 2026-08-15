@@ -23,12 +23,13 @@ import json
 import sys
 import uuid
 from collections.abc import Callable, Iterator
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING
 
 import click
 
 from agent_engine.approvals.decision import ApprovalDecision, parse_decision
 from agent_engine.approvals.errors import InvalidDecision
+from agent_engine.engine.engine import ApprovalEngine
 from agent_engine.engine.types import PendingApproval, RunResult
 from agentctl.session import SpecError, load_and_validate, load_env
 
@@ -51,22 +52,6 @@ ReadLine = Callable[[str], str]
 
 class _StopChat(Exception):
     """Internal control flow for leaving the console from a nested prompt."""
-
-
-@runtime_checkable
-class _ApprovalEngine(Protocol):
-    """HITL operations exposed by the concrete local engine."""
-
-    async def get_pending_approval(self, run_id: str) -> PendingApproval | None: ...
-
-    async def resume(
-        self,
-        run_id: str,
-        approval_id: str,
-        decision: ApprovalDecision | str,
-        *,
-        caller_user_id: str | None = None,
-    ) -> RunResult: ...
 
 
 # click.echo's signature is broad; we only use (message, *, err). Keep a simple wrapper.
@@ -257,12 +242,13 @@ async def _resolve_local_approvals(
             pending.approval_id,
             decision,
             caller_user_id=context.user_id if context is not None else None,
+            caller_session_id=context.conversation_id if context is not None else None,
         )
     return result
 
 
-def _require_approval_engine(engine: Engine) -> _ApprovalEngine:
-    if not isinstance(engine, _ApprovalEngine):
+def _require_approval_engine(engine: Engine) -> ApprovalEngine:
+    if not isinstance(engine, ApprovalEngine):
         raise RuntimeError("This engine does not support resuming approval requests.")
     return engine
 

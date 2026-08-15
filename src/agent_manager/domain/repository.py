@@ -81,6 +81,16 @@ class Repository(ABC):
     ) -> ConversationSnapshot: ...
 
     @abstractmethod
+    async def append_message_if_absent(
+        self,
+        message: ConversationMessage,
+        *,
+        snapshot_ttl_seconds: int | None = None,
+    ) -> bool:
+        """Atomically append by ``message_id`` and report whether it was created."""
+        ...
+
+    @abstractmethod
     async def list_conversation_messages(
         self, session_id: str, limit: int | None = None
     ) -> list[ConversationMessage]:

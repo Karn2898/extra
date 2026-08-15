@@ -20,7 +20,7 @@ from agent_engine.approvals.coordinator import ApprovalCoordinator
 from agent_engine.approvals.decision import ApprovalDecision, parse_decision
 from agent_engine.approvals.errors import RunNotFound
 from agent_engine.approvals.manager import ApprovalManager, ToolExecutionManager
-from agent_engine.approvals.models import ApprovalRecord
+from agent_engine.approvals.models import ApprovalRecord, RunStatus
 from agent_engine.approvals.repository import (
     InMemoryApprovalRepository,
     InMemoryToolExecutionRepository,
@@ -205,6 +205,9 @@ def _pending_approval_event(system_name: str, result: RunResult) -> RunStreamEve
         agent_id=approval.agent_id,
         tool_name=approval.tool_name,
         description=approval.description,
+        provider=approval.provider,
+        server_id=approval.server_id,
+        arguments=dict(approval.arguments),
     )
 
 
@@ -394,10 +397,13 @@ class LangGraphEngine(Engine):
         return cast(dict[str, Any], await app.ainvoke(graph_input, self._thread_config(ctx)))
 
     def _completed_result(
-        self, result: dict[str, Any], *, tokens: TokenUsage | None = None
+        self,
+        result: dict[str, Any],
+        *,
+        token_usage: tuple[int | None, int | None] = (None, None),
     ) -> RunResult:
         """Map the graph's raw output onto the public run result."""
-        input_tokens, output_tokens = tokens.totals() if tokens is not None else (None, None)
+        input_tokens, output_tokens = token_usage
         return RunResult(
             system_name=self._system_name,
             visited=result.get("visited", []),
@@ -406,6 +412,23 @@ class LangGraphEngine(Engine):
             input_tokens=input_tokens,
             output_tokens=output_tokens,
         )
+
+    async def _record_token_usage(
+        self,
+        ctx: RunContext,
+        tokens: TokenUsage,
+    ) -> tuple[int | None, int | None]:
+        """Persist one execution leg and return cumulative usage for the run."""
+        assert ctx.run_id is not None
+        input_tokens, output_tokens = tokens.totals()
+        run = await self._run_repository.add_token_usage(
+            ctx.run_id,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+        if run is None:
+            raise RunNotFound(ctx.run_id)
+        return run.input_tokens, run.output_tokens
 
     async def run(
         self,
@@ -423,10 +446,11 @@ class LangGraphEngine(Engine):
         with self._run_scope(ctx, sinks=StreamSinks(token=tokens.add)):
             try:
                 result = await self._invoke_graph(app, ctx, state)
-                pending = await self._pending_result(ctx, result)
+                token_usage = await self._record_token_usage(ctx, tokens)
+                pending = await self._pending_result(ctx, result, token_usage=token_usage)
                 if pending is not None:
                     return pending
-                run_result = self._completed_result(result, tokens=tokens)
+                run_result = self._completed_result(result, token_usage=token_usage)
                 await lifecycle.succeed(ctx, run_result)
                 return run_result
             except Exception as exc:
@@ -446,7 +470,13 @@ class LangGraphEngine(Engine):
             configurable={"thread_id": ctx.run_id},
         )
 
-    async def _pending_result(self, ctx: RunContext, result: Any) -> RunResult | None:
+    async def _pending_result(
+        self,
+        ctx: RunContext,
+        result: Any,
+        *,
+        token_usage: tuple[int | None, int | None] = (None, None),
+    ) -> RunResult | None:
         """If the graph suspended at an approval interrupt, return a pending
         RunResult built from the persisted approval; otherwise return None."""
         interrupts = result.get("__interrupt__") if isinstance(result, dict) else None
@@ -470,6 +500,8 @@ class LangGraphEngine(Engine):
             visited=result.get("visited", []),
             answer="",
             used_tools=tuple(result.get("used_tools", [])),
+            input_tokens=token_usage[0],
+            output_tokens=token_usage[1],
             status="pending_approval",
             pending_approval=_pending_approval(approval),
         )
@@ -486,6 +518,49 @@ class LangGraphEngine(Engine):
         approval = await self._approval_manager.get_pending(run_id)
         return _pending_approval(approval) if approval is not None else None
 
+    async def get_processed_result(
+        self,
+        run_id: str,
+        approval_id: str,
+        *,
+        caller_user_id: str | None = None,
+        caller_session_id: str | None = None,
+    ) -> RunResult | None:
+        """Recover the result left by an already-processed approval decision."""
+        app, _ = self._require_built("recovering a processed approval")
+        await self._approval_manager.get_authorized(
+            run_id=run_id,
+            approval_id=approval_id,
+            caller_user_id=caller_user_id,
+            caller_auth_ref=caller_session_id,
+        )
+        run = await self._run_repository.get(run_id)
+        if run is None:
+            raise RunNotFound(run_id)
+        if run.status not in {RunStatus.COMPLETED, RunStatus.PENDING_APPROVAL}:
+            return None
+        ctx = RunContext(run_id=run_id)
+        snapshot = await app.aget_state(self._thread_config(ctx))
+        values = snapshot.values
+        if not isinstance(values, dict):
+            return None
+        token_usage = (run.input_tokens, run.output_tokens)
+        if run.status == RunStatus.PENDING_APPROVAL:
+            approval = await self.get_pending_approval(run_id)
+            if approval is None:
+                return None
+            return RunResult(
+                system_name=self._system_name,
+                visited=values.get("visited", []),
+                answer="",
+                used_tools=tuple(values.get("used_tools", [])),
+                input_tokens=token_usage[0],
+                output_tokens=token_usage[1],
+                status="pending_approval",
+                pending_approval=approval,
+            )
+        return self._completed_result(values, token_usage=token_usage)
+
     async def resume(
         self,
         run_id: str,
@@ -493,6 +568,7 @@ class LangGraphEngine(Engine):
         decision: ApprovalDecision | str,
         *,
         caller_user_id: str | None = None,
+        caller_session_id: str | None = None,
     ) -> RunResult:
         """Apply a human decision to a pending tool call and resume the same run.
 
@@ -506,7 +582,10 @@ class LangGraphEngine(Engine):
         app, lifecycle = self._require_built("resuming")
         kind = parse_decision(decision)
         approval = await self._approval_manager.claim(
-            run_id=run_id, approval_id=approval_id, caller_user_id=caller_user_id
+            run_id=run_id,
+            approval_id=approval_id,
+            caller_user_id=caller_user_id,
+            caller_auth_ref=caller_session_id,
         )
         approved = kind != ApprovalDecision.DENY
         ctx = RunContext(
@@ -524,15 +603,17 @@ class LangGraphEngine(Engine):
             approval_id=approval_id,
             decision=kind.value,
         )
-        with self._run_scope(ctx, sinks=None):
+        tokens = TokenUsage()
+        with self._run_scope(ctx, sinks=StreamSinks(token=tokens.add)):
             try:
                 resume_command: Command[Any] = Command(resume={"decision": kind.value})
                 result = await self._invoke_graph(app, ctx, resume_command)
+                token_usage = await self._record_token_usage(ctx, tokens)
                 await self._approval_manager.finalize(approval_id, approved=approved)
-                pending = await self._pending_result(ctx, result)
+                pending = await self._pending_result(ctx, result, token_usage=token_usage)
                 if pending is not None:
                     return pending
-                run_result = self._completed_result(result)
+                run_result = self._completed_result(result, token_usage=token_usage)
                 await lifecycle.succeed(ctx, run_result)
                 log(
                     logger,
@@ -606,11 +687,12 @@ class LangGraphEngine(Engine):
         """
         try:
             result = await self._invoke_graph(app, ctx, state)
-            pending = await self._pending_result(ctx, result)
+            token_usage = await self._record_token_usage(ctx, tokens)
+            pending = await self._pending_result(ctx, result, token_usage=token_usage)
             if pending is not None:
                 channel.emit(_pending_approval_event(self._system_name, pending))
                 return
-            run_result = self._completed_result(result, tokens=tokens)
+            run_result = self._completed_result(result, token_usage=token_usage)
             await lifecycle.succeed(
                 ctx,
                 run_result,

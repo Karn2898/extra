@@ -12,16 +12,24 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
+from agent_engine.approvals.errors import (
+    ApprovalError,
+    approval_http_status,
+    approval_public_message,
+)
+from agent_engine.engine.types import PendingApproval, RunResult
 from agent_engine.runtime.streaming import RunStreamEvent
 from agent_manager.api.deps import CallerIdentity, get_caller_identity, get_principal, get_service
 from agent_manager.api.schemas import (
     AnonymousPassResponse,
+    ApprovalDecisionRequest,
     ConversationSummary,
     CreateConversationRequest,
     CreateConversationResponse,
     LinkAnonymousRequest,
     LinkAnonymousResponse,
     MessageOut,
+    PendingApprovalOut,
     SendMessageRequest,
     SendMessageResponse,
     StreamEventOut,
@@ -148,6 +156,33 @@ def _client_tool_record(t: Any) -> ToolRecord:
     return ToolRecord(**fields)
 
 
+def _pending_approval(pa: PendingApproval | None) -> PendingApprovalOut | None:
+    if pa is None:
+        return None
+    return PendingApprovalOut(
+        run_id=pa.run_id,
+        approval_id=pa.approval_id,
+        agent_id=pa.agent_id,
+        tool_name=pa.tool_name,
+        description=pa.description,
+        provider=pa.provider,
+        server_id=pa.server_id,
+        arguments=pa.arguments,
+    )
+
+
+def _run_response(result: RunResult) -> SendMessageResponse:
+    pending = _pending_approval(result.pending_approval)
+    return SendMessageResponse(
+        answer=result.answer,
+        visited=list(result.visited),
+        used_tools=[_client_tool_record(t) for t in result.used_tools],
+        status=result.status,
+        run_id=pending.run_id if pending is not None else None,
+        pending_approval=pending,
+    )
+
+
 @router.post("/conversations/{conversation_id}/messages", response_model=SendMessageResponse)
 async def send_message(
     conversation_id: str, body: SendMessageRequest, service: Service, caller: Caller
@@ -161,11 +196,48 @@ async def send_message(
     except Exception:  # engine failure
         logger.exception("conversation request failed")
         raise HTTPException(status_code=500, detail=_INTERNAL_ERROR_MESSAGE) from None
-    return SendMessageResponse(
-        answer=result.answer,
-        visited=list(result.visited),
-        used_tools=[_client_tool_record(t) for t in result.used_tools],
-    )
+    return _run_response(result)
+
+
+@router.post(
+    "/conversations/{conversation_id}/runs/{run_id}/approvals/{approval_id}/decision",
+    response_model=SendMessageResponse,
+)
+async def decide_approval(
+    conversation_id: str,
+    run_id: str,
+    approval_id: str,
+    body: ApprovalDecisionRequest,
+    service: Service,
+    caller: Caller,
+) -> SendMessageResponse:
+    try:
+        with _as_http_error():
+            result = await service.decide_approval(
+                conversation_id,
+                run_id,
+                approval_id,
+                body.decision,
+                caller,
+            )
+    except HTTPException:
+        raise
+    except ApprovalError as exc:
+        logger.info(
+            "approval decision rejected",
+            extra={"run_id": run_id, "approval_id": approval_id},
+        )
+        raise HTTPException(
+            status_code=approval_http_status(exc),
+            detail=approval_public_message(exc),
+        ) from None
+    except Exception:
+        logger.exception(
+            "approval decision failed",
+            extra={"run_id": run_id, "approval_id": approval_id},
+        )
+        raise HTTPException(status_code=500, detail=_INTERNAL_ERROR_MESSAGE) from None
+    return _run_response(result)
 
 
 def _to_stream_event(event: RunStreamEvent) -> StreamEventOut:
@@ -182,6 +254,11 @@ def _to_stream_event(event: RunStreamEvent) -> StreamEventOut:
         used_tools=(
             [_client_tool_record(tool) for tool in event.used_tools] if event.used_tools else None
         ),
+        run_id=event.run_id,
+        approval_id=event.approval_id,
+        agent_id=event.agent_id,
+        description=event.description,
+        arguments=event.arguments,
     )
 
 

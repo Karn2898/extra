@@ -12,7 +12,9 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from agent_engine.engine.engine import Engine
+from agent_engine.approvals.decision import ApprovalDecision
+from agent_engine.approvals.errors import ApprovalAlreadyProcessed
+from agent_engine.engine.engine import ApprovalEngine, Engine
 from agent_engine.engine.types import ChatMessage, RunResult
 from agent_engine.runtime.hooks import RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
@@ -199,13 +201,57 @@ class ConversationService:
         if result.pending_approval is not None:
             raise ValueError("cannot complete a conversation turn while approval is pending")
         await self._persist_assistant_turn(
-            turn,
+            session_id=turn.session_id,
+            run_id=turn.run_id,
+            user_id=turn.user_id,
             content=result.answer,
             input_tokens=result.input_tokens,
             output_tokens=result.output_tokens,
             visited=result.visited,
             used_tools=result.used_tools,
         )
+
+    async def decide_approval(
+        self,
+        conversation_id: str,
+        run_id: str,
+        approval_id: str,
+        decision: ApprovalDecision,
+        principal: Principal,
+    ) -> RunResult:
+        """Resume one pending run as the owner of its conversation."""
+        session = await self._authorize(conversation_id, principal)
+        engine = self._require_approval_engine()
+        try:
+            result = await engine.resume(
+                run_id,
+                approval_id,
+                decision,
+                caller_user_id=session.user_id,
+                caller_session_id=session.session_id,
+            )
+        except ApprovalAlreadyProcessed:
+            recovered = await engine.get_processed_result(
+                run_id,
+                approval_id,
+                caller_user_id=session.user_id,
+                caller_session_id=session.session_id,
+            )
+            if recovered is None:
+                raise
+            result = recovered
+        if result.pending_approval is None:
+            await self._persist_assistant_turn(
+                session_id=session.session_id,
+                run_id=run_id,
+                user_id=session.user_id,
+                content=result.answer,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+                visited=result.visited,
+                used_tools=result.used_tools,
+            )
+        return result
 
     async def stream(
         self, conversation_id: str, text: str, principal: Principal
@@ -230,7 +276,9 @@ class ConversationService:
         finally:
             if final is not None:
                 await self._persist_assistant_turn(
-                    turn,
+                    session_id=turn.session_id,
+                    run_id=turn.run_id,
+                    user_id=turn.user_id,
                     content=final.content or "",
                     input_tokens=final.input_tokens,
                     output_tokens=final.output_tokens,
@@ -240,8 +288,10 @@ class ConversationService:
 
     async def _persist_assistant_turn(
         self,
-        turn: PreparedConversationTurn,
         *,
+        session_id: str,
+        run_id: str,
+        user_id: str | None,
         content: str,
         input_tokens: int | None,
         output_tokens: int | None,
@@ -249,12 +299,16 @@ class ConversationService:
         used_tools: Sequence[ToolUsageRecord],
     ) -> None:
         """Persist one normalized final assistant response."""
-        await self._repository.append_message(
+        message_id = uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"agent-manager:{session_id}:{run_id}:assistant",
+        ).hex
+        await self._repository.append_message_if_absent(
             ConversationMessage(
-                message_id=uuid.uuid4().hex,
-                session_id=turn.session_id,
-                run_id=turn.run_id,
-                user_id=turn.user_id,
+                message_id=message_id,
+                session_id=session_id,
+                run_id=run_id,
+                user_id=user_id,
                 role=Role.ASSISTANT,
                 content=content,
                 created_at=datetime.now(UTC),
@@ -274,6 +328,11 @@ class ConversationService:
             external_user_id=principal.external_id,
             display_name=principal.display_name,
         )
+
+    def _require_approval_engine(self) -> ApprovalEngine:
+        if not isinstance(self._engine, ApprovalEngine):
+            raise RuntimeError("the configured engine does not support approval resume")
+        return self._engine
 
     async def _require(self, conversation_id: str) -> ConversationSession:
         session = await self._repository.get_session(conversation_id)

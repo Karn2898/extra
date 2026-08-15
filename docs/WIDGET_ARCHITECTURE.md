@@ -89,6 +89,7 @@ POST /conversations
 GET  /conversations/{id}/messages
 POST /conversations/{id}/messages
 POST /conversations/{id}/messages/stream
+POST /conversations/{id}/runs/{run_id}/approvals/{approval_id}/decision
 ```
 
 The non-streaming endpoint remains as a fallback. The streaming endpoint returns
@@ -101,7 +102,17 @@ Streaming events include:
 - `route` — update the visited agent/sub-agent path.
 - `tool_started`, `tool_succeeded`, `tool_failed` — update tool activity.
 - `final` — authoritative final answer and metadata.
+- `pending_approval` — sanitized tool request, provider/server identity, masked
+  arguments, and the identifiers required to resume it.
 - `error` — stream failure.
+
+When a stream pauses for approval, the assistant entry renders three actions:
+**Approve** (`allow_once`), **Deny** (`deny`), and **Approve for this session**
+(`allow_for_session`). While a decision is in flight the controls are disabled;
+the completed resume replaces the approval card in place rather than starting a
+second conversation turn. Decision retries are idempotent: a completed graph
+result is recovered from its checkpoint and the assistant message is appended
+once by its stable run-derived id.
 
 ## Agent Connection Behavior
 
@@ -122,6 +133,8 @@ Automated coverage verifies:
 - The widget renders and remains accessible in floating and inline modes.
 - Messages are sent through the conversation API.
 - Streaming SSE responses update the assistant message.
+- All three approval actions resume the existing run without duplicate requests.
+- Session approval suppresses the next prompt for the same scoped tool.
 - Stale conversation ids are recovered automatically.
 - Browser demos still work through Playwright.
 - The backend stream endpoint emits SSE frames.

@@ -67,7 +67,12 @@ def _approval_manager() -> ApprovalManager:
     )
 
 
-async def _pending(mgr: ApprovalManager, *, user: str | None = None):
+async def _pending(
+    mgr: ApprovalManager,
+    *,
+    user: str | None = None,
+    auth_ref: str | None = None,
+):
     return await mgr.create_pending(
         run_id="r1",
         thread_id="r1",
@@ -78,6 +83,7 @@ async def _pending(mgr: ApprovalManager, *, user: str | None = None):
         provider="local",
         description="agent 'a' wants to call 'send_email'",
         arguments={"to": "x@y.com", "api_key": "secret"},
+        auth_ref=auth_ref,
         authorized_user_id=user,
     )
 
@@ -165,6 +171,47 @@ async def test_authorized_approver_allowed() -> None:
     mgr = _approval_manager()
     await _pending(mgr, user="owner")
     claimed = await mgr.claim(run_id="r1", approval_id="ap1", caller_user_id="owner")
+    assert claimed.status == ApprovalStatus.RESUMING
+
+
+async def test_claim_rejects_a_different_session_before_claiming() -> None:
+    mgr = _approval_manager()
+    await _pending(mgr, user="owner", auth_ref="session-1")
+
+    with pytest.raises(UnauthorizedApprover):
+        await mgr.claim(
+            run_id="r1",
+            approval_id="ap1",
+            caller_user_id="owner",
+            caller_auth_ref="session-2",
+        )
+
+    claimed = await mgr.claim(
+        run_id="r1",
+        approval_id="ap1",
+        caller_user_id="owner",
+        caller_auth_ref="session-1",
+    )
+    assert claimed.status == ApprovalStatus.RESUMING
+
+
+async def test_claim_rejects_an_omitted_session_before_claiming() -> None:
+    mgr = _approval_manager()
+    await _pending(mgr, user="owner", auth_ref="session-1")
+
+    with pytest.raises(UnauthorizedApprover):
+        await mgr.claim(
+            run_id="r1",
+            approval_id="ap1",
+            caller_user_id="owner",
+        )
+
+    claimed = await mgr.claim(
+        run_id="r1",
+        approval_id="ap1",
+        caller_user_id="owner",
+        caller_auth_ref="session-1",
+    )
     assert claimed.status == ApprovalStatus.RESUMING
 
 

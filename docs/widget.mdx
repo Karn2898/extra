@@ -149,6 +149,21 @@ Only safe metadata is exposed — no internal reasoning, no prompt content.
 
 The widget connects to the streaming endpoint (`POST /conversations/{id}/messages/stream`) and renders tokens as they arrive. If streaming fails before a usable answer, it falls back to the standard endpoint automatically.
 
+## Tool approvals
+
+When a tool requires human approval, the widget pauses the current run and
+shows the tool's human-readable description and three actions:
+
+- **Approve** — allow only this tool invocation.
+- **Deny** — reject this invocation without running the tool.
+- **Approve for this session** — allow this invocation and stop asking for the
+  same scoped tool during the current conversation.
+
+The decision resumes the existing run through the conversation approval API; it
+does not resend the user's message. Hosts must keep the same authenticated
+conversation identity for the decision. Afterward, the run either completes or
+shows the next approval request.
+
 ---
 
 ## Session recovery

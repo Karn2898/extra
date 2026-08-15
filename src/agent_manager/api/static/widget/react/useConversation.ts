@@ -142,7 +142,16 @@ export function useConversation(
       switchTo,
       startNew,
     }),
-    [peekId, ensureId, send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew],
+    [
+      peekId,
+      ensureId,
+      send,
+      stream,
+      loadHistory,
+      loadUsage,
+      listThreads,
+      switchTo,
+      startNew,
+    ],
   );
 }
-

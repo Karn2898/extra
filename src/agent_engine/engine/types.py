@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from agent_engine.runtime.tool_models import ToolUsageRecord
+from agent_engine.runtime.tool_models import ToolProviderName, ToolUsageRecord
 
 
 class ChatRole(StrEnum):
@@ -34,7 +34,7 @@ class PendingApproval:
     agent_id: str
     tool_name: str
     description: str
-    provider: str = "local"
+    provider: ToolProviderName = "local"
     server_id: str | None = None
     arguments: dict[str, Any] = field(default_factory=dict)
 

@@ -325,6 +325,9 @@ globalThis.fetch = async (url, options = {}) => {
   fetchCalls.push({ url, options });
   if (url.endsWith("/conversations")) return jsonResponse({ conversation_id: "conv-1" });
   if (url.endsWith("/messages")) return jsonResponse({ answer: "hello back" });
+  if (url.endsWith("/runs/run-1/approvals/approval-1/decision")) {
+    return jsonResponse({ answer: "approved", status: "completed", pending_approval: null });
+  }
   throw new Error(`unexpected fetch: ${url}`);
 };
 let client = new AgentChatClient("https://api.example", new TokenSource("https://api.example"));
@@ -335,6 +338,18 @@ assert.equal(fetchCalls[0].url, "https://api.example/conversations");
 assert.equal(fetchCalls[1].url, "https://api.example/conversations/conv-1/messages");
 assert.equal(JSON.parse(fetchCalls[1].options.body).message, "hello");
 assert.equal(sendResponse.answer, "hello back");
+const approvalResponse = await client.decideApproval(
+  conversationId,
+  "run-1",
+  "approval-1",
+  "allow_for_session",
+);
+assert.equal(
+  fetchCalls[2].url,
+  "https://api.example/conversations/conv-1/runs/run-1/approvals/approval-1/decision",
+);
+assert.equal(JSON.parse(fetchCalls[2].options.body).decision, "allow_for_session");
+assert.equal(approvalResponse.answer, "approved");
 
 resetPage();
 globalThis.fetch = async (url) => {

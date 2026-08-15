@@ -234,6 +234,7 @@ class ApprovalDemo:
                 pending.approval_id,
                 decision,
                 caller_user_id=CALLER.user_id,
+                caller_session_id=self.session_id,
             )
 
         await self._complete_turn(turn, result)

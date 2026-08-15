@@ -1,6 +1,7 @@
 export type AgentChatPosition = "bottom-right" | "bottom-left";
 export type AgentChatMode = "floating" | "inline";
 export type ChatRole = "user" | "assistant" | "system" | "tool" | "orchestrator" | "agent";
+export type ApprovalDecision = "allow_once" | "deny" | "allow_for_session";
 
 export interface AgentChatConfig {
   endpoint: string;
@@ -54,6 +55,20 @@ export interface MessageEntry {
   error?: boolean;
   route?: string[];
   tools?: ToolRecord[];
+  approval?: PendingApproval;
+  approvalSubmitting?: boolean;
+  approvalError?: string;
+}
+
+export interface PendingApproval {
+  run_id: string;
+  approval_id: string;
+  agent_id: string;
+  tool_name: string;
+  description: string;
+  provider?: string;
+  server_id?: string | null;
+  arguments?: Record<string, unknown>;
 }
 
 export interface ToolRecord {
@@ -71,6 +86,9 @@ export interface SendMessageResponse {
   visited?: string[];
   /** Tools observed during the run. */
   used_tools?: ToolRecord[];
+  status?: "completed" | "pending_approval";
+  run_id?: string | null;
+  pending_approval?: PendingApproval | null;
 }
 
 export interface StreamEvent {
@@ -81,6 +99,7 @@ export interface StreamEvent {
     | "tool_succeeded"
     | "tool_failed"
     | "final"
+    | "pending_approval"
     | "error";
   content?: string;
   route?: string[];
@@ -91,6 +110,11 @@ export interface StreamEvent {
   error?: string;
   system_name?: string;
   used_tools?: ToolRecord[];
+  run_id?: string;
+  approval_id?: string;
+  agent_id?: string;
+  description?: string;
+  arguments?: Record<string, unknown>;
 }
 
 /** Detail of the `agent-chat:answer` event a host page can listen for. */

@@ -16,10 +16,13 @@ import { getStoredConversationId } from "../storage/conversationStorage";
 import type {
   AgentChatAnswerDetail,
   AgentChatConfig,
+  ApprovalDecision,
   ChatMessage,
-  TokenBudget,
   MessageEntry,
+  PendingApproval,
+  SendMessageResponse,
   ThreadSummary,
+  TokenBudget,
   ToolRecord,
 } from "../types";
 import {
@@ -45,12 +48,39 @@ const DEFAULT_GREETING = "How can I help you today?";
 const GENERIC_ERROR = "Something went wrong. Please try again.";
 const COPIED_RESET_MS = 2000;
 
+const isTerminalApprovalError = (error: unknown): error is AgentChatHttpError =>
+  error instanceof AgentChatHttpError &&
+  error.status >= 400 &&
+  error.status < 500 &&
+  ![408, 425, 429].includes(error.status);
+
+const terminalApprovalMessage = (status: number): string => {
+  if (status === 403) return "You are not authorized to decide this approval.";
+  if (status === 409) return "This approval was already processed. You can continue chatting.";
+  return "This approval is no longer available. You can continue chatting.";
+};
+
 const newId = randomId;
 
 const toEntry = (message: ChatMessage): MessageEntry => ({
   id: newId(),
   role: message.role === "user" ? "user" : "ai",
   text: message.content,
+});
+
+const applyRunResponse = (
+  entry: MessageEntry,
+  response: SendMessageResponse,
+): MessageEntry => ({
+  ...entry,
+  text: response.answer,
+  typing: false,
+  error: false,
+  route: response.visited ?? entry.route,
+  tools: response.used_tools ?? entry.tools,
+  approval: response.pending_approval ?? undefined,
+  approvalSubmitting: false,
+  approvalError: undefined,
 });
 
 export interface AgentChatAppProps {
@@ -78,11 +108,13 @@ export function AgentChatApp({
   const [activeId, setActiveId] = useState("");
   const entries = entriesById[activeId] ?? [];
   const usage = usageById[activeId] ?? null;
+  const awaitingApproval = entries.some((entry) => entry.approval !== undefined);
 
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [threadsOpen, setThreadsOpen] = useState(false);
   const launcherRef = useRef<HTMLButtonElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const approvalRequestsRef = useRef(new Set<string>());
 
   // A vanished conversation is replaced mid-turn; carry its messages onto the
   // id the turn actually ran under so the view does not go blank.
@@ -130,8 +162,8 @@ export function AgentChatApp({
   }, [inline, loadHistory]);
 
   useEffect(() => {
-    if (open) inputRef.current?.focus({ preventScroll: true });
-  }, [open, loaded, sending]);
+    if (open && !awaitingApproval) inputRef.current?.focus({ preventScroll: true });
+  }, [open, loaded, sending, awaitingApproval]);
 
   const openChat = useCallback(async () => {
     if (inline) return;
@@ -182,14 +214,14 @@ export function AgentChatApp({
     async (cid: string, text: string, entryId: string) => {
       try {
         const answer = await conversation.send(cid, text);
-        replaceEntry(cid, entryId, {
-          id: entryId,
-          role: "ai",
-          text: answer.answer,
-          route: answer.visited,
-          tools: answer.used_tools,
-        });
-        onAnswer({ visited: answer.visited ?? [], used_tools: answer.used_tools ?? [] });
+        replaceEntry(
+          cid,
+          entryId,
+          applyRunResponse({ id: entryId, role: "ai", text: "" }, answer),
+        );
+        if (!answer.pending_approval) {
+          onAnswer({ visited: answer.visited ?? [], used_tools: answer.used_tools ?? [] });
+        }
       } catch (error) {
         const is4xx = error instanceof AgentChatHttpError && error.status >= 400 && error.status < 500;
         if (error instanceof AgentChatHttpError && error.errorType === "context_limit_exceeded") {
@@ -202,6 +234,65 @@ export function AgentChatApp({
     [conversation, onAnswer, replaceEntry],
   );
 
+  const decideApproval = useCallback(
+    async (
+      cid: string,
+      entryId: string,
+      approval: PendingApproval,
+      decision: ApprovalDecision,
+    ) => {
+      if (approvalRequestsRef.current.has(approval.approval_id)) return;
+      approvalRequestsRef.current.add(approval.approval_id);
+      putEntries(cid, (prev) =>
+        prev.map((entry) =>
+          entry.id === entryId
+            ? { ...entry, approvalSubmitting: true, approvalError: undefined }
+            : entry,
+        ),
+      );
+      try {
+        const result = await client.decideApproval(
+          cid,
+          approval.run_id,
+          approval.approval_id,
+          decision,
+        );
+        putEntries(cid, (prev) =>
+          prev.map((entry) => (entry.id === entryId ? applyRunResponse(entry, result) : entry)),
+        );
+        if (!result.pending_approval) {
+          onAnswer({ visited: result.visited ?? [], used_tools: result.used_tools ?? [] });
+        }
+      } catch (error) {
+        const terminal = isTerminalApprovalError(error);
+        putEntries(cid, (prev) =>
+          prev.map((entry) =>
+            entry.id === entryId
+              ? terminal
+                ? {
+                    ...entry,
+                    text: terminalApprovalMessage(error.status),
+                    error: true,
+                    approval: undefined,
+                    approvalSubmitting: false,
+                    approvalError: undefined,
+                  }
+                : {
+                    ...entry,
+                    approvalSubmitting: false,
+                    approvalError: GENERIC_ERROR,
+                  }
+              : entry,
+          ),
+        );
+      } finally {
+        approvalRequestsRef.current.delete(approval.approval_id);
+        void refreshUsage(cid);
+      }
+    },
+    [client, onAnswer, putEntries, refreshUsage],
+  );
+
   const submit = useCallback(
     async (text: string) => {
       const cid = await conversation.ensureId();
@@ -209,21 +300,33 @@ export function AgentChatApp({
       const pending: MessageEntry = { id: newId(), role: "ai", text: "", typing: true };
       putEntries(cid, (prev) => [...prev, { id: newId(), role: "user", text }, pending]);
       setSending(true);
+      let entry = pending;
+      let receivedEvent = false;
+      let completed = false;
       try {
-        let entry = pending;
         for await (const event of conversation.stream(cid, text)) {
+          receivedEvent = true;
+          completed ||= event.type === "final";
           entry = reduceStreamEvent(entry, event);
           replaceEntry(cid, pending.id, entry);
         }
         replaceEntry(cid, pending.id, { ...entry, typing: false });
-        onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
+        if (!entry.approval) {
+          onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
+        }
       } catch (error) {
         const is4xx = error instanceof AgentChatHttpError && error.status >= 400 && error.status < 500;
         if (error instanceof AgentChatHttpError && error.errorType === "context_limit_exceeded") {
           setBudgetExceeded(true);
         }
-        if (is4xx) {
-          replaceEntry(cid, pending.id, { id: pending.id, role: "ai", text: error.message, error: true });
+        if (completed) {
+          replaceEntry(cid, pending.id, { ...entry, typing: false });
+          onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
+        } else if (entry.approval) {
+          replaceEntry(cid, pending.id, { ...entry, typing: false });
+        } else if (is4xx || receivedEvent) {
+          const message = is4xx ? error.message : GENERIC_ERROR;
+          replaceEntry(cid, pending.id, { id: pending.id, role: "ai", text: message, error: true });
         } else {
           await sendWithoutStreaming(cid, text, pending.id);
         }
@@ -303,24 +406,36 @@ export function AgentChatApp({
                 <Welcome title={config.greeting || DEFAULT_GREETING} />
               ) : null}
               {entries.map((entry) => (
-                <ChatMessage key={entry.id} entry={entry} />
+                <ChatMessage
+                  key={entry.id}
+                  entry={entry}
+                  onApproval={(approval, decision) =>
+                    void decideApproval(activeId, entry.id, approval, decision)
+                  }
+                />
               ))}
             </ConversationContent>
           </Conversation>
           <PromptInput onSubmit={(message) => void submit(message.text)}>
             <PromptInputTextarea
               aria-label="Message"
-              disabled={sending || budgetExceeded}
+              disabled={sending || budgetExceeded || awaitingApproval}
               inputRef={inputRef}
               onSubmit={() => inputRef.current?.form?.requestSubmit()}
-              placeholder={budgetExceeded ? "Context limit reached." : "Message..."}
+              placeholder={
+                budgetExceeded
+                  ? "Context limit reached."
+                  : awaitingApproval
+                    ? "Respond to the approval request above."
+                    : "Message..."
+              }
             />
             <PromptInputFooter>
               <div className="footer-start">
                 {usage ? <BudgetMeter usage={usage} /> : null}
                 <span className="prompt-hint">Enter to send · Shift+Enter for a new line</span>
               </div>
-              <PromptInputSubmit disabled={sending || budgetExceeded} />
+              <PromptInputSubmit disabled={sending || budgetExceeded || awaitingApproval} />
             </PromptInputFooter>
           </PromptInput>
           <div className="powered">Powered by Extra</div>
@@ -363,7 +478,13 @@ function Launcher({
   );
 }
 
-function ChatMessage({ entry }: { entry: MessageEntry }) {
+function ChatMessage({
+  entry,
+  onApproval,
+}: {
+  entry: MessageEntry;
+  onApproval: (approval: PendingApproval, decision: ApprovalDecision) => void;
+}) {
   const from = entry.role === "user" ? "user" : "assistant";
 
   if (entry.error) {
@@ -393,13 +514,75 @@ function ChatMessage({ entry }: { entry: MessageEntry }) {
         <ThinkingDots />
       ) : (
         <>
-          <MessageContent>
-            <MessageResponse>{entry.text}</MessageResponse>
-          </MessageContent>
+          {entry.approval ? (
+            <ApprovalRequest
+              approval={entry.approval}
+              error={entry.approvalError}
+              submitting={Boolean(entry.approvalSubmitting)}
+              onDecision={(decision) => onApproval(entry.approval as PendingApproval, decision)}
+            />
+          ) : null}
+          {entry.text.trim() ? (
+            <MessageContent>
+              <MessageResponse>{entry.text}</MessageResponse>
+            </MessageContent>
+          ) : null}
           {entry.text.trim() ? <MessageActions text={entry.text} /> : null}
         </>
       )}
     </Message>
+  );
+}
+
+function ApprovalRequest({
+  approval,
+  submitting,
+  error,
+  onDecision,
+}: {
+  approval: PendingApproval;
+  submitting: boolean;
+  error?: string;
+  onDecision: (decision: ApprovalDecision) => void;
+}) {
+  return (
+    <section className="approval-card" aria-busy={submitting} aria-label="Tool approval request">
+      <p className="approval-title">Approval required</p>
+      <p className="approval-description">{approval.description}</p>
+      <p className="approval-tool">Tool: {approval.tool_name}</p>
+      {error ? (
+        <p className="approval-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <div className="approval-actions">
+        <button
+          className="approval-button primary"
+          disabled={submitting}
+          onClick={() => onDecision("allow_once")}
+          type="button"
+        >
+          Approve
+        </button>
+        <button
+          className="approval-button danger"
+          disabled={submitting}
+          onClick={() => onDecision("deny")}
+          type="button"
+        >
+          Deny
+        </button>
+        <button
+          className="approval-button"
+          disabled={submitting}
+          onClick={() => onDecision("allow_for_session")}
+          type="button"
+        >
+          Approve for this session
+        </button>
+      </div>
+      {submitting ? <span className="approval-status">Applying decision…</span> : null}
+    </section>
   );
 }
 

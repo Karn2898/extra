@@ -212,6 +212,26 @@ class SqlRepository(Repository):
             assert snapshot is not None
             return snapshot
 
+    async def append_message_if_absent(
+        self,
+        message: ConversationMessage,
+        *,
+        snapshot_ttl_seconds: int | None = None,
+    ) -> bool:
+        """Use the message primary key as the adapter's atomic idempotency boundary."""
+        try:
+            await self.append_message(
+                message,
+                snapshot_ttl_seconds=snapshot_ttl_seconds,
+            )
+        except IntegrityError:
+            async with self._sessions() as session:
+                existing = await session.get(ConversationMessageRow, message.message_id)
+            if existing is None:
+                raise
+            return False
+        return True
+
     async def list_conversation_messages(
         self, session_id: str, limit: int | None = None
     ) -> list[ConversationMessage]:

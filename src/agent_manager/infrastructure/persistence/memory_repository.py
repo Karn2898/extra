@@ -150,6 +150,21 @@ class MemoryRepository(Repository):
         self._snapshots[message.session_id] = snapshot
         return snapshot
 
+    async def append_message_if_absent(
+        self,
+        message: ConversationMessage,
+        *,
+        snapshot_ttl_seconds: int | None = None,
+    ) -> bool:
+        """Append once under the adapter's single-event-loop execution model."""
+        if any(
+            existing.message_id == message.message_id
+            for existing in self._messages.get(message.session_id, [])
+        ):
+            return False
+        await self.append_message(message, snapshot_ttl_seconds=snapshot_ttl_seconds)
+        return True
+
     async def add_message(self, conversation_id: str, role: Role, content: str) -> None:
         await self.append_message(
             ConversationMessage(

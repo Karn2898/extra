@@ -136,6 +136,17 @@ class ApprovalFakeEngine(FakeEngine):
         assert run_id == self.stream_pending.run_id
         return self.stream_pending
 
+    async def get_processed_result(
+        self,
+        run_id: str,
+        approval_id: str,
+        *,
+        caller_user_id: str | None = None,
+        caller_session_id: str | None = None,
+    ) -> RunResult | None:
+        del run_id, approval_id, caller_user_id, caller_session_id
+        return None
+
     async def resume(
         self,
         run_id: str,
@@ -143,7 +154,9 @@ class ApprovalFakeEngine(FakeEngine):
         decision: ApprovalDecision | str,
         *,
         caller_user_id: str | None = None,
+        caller_session_id: str | None = None,
     ) -> RunResult:
+        del caller_session_id
         assert isinstance(decision, ApprovalDecision)
         self.resume_calls.append((run_id, approval_id, decision, caller_user_id))
         return next(self.results)

@@ -91,6 +91,8 @@ class RunRecord:
     thread_id: str
     system_name: str
     status: RunStatus = RunStatus.RUNNING
+    input_tokens: int | None = None
+    output_tokens: int | None = None
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 

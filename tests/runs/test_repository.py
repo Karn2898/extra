@@ -57,6 +57,27 @@ async def test_run_repository_registers_new_run(run_repository: RunRepository) -
     assert await run_repository.get("r1") == record
 
 
+async def test_run_repository_accumulates_reported_token_usage(
+    run_repository: RunRepository,
+) -> None:
+    record = _run("r1")
+    await run_repository.create_if_absent(record)
+
+    first = await run_repository.add_token_usage("r1", input_tokens=10, output_tokens=None)
+    second = await run_repository.add_token_usage("r1", input_tokens=5, output_tokens=3)
+
+    assert first is record
+    assert second is record
+    assert record.input_tokens == 15
+    assert record.output_tokens == 3
+
+
+async def test_run_repository_token_usage_does_not_create_an_unknown_run(
+    run_repository: RunRepository,
+) -> None:
+    assert await run_repository.add_token_usage("missing", input_tokens=1, output_tokens=1) is None
+
+
 async def test_run_repository_does_not_overwrite_existing_run(
     run_repository: RunRepository,
 ) -> None:

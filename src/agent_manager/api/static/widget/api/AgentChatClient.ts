@@ -1,5 +1,6 @@
 import type { TokenSource } from "../auth/tokenSource";
 import type {
+  ApprovalDecision,
   ChatMessage,
   TokenBudget,
   SendMessageResponse,
@@ -90,12 +91,23 @@ export class AgentChatClient {
       body: JSON.stringify({ message }),
     });
 
-    const data = await response.json();
-    return {
-      answer: String(data.answer || ""),
-      visited: Array.isArray(data.visited) ? (data.visited as string[]) : undefined,
-      used_tools: Array.isArray(data.used_tools) ? data.used_tools : undefined,
-    };
+    return parseRunResponse(await response.json());
+  }
+
+  async decideApproval(
+    conversationId: string,
+    runId: string,
+    approvalId: string,
+    decision: ApprovalDecision,
+  ): Promise<SendMessageResponse> {
+    const response = await this.request(
+      `/conversations/${conversationId}/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approvalId)}/decision`,
+      {
+        method: "POST",
+        body: JSON.stringify({ decision }),
+      },
+    );
+    return parseRunResponse(await response.json());
   }
 
   async getUsage(conversationId: string): Promise<TokenBudget> {
@@ -141,6 +153,20 @@ export class AgentChatClient {
       reader.releaseLock();
     }
   }
+}
+
+function parseRunResponse(data: Record<string, unknown>): SendMessageResponse {
+  return {
+    answer: String(data.answer || ""),
+    visited: Array.isArray(data.visited) ? (data.visited as string[]) : undefined,
+    used_tools: Array.isArray(data.used_tools) ? data.used_tools : undefined,
+    status: data.status === "pending_approval" ? "pending_approval" : "completed",
+    run_id: data.run_id == null ? null : String(data.run_id),
+    pending_approval:
+      typeof data.pending_approval === "object" && data.pending_approval !== null
+        ? (data.pending_approval as SendMessageResponse["pending_approval"])
+        : null,
+  };
 }
 
 function parseSseFrame(frame: string): StreamEvent | null {
