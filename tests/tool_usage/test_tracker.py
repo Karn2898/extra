@@ -10,6 +10,7 @@ import pytest
 from agent_engine.tool_usage.in_memory import InMemoryToolUsageRepository
 from agent_engine.tool_usage.models import (
     ToolCallIdentity,
+    ToolInvocationKind,
     ToolInvocationRecord,
     ToolInvocationStatus,
 )
@@ -34,10 +35,22 @@ class BrokenRepository:
     async def record(self, record: ToolInvocationRecord) -> None:
         raise RuntimeError("backend unreachable")
 
-    async def list_for_run(self, run_id: str) -> tuple[ToolInvocationRecord, ...]:
+    async def list_for_run(
+        self,
+        run_id: str,
+        *,
+        limit: int | None = None,
+        kind: ToolInvocationKind | None = None,
+    ) -> tuple[ToolInvocationRecord, ...]:
         raise RuntimeError("backend unreachable")
 
-    async def list_for_conversation(self, conversation_id: str) -> tuple[ToolInvocationRecord, ...]:
+    async def list_for_conversation(
+        self,
+        conversation_id: str,
+        *,
+        limit: int | None = None,
+        kind: ToolInvocationKind | None = None,
+    ) -> tuple[ToolInvocationRecord, ...]:
         raise RuntimeError("backend unreachable")
 
 

@@ -26,7 +26,7 @@ def current_usage_scope(agent_id: str | None = None) -> ToolUsageScope:
     return ToolUsageScope(run_id=ctx.run_id, conversation_id=ctx.conversation_id, agent_id=agent_id)
 
 
-ExecutionContextRefresher = Callable[[frozenset[str]], Awaitable[str | None]]
+ExecutionContextRefresher = Callable[[], Awaitable[str | None]]
 
 
 def execution_context_refresher(
@@ -35,11 +35,11 @@ def execution_context_refresher(
     """Bind a usage provider to one agent's ambient scope, ready to re-read.
 
     Nodes hold the result and know nothing about scopes, records, or wording;
-    they only report which tools their current turn already shows the model.
+    they only ask for the latest execution context.
     """
 
-    async def refresh(already_visible: frozenset[str]) -> str | None:
-        context = await provider.get(current_usage_scope(agent_id), already_visible=already_visible)
+    async def refresh() -> str | None:
+        context = await provider.get(current_usage_scope(agent_id))
         return context.render()
 
     return refresh
@@ -81,19 +81,6 @@ class ModelContext:
     def messages(self) -> list[Any]:
         """The live message list handed to the model."""
         return self._messages
-
-    def requested_tool_names(self) -> frozenset[str]:
-        """Tools this turn has already asked for, and whose results it carries.
-
-        What the model can see for itself through the normal tool protocol, so
-        the execution context does not have to repeat it.
-        """
-        return frozenset(
-            name
-            for message in self._messages
-            for call in getattr(message, "tool_calls", None) or ()
-            if isinstance(call, dict) and isinstance(name := call.get("name"), str)
-        )
 
     def append(self, message: Any) -> None:
         """Add one model response or tool result to the running turn."""
@@ -186,7 +173,7 @@ async def run_tool_loop(
             logger.debug("[%s] ← tool_call: %s(%s)", node_path, tc["name"], tc["args"])
             content = await invoke_tool(tc)
             logger.debug("[%s] → tool_result[%s]: %s", node_path, tc["name"], content[:300])
-            context.append(ToolMessage(content=content, tool_call_id=tc["id"]))
+            context.append(ToolMessage(content=content, tool_call_id=tc["id"], name=tc["name"]))
         await _refresh(context, refresh_execution_context)
         response = await invoke_model(model, context.messages, state)
     return response
@@ -197,9 +184,7 @@ async def _refresh(
     refresh_execution_context: ExecutionContextRefresher | None,
 ) -> None:
     if refresh_execution_context is not None:
-        context.set_execution_context(
-            await refresh_execution_context(context.requested_tool_names())
-        )
+        context.set_execution_context(await refresh_execution_context())
 
 
 def emit_route(state: GraphState, route: tuple[str, ...]) -> None:

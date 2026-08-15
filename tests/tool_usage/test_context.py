@@ -33,13 +33,14 @@ def usage(
     kind: ToolInvocationKind = ToolInvocationKind.TOOL,
     status: ToolInvocationStatus = ToolInvocationStatus.SUCCEEDED,
     error: str | None = None,
+    tool_call_id: str | None = None,
 ) -> ToolInvocationRecord:
     return ToolInvocationRecord(
         call=ToolCallIdentity(
             run_id=run_id,
             agent_id=agent_id,
             agent_path=f"root/{agent_id}",
-            tool_call_id=f"call-{agent_id}-{tool_name}",
+            tool_call_id=tool_call_id or f"call-{agent_id}-{tool_name}",
             tool_name=tool_name,
             provider="mcp",
             server_id="github",
@@ -271,15 +272,35 @@ async def test_the_report_is_bounded_and_says_so() -> None:
     assert "not complete" in report
 
 
-async def test_the_report_still_lists_what_the_asking_turn_already_shows() -> None:
-    """`get` hides the turn's own calls; a direct question must not."""
+async def test_repeated_same_named_calls_remain_distinct_context_entries() -> None:
     repository = InMemoryToolUsageRepository()
-    await repository.record(usage("planner", "github.search"))
+    await repository.record(usage("planner", "github.search", tool_call_id="call-1"))
+    await repository.record(usage("planner", "github.search", tool_call_id="call-2"))
     provider = ToolUsageContextProvider(repository)
 
-    report = format_executed_tools(await provider.get_executed_tools(RUN))
+    context = await provider.get(RUN)
 
-    assert "github.search" in report
+    assert [entry.tool_name for entry in context.entries] == ["github.search", "github.search"]
+
+
+async def test_tool_only_context_does_not_underfill_after_many_delegations() -> None:
+    repository = InMemoryToolUsageRepository()
+    await repository.record(usage("worker", "first-tool", tool_call_id="tool-1"))
+    for index in range(10):
+        await repository.record(
+            usage(
+                "root",
+                f"child-{index}",
+                kind=ToolInvocationKind.AGENT,
+                tool_call_id=f"delegate-{index}",
+            )
+        )
+    await repository.record(usage("worker", "last-tool", tool_call_id="tool-2"))
+    provider = ToolUsageContextProvider(repository, max_entries=2, include_delegations=False)
+
+    context = await provider.get(RUN)
+
+    assert [entry.tool_name for entry in context.entries] == ["first-tool", "last-tool"]
 
 
 async def test_a_read_failure_propagates_from_the_report() -> None:

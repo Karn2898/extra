@@ -200,12 +200,7 @@ class ToolUsageContextProvider:
         self._report_max_entries = report_max_entries
         self._include_delegations = include_delegations
 
-    async def get(
-        self,
-        scope: ToolUsageScope,
-        *,
-        already_visible: frozenset[str] = frozenset(),
-    ) -> ToolUsageContext:
+    async def get(self, scope: ToolUsageScope) -> ToolUsageContext:
         """Return the usage context for ``scope``.
 
         The conversation is preferred when the caller has one, so a later turn
@@ -213,13 +208,12 @@ class ToolUsageContextProvider:
         falls back to its own run. A scope with neither id — a caller running
         outside any registered run — yields empty context rather than an error.
 
-        ``already_visible`` names the tools the caller has itself invoked in the
-        turn it is about to send. Those invocations reach the model in full
-        through the normal tool protocol (``AIMessage`` + ``ToolMessage``), so
-        repeating them here would spend tokens saying less.
+        The repository is always read with ``max_entries + 1``. The extra row is
+        used only to tell whether the rendered context is truncated.
         """
         try:
-            records = await self._load(scope)
+            kind = None if self._include_delegations else ToolInvocationKind.TOOL
+            records = await self._load(scope, limit=self._max_entries + 1, kind=kind)
         except Exception as exc:
             log(
                 logger,
@@ -230,7 +224,7 @@ class ToolUsageContextProvider:
                 error=type(exc).__name__,
             )
             return EMPTY_CONTEXT
-        return self._project(records, scope, already_visible)
+        return self._bounded(records, self._max_entries)
 
     async def get_executed_tools(self, scope: ToolUsageScope) -> ToolUsageContext:
         """Every tool executed in ``scope``, for an explicit question about them.
@@ -244,28 +238,27 @@ class ToolUsageContextProvider:
         record cannot be read would invite an agent to repeat an action that
         already took effect.
         """
-        records = [r for r in await self._load(scope) if r.call.kind is ToolInvocationKind.TOOL]
+        records = await self._load(
+            scope,
+            limit=self._report_max_entries + 1,
+            kind=ToolInvocationKind.TOOL,
+        )
         return self._bounded(records, self._report_max_entries)
 
-    async def _load(self, scope: ToolUsageScope) -> Sequence[ToolInvocationRecord]:
-        if scope.conversation_id:
-            return await self._repository.list_for_conversation(scope.conversation_id)
-        if scope.run_id:
-            return await self._repository.list_for_run(scope.run_id)
-        return ()
-
-    def _project(
+    async def _load(
         self,
-        records: Sequence[ToolInvocationRecord],
         scope: ToolUsageScope,
-        already_visible: frozenset[str],
-    ) -> ToolUsageContext:
-        wanted = [
-            r
-            for r in records
-            if self._is_included(r) and not self._is_visible(r, scope, already_visible)
-        ]
-        return self._bounded(wanted, self._max_entries)
+        *,
+        limit: int,
+        kind: ToolInvocationKind | None,
+    ) -> Sequence[ToolInvocationRecord]:
+        if scope.conversation_id:
+            return await self._repository.list_for_conversation(
+                scope.conversation_id, limit=limit, kind=kind
+            )
+        if scope.run_id:
+            return await self._repository.list_for_run(scope.run_id, limit=limit, kind=kind)
+        return ()
 
     @staticmethod
     def _bounded(records: Sequence[ToolInvocationRecord], limit: int) -> ToolUsageContext:
@@ -282,26 +275,4 @@ class ToolUsageContextProvider:
                 for record in records[-limit:]
             ),
             truncated=len(records) > limit,
-        )
-
-    def _is_included(self, record: ToolInvocationRecord) -> bool:
-        return self._include_delegations or record.call.kind is ToolInvocationKind.TOOL
-
-    @staticmethod
-    def _is_visible(
-        record: ToolInvocationRecord,
-        scope: ToolUsageScope,
-        already_visible: frozenset[str],
-    ) -> bool:
-        """Whether the caller's own turn already shows the model this invocation.
-
-        Only the asker's own calls, in the run it is currently executing, can be
-        in its message list — another agent's call, or the same agent's call in
-        an earlier run or an earlier node entry, is not.
-        """
-        call = record.call
-        return (
-            call.tool_name in already_visible
-            and call.agent_id == scope.agent_id
-            and call.run_id == scope.run_id
         )

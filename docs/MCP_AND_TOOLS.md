@@ -215,7 +215,8 @@ execution-level traceability. Neither replaces the other, and both are queryable
 Delegating to a child agent is an action too, so an orchestrator records it —
 that is how a later turn can reconstruct the routing that already happened.
 Those records are `kind = agent`; the caller-facing run trace reports
-`kind = tool` only, and so does the model context by default (see below).
+`kind = tool` only, while private model context renders tools and delegations in
+separate labelled sections (see below).
 
 `record` is an upsert on that identity, so a graph re-entry after an approval
 resume updates the existing record instead of adding a second one. Arguments and
@@ -229,6 +230,12 @@ PostgreSQL-backed adapter with the same contract and injects it at the
 composition root (`build_tool_usage_repository` in `agent_manager/composition.py`,
 or the `tool_usage_repository=` argument of `LangGraphEngine`). No agent, node,
 tool-loop, or model-context code changes when the backend changes.
+
+Both list operations accept an optional invocation-kind filter and positive
+`limit`. A bounded read returns the newest matching records in chronological
+order. Context projections request `limit + 1`, using the extra row only to mark
+the output as truncated; filtering before limiting prevents delegation-heavy
+histories from under-filling tool-only reports.
 
 Recording is observability, not part of the tool's contract: a repository write
 failure is logged at WARNING with the invocation's identity and swallowed, so a
@@ -279,13 +286,13 @@ Two policies live in the provider, and changing them touches nothing else:
   outside any conversation falls back to its own run.
 * **Size** — the most recent 50 invocations, bounding prompt growth on a long
   conversation. A trimmed record says so, rather than passing itself off as
-  complete.
-* **Non-duplication** — an invocation the asking agent made in the run it is
-  currently executing is skipped while its own `AIMessage` + `ToolMessage` pair
-  is still in the turn. The model already has that call in full through the
-  normal tool protocol; the block would only repeat it in less detail. The same
-  agent's calls from an earlier run or an earlier node entry *are* shown, since
-  nothing in the current turn carries them.
+  complete. The provider requests only `limit + 1` matching records, so one
+  extra row detects truncation without loading the full history.
+
+The repository remains the source of truth even when a tool result is also
+present in the current model turn. Records are never hidden by tool name: two
+calls to the same tool can be different logical invocations, and an orchestrator
+can legitimately delegate to the same child more than once.
 
 The block is re-read **before every model turn** (`ModelContext` keeps one slot
 for it next to the system prompt), so a model invocation always reflects tools
@@ -314,8 +321,13 @@ Tools executed in this conversation, oldest first:
 - user_management: add_new_user [succeeded]
 ```
 
-The answer now comes from a tool result the model cannot contradict from its
-bindings, rather than from an instruction it can ignore. The two read paths
+The passive context remains useful for reasoning, but it is not enough for an
+explicit reporting question: the model can still classify a bound child agent
+as a tool despite the labelled record. Keeping this reporting tool trades one
+reserved engine-tool name and an extra model tool call for a deterministic
+repository lookup with a clear result boundary. The answer now comes from a
+tool result the model cannot contradict from its bindings, rather than from an
+instruction it can ignore. The two read paths
 degrade differently on purpose: the passive block falls back to empty context
 when the repository cannot be read, while the report says the record is
 unavailable — claiming "nothing has run" would invite an agent to repeat an

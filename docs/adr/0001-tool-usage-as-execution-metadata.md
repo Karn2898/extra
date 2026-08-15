@@ -24,7 +24,9 @@ with the repository as its source of truth.
 - `ToolUsageRepository` (Protocol) persists one record per logical invocation,
   identified by `(run_id, tool_call_id)` and carrying
   `conversation → run → agent → tool call`. `record` is an upsert on that
-  identity, so an approval resume updates rather than duplicates.
+  identity, so an approval resume updates rather than duplicates. Its read
+  operations accept an optional invocation-kind filter and a positive limit;
+  bounded reads return the newest matching records in chronological order.
 - `ToolUsageTracker` writes execution outcomes; it decides nothing else.
 - `ToolUsageContextProvider` projects persisted records into a private
   system-role block for the model, refreshed before every model turn.
@@ -49,6 +51,9 @@ Approval and tool usage stay separate subsystems that share identifiers
 - Orchestrators are bound one engine-provided read-only tool,
   `list_executed_tools`. A configured child of the same name wins.
 - Child agents are described to their parent as delegations rather than actions.
+- Duplicate-tool protection is scoped to one node activation. A graph/HITL
+  replay is a new activation, so it can reach the existing idempotency cache;
+  an identical retry within one activation remains blocked.
 
 ## Consequences
 
@@ -63,3 +68,12 @@ Approval and tool usage stay separate subsystems that share identifiers
   is unreadable would invite repeating an action that already took effect.
 - Delegations are recorded as `kind = agent`. They are excluded from the run
   trace, which has always meant real tool/MCP calls.
+- The repository remains authoritative even when a call is also visible through
+  the model's normal tool protocol. Records are never hidden by tool name because
+  repeated names can represent distinct invocations or delegations.
+- Keeping `list_executed_tools` trades one reserved engine-tool name and an extra
+  model tool call for deterministic answers to explicit usage questions. Passive
+  context alone did not reliably stop models from reporting child agents as
+  tools. The reporting tool is read-only, unrecorded, outside tool/child-call
+  limits, uses the provider's shared vocabulary, and yields to a configured
+  child with the same name.

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from agent_engine.tool_usage.models import ToolInvocationRecord
+from agent_engine.tool_usage.models import ToolInvocationKind, ToolInvocationRecord
 
 _Key = tuple[str, str]
 
@@ -36,14 +36,38 @@ class InMemoryToolUsageRepository:
                     self._by_conversation.setdefault(conversation_id, []).append(key)
             self._records[key] = record
 
-    async def list_for_run(self, run_id: str) -> tuple[ToolInvocationRecord, ...]:
-        return await self._snapshot(self._by_run, run_id)
+    async def list_for_run(
+        self,
+        run_id: str,
+        *,
+        limit: int | None = None,
+        kind: ToolInvocationKind | None = None,
+    ) -> tuple[ToolInvocationRecord, ...]:
+        return await self._snapshot(self._by_run, run_id, limit=limit, kind=kind)
 
-    async def list_for_conversation(self, conversation_id: str) -> tuple[ToolInvocationRecord, ...]:
-        return await self._snapshot(self._by_conversation, conversation_id)
+    async def list_for_conversation(
+        self,
+        conversation_id: str,
+        *,
+        limit: int | None = None,
+        kind: ToolInvocationKind | None = None,
+    ) -> tuple[ToolInvocationRecord, ...]:
+        return await self._snapshot(self._by_conversation, conversation_id, limit=limit, kind=kind)
 
     async def _snapshot(
-        self, index: dict[str, list[_Key]], scope_id: str
+        self,
+        index: dict[str, list[_Key]],
+        scope_id: str,
+        *,
+        limit: int | None,
+        kind: ToolInvocationKind | None,
     ) -> tuple[ToolInvocationRecord, ...]:
+        if limit is not None and limit <= 0:
+            raise ValueError("limit must be positive")
         async with self._lock:
-            return tuple(self._records[key] for key in index.get(scope_id, ()))
+            records = [
+                self._records[key]
+                for key in index.get(scope_id, ())
+                if kind is None or self._records[key].call.kind is kind
+            ]
+            return tuple(records[-limit:] if limit is not None else records)

@@ -89,24 +89,55 @@ class SqliteToolUsageRepository:
             )
             await db.execute("COMMIT")
 
-    async def list_for_run(self, run_id: str) -> tuple[ToolInvocationRecord, ...]:
-        return await self._select("run_id", run_id)
+    async def list_for_run(
+        self,
+        run_id: str,
+        *,
+        limit: int | None = None,
+        kind: ToolInvocationKind | None = None,
+    ) -> tuple[ToolInvocationRecord, ...]:
+        return await self._select("run_id", run_id, limit=limit, kind=kind)
 
-    async def list_for_conversation(self, conversation_id: str) -> tuple[ToolInvocationRecord, ...]:
-        return await self._select("conversation_id", conversation_id)
+    async def list_for_conversation(
+        self,
+        conversation_id: str,
+        *,
+        limit: int | None = None,
+        kind: ToolInvocationKind | None = None,
+    ) -> tuple[ToolInvocationRecord, ...]:
+        return await self._select("conversation_id", conversation_id, limit=limit, kind=kind)
 
-    async def _select(self, column: str, value: str) -> tuple[ToolInvocationRecord, ...]:
+    async def _select(
+        self,
+        column: str,
+        value: str,
+        *,
+        limit: int | None,
+        kind: ToolInvocationKind | None,
+    ) -> tuple[ToolInvocationRecord, ...]:
         """``column`` is always one of the two literals chosen by the callers above."""
+        if limit is not None and limit <= 0:
+            raise ValueError("limit must be positive")
+        where = f"{column} = ?" + (" AND kind = ?" if kind is not None else "")
+        params: list[str | int] = [value]
+        if kind is not None:
+            params.append(kind.value)
+        suffix = " ORDER BY seq"
+        if limit is not None:
+            suffix = " ORDER BY seq DESC LIMIT ?"
+            params.append(limit)
         async with aiosqlite.connect(self._path) as db:
             cursor = await db.execute(
                 f"""
                 SELECT run_id, conversation_id, agent_id, agent_path, kind, tool_call_id,
                        tool_name, provider, server_id, status, error, recorded_at
-                FROM tool_usage WHERE {column} = ? ORDER BY seq
+                FROM tool_usage WHERE {where}{suffix}
                 """,
-                (value,),
+                params,
             )
-            rows = await cursor.fetchall()
+            rows = list(await cursor.fetchall())
+        if limit is not None:
+            rows.reverse()
         return tuple(
             ToolInvocationRecord(
                 call=ToolCallIdentity(

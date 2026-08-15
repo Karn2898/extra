@@ -11,6 +11,7 @@ Neither node owns tool-execution or tool-usage state: a node asks its
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
@@ -42,6 +43,7 @@ from agent_engine.runtime.execution import (
     ExecutionLimitExceeded,
     blocked_message,
     current_execution,
+    current_invocation,
     log_limit,
 )
 from agent_engine.runtime.state import GraphState
@@ -131,9 +133,13 @@ class AgentNode:
         self._refresh_execution_context = execution_context_refresher(usage_context, spec.id)
 
     async def __call__(self, state: GraphState) -> GraphState:
-        ctx = self._resolve_context()
-        system_prompt = self._build_prompt(ctx)
-        return await self._run(system_prompt, state)
+        token = current_invocation.set(uuid.uuid4().hex)
+        try:
+            ctx = self._resolve_context()
+            system_prompt = self._build_prompt(ctx)
+            return await self._run(system_prompt, state)
+        finally:
+            current_invocation.reset(token)
 
     def _resolve_context(self) -> dict[str, str]:
         """Run every declared resolver and return the accumulated key→value map.
@@ -221,12 +227,18 @@ class OrchestratorNode:
         self._refresh_execution_context = execution_context_refresher(usage_context, spec.id)
 
     async def __call__(self, state: GraphState) -> GraphState:
-        candidates = self._filter_children(state)
-        base_prompt = load_file(self._base_dir, self._spec.prompts.system) or self._spec.description
-        orchestrator_content = load_file(self._base_dir, self._spec.prompts.orchestrator)
-        base_prompt = f"{base_prompt}\n\n{orchestrator_content}"
-        system_prompt = f"{base_prompt}\n{_ORCHESTRATOR_CONTRACT}"
-        return await self._run(system_prompt, candidates, state)
+        token = current_invocation.set(uuid.uuid4().hex)
+        try:
+            candidates = self._filter_children(state)
+            base_prompt = (
+                load_file(self._base_dir, self._spec.prompts.system) or self._spec.description
+            )
+            orchestrator_content = load_file(self._base_dir, self._spec.prompts.orchestrator)
+            base_prompt = f"{base_prompt}\n\n{orchestrator_content}"
+            system_prompt = f"{base_prompt}\n{_ORCHESTRATOR_CONTRACT}"
+            return await self._run(system_prompt, candidates, state)
+        finally:
+            current_invocation.reset(token)
 
     def _filter_children(self, state: GraphState) -> list[ChildEntry]:
         """Apply every RouteFilter to narrow down which child tools are available."""

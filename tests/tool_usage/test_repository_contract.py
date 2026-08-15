@@ -16,6 +16,7 @@ import pytest
 from agent_engine.tool_usage.in_memory import InMemoryToolUsageRepository
 from agent_engine.tool_usage.models import (
     ToolCallIdentity,
+    ToolInvocationKind,
     ToolInvocationRecord,
     ToolInvocationStatus,
 )
@@ -32,6 +33,7 @@ def usage(
     conversation_id: str | None = None,
     status: ToolInvocationStatus = ToolInvocationStatus.SUCCEEDED,
     error: str | None = None,
+    kind: ToolInvocationKind = ToolInvocationKind.TOOL,
 ) -> ToolInvocationRecord:
     return ToolInvocationRecord(
         call=ToolCallIdentity(
@@ -41,6 +43,7 @@ def usage(
             tool_call_id=tool_call_id or f"{agent_id}:{tool_name}",
             tool_name=tool_name,
             conversation_id=conversation_id,
+            kind=kind,
         ),
         status=status,
         error=error,
@@ -202,3 +205,65 @@ async def test_listing_returns_a_snapshot_that_later_writes_do_not_change(
     await repository.record(usage("run-1", "developer", "github.get_file"))
 
     assert len(snapshot) == 1
+
+
+@pytest.mark.parametrize("scope", ["run", "conversation"])
+async def test_bounded_listing_returns_the_latest_records_in_chronological_order(
+    repository: ToolUsageRepository,
+    scope: str,
+) -> None:
+    for index in range(5):
+        await repository.record(
+            usage(
+                "run-1",
+                "planner",
+                f"tool-{index}",
+                tool_call_id=f"call-{index}",
+                conversation_id="conv-1",
+            )
+        )
+
+    stored = (
+        await repository.list_for_run("run-1", limit=2)
+        if scope == "run"
+        else await repository.list_for_conversation("conv-1", limit=2)
+    )
+
+    assert [record.call.tool_name for record in stored] == ["tool-3", "tool-4"]
+
+
+@pytest.mark.parametrize("scope", ["run", "conversation"])
+async def test_kind_filter_is_applied_before_the_limit(
+    repository: ToolUsageRepository,
+    scope: str,
+) -> None:
+    await repository.record(
+        usage("run-1", "worker", "first-tool", tool_call_id="a", conversation_id="conv-1")
+    )
+    for index in range(4):
+        await repository.record(
+            usage(
+                "run-1",
+                "root",
+                f"child-{index}",
+                tool_call_id=f"child-{index}",
+                conversation_id="conv-1",
+                kind=ToolInvocationKind.AGENT,
+            )
+        )
+    await repository.record(
+        usage("run-1", "worker", "last-tool", tool_call_id="z", conversation_id="conv-1")
+    )
+
+    stored = (
+        await repository.list_for_run("run-1", limit=2, kind=ToolInvocationKind.TOOL)
+        if scope == "run"
+        else await repository.list_for_conversation("conv-1", limit=2, kind=ToolInvocationKind.TOOL)
+    )
+
+    assert [record.call.tool_name for record in stored] == ["first-tool", "last-tool"]
+
+
+async def test_limit_must_be_positive(repository: ToolUsageRepository) -> None:
+    with pytest.raises(ValueError, match="limit must be positive"):
+        await repository.list_for_run("run-1", limit=0)

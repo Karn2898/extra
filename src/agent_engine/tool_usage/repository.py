@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
-from agent_engine.tool_usage.models import ToolInvocationRecord
+from agent_engine.tool_usage.models import ToolInvocationKind, ToolInvocationRecord
 
 
 @runtime_checkable
@@ -23,7 +23,9 @@ class ToolUsageRepository(Protocol):
       replayed invocation updates its record instead of adding a second one;
     * keep first-seen order, which is chronological call order, within both
       scopes;
-    * return snapshots that no later write mutates.
+    * return snapshots that no later write mutates;
+    * when ``limit`` is supplied, return the latest records in chronological
+      order (not reverse order), after applying the optional ``kind`` filter.
 
     Scopes are isolated: a listing never returns a record from another run or
     another conversation, and an unknown id yields no records. A record whose
@@ -34,10 +36,22 @@ class ToolUsageRepository(Protocol):
         """Store the outcome of one logical tool invocation."""
         ...
 
-    async def list_for_run(self, run_id: str) -> Sequence[ToolInvocationRecord]:
+    async def list_for_run(
+        self,
+        run_id: str,
+        *,
+        limit: int | None = None,
+        kind: ToolInvocationKind | None = None,
+    ) -> Sequence[ToolInvocationRecord]:
         """Return this run's records in call order (empty when unknown)."""
         ...
 
-    async def list_for_conversation(self, conversation_id: str) -> Sequence[ToolInvocationRecord]:
+    async def list_for_conversation(
+        self,
+        conversation_id: str,
+        *,
+        limit: int | None = None,
+        kind: ToolInvocationKind | None = None,
+    ) -> Sequence[ToolInvocationRecord]:
         """Return every run's records for this conversation, in call order."""
         ...

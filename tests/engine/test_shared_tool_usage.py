@@ -13,6 +13,7 @@ from typing import Any, cast
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages.tool import ToolCall
 
 from agent_engine.core.spec import (
     AgentSpec,
@@ -180,6 +181,54 @@ async def test_delegating_to_a_child_agent_is_recorded_as_an_action(
     ]
     # The caller-facing trace still means real tool/MCP calls only.
     assert [t.name for t in result.used_tools] == ["search", "get_file"]
+
+
+async def test_repeated_delegations_to_the_same_agent_are_both_visible(
+    tmp_path: Path,
+) -> None:
+    class DelegateTwiceModel(AllToolsThenAnswerModel):
+        def bind_tools(self, tools: list[Any]) -> AllToolsThenAnswerModel:
+            return DelegateTwiceModel(self._answer, [tool.name for tool in tools], self.seen)
+
+        def _respond(self, messages: list[Any]) -> AIMessage:
+            self.seen.append(list(messages))
+            if self._tool_names and not any(
+                isinstance(message, ToolMessage) for message in messages
+            ):
+                name = self._tool_names[0]
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        ToolCall(name=name, args={"message": "first"}, id="delegate-1"),
+                        ToolCall(name=name, args={"message": "second"}, id="delegate-2"),
+                    ],
+                )
+            return AIMessage(content=self._answer)
+
+    models = {
+        "root-model": DelegateTwiceModel("synthesized"),
+        "planner-model": AllToolsThenAnswerModel("planned"),
+    }
+    write_tool(tmp_path, "search")
+    repository = InMemoryToolUsageRepository()
+    system = two_agent_system([agent("planner", "search")])
+
+    async with LangGraphEngine(
+        tmp_path,
+        model_factory=model_factory_for(models),
+        tool_usage_repository=repository,
+    ) as engine:
+        await engine.build(system)
+        await engine.run("please plan twice", context=RunContext(run_id="run-repeat"))
+
+    delegations = [
+        record
+        for record in await repository.list_for_run("run-repeat")
+        if record.call.kind is AGENT
+    ]
+    assert [record.call.tool_name for record in delegations] == ["planner", "planner"]
+    synthesis = "\n".join(str(message.content) for message in messages_of(models["root-model"]))
+    assert synthesis.count("root -> planner") == 2
 
 
 async def test_records_do_not_leak_between_runs(
@@ -439,22 +488,22 @@ async def test_a_tool_that_ran_between_model_turns_appears_in_the_next_one(
     assert "planner:\n- search [succeeded]" in second_turn
 
 
-async def test_the_turns_own_tool_call_is_not_repeated_in_the_context(
+async def test_the_turns_own_tool_call_remains_in_repository_context(
     tmp_path: Path, models: dict[str, AllToolsThenAnswerModel]
 ) -> None:
     await run_system(tmp_path, models, repository=InMemoryToolUsageRepository(), run_id="run-1")
 
     developer = models["developer-model"]
     second_turn = developer.seen[1]
-    # get_file reached this model in full through the normal tool protocol...
+    # The normal protocol and repository projection serve different purposes:
+    # one carries a result; the other is the authoritative execution record.
     assert any(isinstance(m, ToolMessage) for m in second_turn)
-    # ...so the execution context does not spend tokens repeating it.
     execution_context = next(
         str(m.content)
         for m in second_turn
         if isinstance(m, SystemMessage) and USAGE_HEADER in str(m.content)
     )
-    assert "get_file" not in execution_context
+    assert "get_file [succeeded]" in execution_context
     assert "search [succeeded]" in execution_context
 
 
