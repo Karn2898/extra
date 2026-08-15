@@ -84,7 +84,9 @@ On failure a `{"type": "error", "detail": "..."}` event is emitted.
 
 Base URL: `http://localhost:8100`
 
-Manages multi-turn conversations with history persisted in SQLite (or Postgres via `DATABASE_URL`).
+Manages multi-turn conversations using process memory by default, without
+opening a database connection. Set `AGENT_DB_URL` (or `DATABASE_URL`) to an
+explicit SQLite or Postgres URL when history must survive process restarts.
 
 ### Caller identity
 
@@ -227,6 +229,38 @@ emitted before `done`.
 The event schema also declares `tool_started` / `tool_succeeded` /
 `tool_failed` types for per-tool progress; the engine does not emit them yet.
 </Note>
+
+### Pending approval actions
+
+When a send or stream response has `status: "pending_approval"`, use its
+`run_id` and `approval_id` to decide or cancel the suspended run:
+
+```text
+POST /conversations/{id}/runs/{run_id}/approvals/{approval_id}/decision
+POST /conversations/{id}/runs/{run_id}/approvals/{approval_id}/decision/stream
+POST /conversations/{id}/runs/{run_id}/approvals/{approval_id}/cancel
+```
+
+The decision body is one of `allow_once`, `deny`, or `allow_for_session`:
+
+```json
+{ "decision": "allow_once" }
+```
+
+Cancellation is a separate terminal lifecycle action, not an alias for
+`deny`. It succeeds only while the approval is pending and returns:
+
+```json
+{ "run_id": "…", "status": "cancelled" }
+```
+
+All routes authorize the conversation owner. If approval and cancellation
+race, exactly one wins; the loser receives `409`.
+
+The widget uses `/decision/stream`. It returns SSE beginning with
+`resume_started` and the same `run_id`, followed by ordinary execution events.
+Disconnecting that response cancels the resumed graph task and moves the run to
+`cancelled`; it does not merely hide browser output.
 
 ### `GET /conversations/{id}/messages`
 

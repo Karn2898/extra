@@ -197,7 +197,8 @@ When a call requires approval, the `ApprovalProvider` for this runtime
    `status="pending_approval"` and a sanitized `pending_approval` payload. **No
    tool ran; for MCP, no `tools/call` was sent.**
 
-To resume, `Engine.resume(run_id, approval_id, decision)`:
+To resume, `Engine.resume(run_id, approval_id, decision)` or the streamed
+`Engine.resume_stream(...)` capability:
 
 > **Compatibility note:** Session-bound approvals now fail closed. Callers of
 > `resume(...)` and the approval HTTP endpoints must propagate the same session
@@ -206,7 +207,8 @@ To resume, `Engine.resume(run_id, approval_id, decision)`:
 
 1. **Atomically claims** the approval (`PENDING → RESUMING`) — exactly one caller
    wins (see §7).
-2. Resumes the **same** LangGraph thread from its checkpoint via
+2. Moves the run through `RESUMING → RUNNING` and resumes the **same** LangGraph
+   thread from its checkpoint via
    `Command(resume={"decision": ...})`. The graph is not restarted, the agent is
    not re-selected, and intent/planning are not re-run.
 3. The node re-executes, the coordinator interprets the typed decision, and:
@@ -234,14 +236,19 @@ tool_call_id  the agent's requested tool call
 execution_id  one actual execution attempt (idempotency key)
 ```
 
-Run states: `RUNNING → PENDING_APPROVAL → RESUMING → COMPLETED | FAILED`, with
-validated transitions (no `COMPLETED → RESUMING`, no `REJECTED → APPROVED`).
+Run states normally follow
+`RUNNING → PENDING_APPROVAL → RESUMING → RUNNING → COMPLETED | FAILED`, with
+validated transitions (no `COMPLETED → RESUMING`, no `REJECTED → APPROVED`). An
+explicit user cancellation also permits active `RUNNING → CANCELLED` and
+pending `PENDING_APPROVAL → CANCELLED` transitions.
 
-`CANCELLED` is also terminal and is reachable only from `RUNNING` or `RESUMING`.
-It records that a streaming consumer disconnected or stopped iteration, so the
-engine cancelled the graph instead of continuing model calls for an abandoned
-stream. Losing a stream after the run reaches `PENDING_APPROVAL` does not cancel
-the run: its durable checkpoint remains valid for a later human decision.
+`CANCELLED` is terminal. For an executing run, it records that a streaming
+consumer disconnected or stopped iteration, so the engine cancelled the graph
+instead of continuing model calls. Losing a stream after the run reaches
+`PENDING_APPROVAL` does not itself cancel the run: its durable checkpoint remains
+valid for a later human decision. The owner can instead explicitly cancel that
+pending run; its approval is atomically rejected and the checkpoint becomes
+unreachable through resume.
 
 ## 6. Checkpointer selection
 
@@ -334,6 +341,11 @@ others get a stable `ApprovalAlreadyProcessed`. In-memory this is a locked
 transition; the shared-DB implementation maps it to a conditional
 `UPDATE ... WHERE status = 'pending'`.
 
+**Cancellation race.** Pending-run cancellation performs the competing atomic
+`PENDING → REJECTED` approval transition. Exactly one of cancellation or resume
+can win. If resume has already claimed the approval, cancellation returns a
+conflict and does not imply that an external side effect can be rolled back.
+
 **Session-repository safety.** The in-memory adapter guards lookup, grant,
 revocation, expiry removal, and session cleanup with one async lock. Repeated
 grants replace the value for the same immutable key and cannot create duplicates.
@@ -390,6 +402,8 @@ capability inside the conversation ownership boundary:
 
 ```text
 POST /conversations/{conversation_id}/runs/{run_id}/approvals/{approval_id}/decision
+POST /conversations/{conversation_id}/runs/{run_id}/approvals/{approval_id}/decision/stream
+POST /conversations/{conversation_id}/runs/{run_id}/approvals/{approval_id}/cancel
 ```
 
 Its body carries one typed value: `allow_once`, `deny`, or
@@ -402,10 +416,28 @@ completed but the response or first database write failed, retrying the same
 decision recovers the result from the completed graph checkpoint and does not
 duplicate the assistant turn or tool execution.
 
+The widget uses `/decision/stream`. Its first lifecycle event is
+`resume_started` with the original `run_id`; later route, token, approval, and
+final events come from the same graph thread. Aborting this response closes the
+engine-owned resume stream, cancels its LangGraph task, and atomically moves the
+same run to `CANCELLED`. Partial assistant output is not persisted as a completed
+assistant message.
+
+The `/cancel` route is a separate terminal lifecycle action, not a fourth
+approval decision and not an alias for `DENY`. It is allowed only while the
+approval remains pending. A successful response returns
+`{"run_id": "...", "status": "cancelled"}`; a decision that already won the
+atomic race returns 409.
+
 The bundled widget renders these decisions as **Approve**, **Deny**, and
-**Approve for this session**. The last option reuses the existing session
-permission key, so later calls to the same provider-qualified tool by the same
-agent in the same conversation do not prompt again.
+**Approve for this session**, plus a separate **Cancel run** action. Cancel
+remains available while a decision request is in flight so the two requests can
+race at the authoritative backend. After `resume_started`, the ordinary active
+execution **Stop** control replaces pending cancellation. The textarea and Edit
+remain available for drafting, while submit stays blocked until the active run
+finishes. The last approval option reuses the existing session permission key,
+so later calls to the same provider-qualified tool by the same agent in the same
+conversation do not prompt again.
 
 A pending-approval payload contains `run_id`, `approval_id`, `agent_id`,
 `tool_name`, a human-readable `description` (stating the tool has **not** run

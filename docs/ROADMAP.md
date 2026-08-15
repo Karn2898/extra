@@ -39,7 +39,7 @@ table above:
 | Runtime hooks (auth/policy/audit/context-enrichment, incl. `transform_tool_result`) | ✅ done | `agent_engine/runtime/hooks/`, [RUNTIME_HOOKS.md](RUNTIME_HOOKS.md) |
 | Per-run execution-limit guardrails | ✅ done | `agent_engine/core/execution.py`, `agent_engine/runtime/execution.py`, [EXECUTION_LIMITS.md](EXECUTION_LIMITS.md) |
 | Amazon Bedrock model provider (in addition to Anthropic) | ✅ done | `agent_engine/models/factory.py` |
-| Conversation persistence (SQLite default, sessions, users) | ✅ done | `agent_manager/` |
+| Conversation storage (memory default; optional SQLite/Postgres) | ✅ done | `agent_manager/` |
 | Embeddable JS/React chat widget | ✅ done | `agent_manager/api/static/widget/` |
 | Long-term / cross-conversation memory | ⏳ planned | — |
 
@@ -109,8 +109,9 @@ are all implemented. The originally planned `agentctl graph` shipped as
 **Phase 9 — API server (✅ done).** Two layers exist: `agent_engine/api/app.py`
 is a thin, stateless FastAPI app directly over the engine (`/health`,
 `/invoke`, `/stream`); `agent_manager/api/` is a conversation-lifecycle API
-(`/conversations`, message history, SSE streaming) backed by SQLite
-persistence, plus the embeddable JS/React chat widget served as a static
+(`/conversations`, message history, SSE streaming) backed by process memory by
+default or explicit SQLite/Postgres persistence, plus the embeddable JS/React
+chat widget served as a static
 asset.
 
 **Phase 10 — Docker / deployment (✅ done, basic container).** A root
