@@ -49,6 +49,24 @@ async def test_claim_is_atomic_single_winner() -> None:
     assert sum(results) == 1  # exactly one caller wins the PENDING -> RESUMING move
 
 
+async def test_claim_and_cancel_have_exactly_one_winner() -> None:
+    repo = InMemoryApprovalRepository()
+    await repo.create(_approval())
+
+    async def transition(operation: str) -> str | None:
+        try:
+            if operation == "claim":
+                await repo.claim("ap1")
+            else:
+                await repo.reject_pending("ap1")
+            return operation
+        except InvalidStateTransition:
+            return None
+
+    winners = await asyncio.gather(transition("claim"), transition("cancel"))
+    assert len([winner for winner in winners if winner is not None]) == 1
+
+
 async def test_claim_missing_raises() -> None:
     repo = InMemoryApprovalRepository()
     with pytest.raises(ApprovalNotFound):

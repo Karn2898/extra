@@ -123,19 +123,26 @@ async def invoke_model(model: Any, messages: list[Any], state: GraphState) -> An
     answer_stream = sinks.answer
     if answer_stream is None:
         response = await model.ainvoke(messages)
-    else:
-        streamed = None
+        usage = getattr(response, "usage_metadata", None)
+        if sinks.token is not None and usage:
+            sinks.token(usage.get("input_tokens", 0), usage.get("output_tokens", 0))
+        return response
+
+    streamed = None
+    try:
         async for chunk in model.astream(messages):
             streamed = chunk if streamed is None else streamed + chunk
             text = as_text(getattr(chunk, "content", ""))
             if text:
                 answer_stream(text)
-        response = streamed or AIMessage(content="")
-    if sinks.token is not None:
-        usage = getattr(response, "usage_metadata", None)
-        if usage:
+    finally:
+        # Providers commonly attach usage to a final stream chunk. Reading the
+        # accumulated partial response in ``finally`` preserves any usage they
+        # reported even when the consumer cancels before normal completion.
+        usage = getattr(streamed, "usage_metadata", None)
+        if sinks.token is not None and usage:
             sinks.token(usage.get("input_tokens", 0), usage.get("output_tokens", 0))
-    return response
+    return streamed or AIMessage(content="")
 
 
 async def run_tool_loop(

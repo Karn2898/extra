@@ -45,6 +45,11 @@ class RegistrationSpy(RunRepository):
         raise AssertionError("RunLifecycle must not record engine-owned usage")
 
 
+class RunIdReplacingHookManager(HookManager):
+    async def run_run_start(self, context: RunContext) -> RunContext:
+        return context.replace(run_id="replaced-run")
+
+
 async def test_begin_delegates_registration_as_one_repository_operation() -> None:
     repository = RegistrationSpy()
     lifecycle = RunLifecycle(
@@ -63,6 +68,20 @@ async def test_begin_delegates_registration_as_one_repository_operation() -> Non
     await lifecycle.cancel(context)
 
     assert repository.transitions == [("run-1", RunStatus.CANCELLED)]
+
+
+async def test_begin_rejects_hook_replacement_of_authoritative_run_id() -> None:
+    repository = RegistrationSpy()
+    lifecycle = RunLifecycle(
+        system_name="system",
+        hook_manager=RunIdReplacingHookManager(),
+        run_repository=repository,
+    )
+
+    with pytest.raises(ValueError, match=r"cannot replace.*run_id"):
+        await lifecycle.begin(RunContext(run_id="run-1"))
+
+    assert repository.registered == []
 
 
 async def test_begin_does_not_reset_an_existing_run() -> None:

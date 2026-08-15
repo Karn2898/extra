@@ -44,7 +44,10 @@ class RunLifecycle:
     async def begin(self, context: RunContext | None) -> RunContext:
         """Open a run. ``on_run_start`` may replace the context, so it runs
         before registration."""
-        ctx = await self._hooks.run_run_start(self.identify(context))
+        identified = self.identify(context)
+        ctx = await self._hooks.run_run_start(identified)
+        if ctx.run_id != identified.run_id:
+            raise ValueError("on_run_start hooks cannot replace the authoritative run_id")
         await self._register(ctx)
         log(logger, logging.INFO, "run started", run_id=ctx.run_id, system=self._system_name)
         return ctx
@@ -83,6 +86,18 @@ class RunLifecycle:
             tools=len(result.used_tools),
         )
 
+    async def activate_resume(self, ctx: RunContext) -> None:
+        """Move a claimed suspended run back into active execution."""
+        if not await self._mark(ctx.run_id, RunStatus.RUNNING):
+            raise RuntimeError(f"run {ctx.run_id!r} cannot enter running state after resume")
+        log(
+            logger,
+            logging.INFO,
+            "run resumed",
+            run_id=ctx.run_id,
+            system=self._system_name,
+        )
+
     async def fail(self, ctx: RunContext, error: Exception) -> None:
         """Close a run that raised. Never raises, so the original error survives."""
         log(
@@ -96,13 +111,8 @@ class RunLifecycle:
         await self._mark(ctx.run_id, RunStatus.FAILED)
         await self._hooks.run_run_error(ctx, error)
 
-    async def cancel(self, ctx: RunContext) -> None:
-        """Close an in-flight run whose streaming consumer went away.
-
-        A suspended run remains pending because its checkpoint is durable and
-        can still be resumed from another connection. Completed and failed runs
-        are terminal already, so cancellation leaves them unchanged too.
-        """
+    async def cancel(self, ctx: RunContext, *, reason: str = "consumer abandoned stream") -> None:
+        """Terminally close a running, resuming, or explicitly cancelled pending run."""
         if await self._mark(ctx.run_id, RunStatus.CANCELLED):
             log(
                 logger,
@@ -110,7 +120,7 @@ class RunLifecycle:
                 "run cancelled",
                 run_id=ctx.run_id,
                 system=self._system_name,
-                reason="consumer abandoned stream",
+                reason=reason,
             )
 
     async def _mark(self, run_id: str | None, target: RunStatus) -> bool:
