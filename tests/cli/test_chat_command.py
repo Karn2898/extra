@@ -633,3 +633,240 @@ async def test_remote_network_error_does_not_kill_loop() -> None:
             client=client,
         )
     assert any("request failed" in line for line in echo.lines)
+
+
+# ---------------------------------------------------------------------------
+# remote mode: human approval and resume
+# ---------------------------------------------------------------------------
+
+
+def _pending_json(pending: PendingApproval) -> dict[str, object]:
+    return {
+        "run_id": pending.run_id,
+        "approval_id": pending.approval_id,
+        "agent_id": pending.agent_id,
+        "tool_name": pending.tool_name,
+        "description": pending.description,
+        "provider": pending.provider,
+        "server_id": pending.server_id,
+        "arguments": pending.arguments,
+    }
+
+
+async def test_remote_chat_prompts_for_approval_and_resumes_allow_once() -> None:
+    pending = pending_approval()
+    decisions_sent: list[tuple[str, dict[str, object]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/invoke":
+            return httpx.Response(
+                200,
+                json={
+                    "answer": "",
+                    "status": "pending_approval",
+                    "pending_approval": _pending_json(pending),
+                },
+            )
+        decisions_sent.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"answer": "architecture", "status": "completed"})
+
+    echo = CollectingEcho()
+    async with _mock_client(handler) as client:
+        await run_remote_chat(
+            "http://srv",
+            stream=False,
+            read_line=scripted_reader(["question", "o"]),
+            echo=echo,
+            client=client,
+        )
+
+    assert decisions_sent == [
+        (
+            f"/runs/{pending.run_id}/approvals/{pending.approval_id}/decision",
+            {"decision": "allow_once"},
+        )
+    ]
+    assert "  Tool      : deepwiki.read_docs (mcp)" in echo.lines
+    assert "Agent > architecture" in echo.lines
+
+
+async def test_remote_chat_resumes_with_allow_for_session() -> None:
+    pending = pending_approval()
+    decisions_sent: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/invoke":
+            return httpx.Response(
+                200,
+                json={
+                    "answer": "",
+                    "status": "pending_approval",
+                    "pending_approval": _pending_json(pending),
+                },
+            )
+        decisions_sent.append(json.loads(request.content))
+        return httpx.Response(200, json={"answer": "done", "status": "completed"})
+
+    async with _mock_client(handler) as client:
+        await run_remote_chat(
+            "http://srv",
+            stream=False,
+            read_line=scripted_reader(["question", "s"]),
+            echo=CollectingEcho(),
+            client=client,
+        )
+
+    assert decisions_sent == [{"decision": "allow_for_session"}]
+
+
+async def test_remote_chat_resumes_with_deny() -> None:
+    pending = pending_approval()
+    decisions_sent: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/invoke":
+            return httpx.Response(
+                200,
+                json={
+                    "answer": "",
+                    "status": "pending_approval",
+                    "pending_approval": _pending_json(pending),
+                },
+            )
+        decisions_sent.append(json.loads(request.content))
+        return httpx.Response(200, json={"answer": "denied", "status": "completed"})
+
+    async with _mock_client(handler) as client:
+        await run_remote_chat(
+            "http://srv",
+            stream=False,
+            read_line=scripted_reader(["question", "d"]),
+            echo=CollectingEcho(),
+            client=client,
+        )
+
+    assert decisions_sent == [{"decision": "deny"}]
+
+
+async def test_remote_chat_handles_multiple_approvals_in_one_run() -> None:
+    first = pending_approval()
+    second = pending_approval(approval_id="approval-2", tool_name="read_page")
+    responses = iter(
+        [
+            {"answer": "", "status": "pending_approval", "pending_approval": _pending_json(first)},
+            {"answer": "", "status": "pending_approval", "pending_approval": _pending_json(second)},
+            {"answer": "complete", "status": "completed"},
+        ]
+    )
+    seen: list[tuple[str, dict[str, object]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json=next(responses))
+
+    echo = CollectingEcho()
+    async with _mock_client(handler) as client:
+        await run_remote_chat(
+            "http://srv",
+            stream=False,
+            # Only "question" is a real user message; "o"/"d" must be consumed
+            # as approval-prompt answers, not sent as separate /invoke calls.
+            read_line=scripted_reader(["question", "o", "d"]),
+            echo=echo,
+            client=client,
+        )
+
+    assert [path for path, _ in seen] == [
+        "/invoke",
+        f"/runs/{first.run_id}/approvals/{first.approval_id}/decision",
+        f"/runs/{second.run_id}/approvals/{second.approval_id}/decision",
+    ]
+    assert [body["decision"] for _, body in seen[1:]] == ["allow_once", "deny"]
+    assert "Agent > complete" in echo.lines
+
+
+async def test_remote_chat_stops_when_approval_input_ends() -> None:
+    pending = pending_approval()
+    decision_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal decision_calls
+        if request.url.path == "/invoke":
+            return httpx.Response(
+                200,
+                json={
+                    "answer": "",
+                    "status": "pending_approval",
+                    "pending_approval": _pending_json(pending),
+                },
+            )
+        decision_calls += 1
+        return httpx.Response(200, json={"answer": "should not get here", "status": "completed"})
+
+    echo = CollectingEcho()
+    async with _mock_client(handler) as client:
+        await run_remote_chat(
+            "http://srv",
+            stream=False,
+            read_line=scripted_reader(["question"]),  # EOF right at the approval prompt
+            echo=echo,
+            client=client,
+        )
+
+    assert decision_calls == 0
+    assert not any(line.startswith("Agent > ") for line in echo.lines)
+
+
+async def test_remote_stream_prompts_and_resumes_pending_approval() -> None:
+    pending = pending_approval()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/stream":
+            payload = {"type": "pending_approval", **_pending_json(pending)}
+            sse = f"data: {json.dumps(payload)}\n\n"
+            return httpx.Response(200, text=sse, headers={"content-type": "text/event-stream"})
+        return httpx.Response(200, json={"answer": "stream resumed", "status": "completed"})
+
+    echo = CollectingEcho()
+    async with _mock_client(handler) as client:
+        await run_remote_chat(
+            "http://srv",
+            stream=True,
+            read_line=scripted_reader(["question", "allow once"]),
+            echo=echo,
+            client=client,
+        )
+
+    assert "Agent > stream resumed" in echo.lines
+
+
+async def test_remote_decision_error_does_not_kill_loop() -> None:
+    pending = pending_approval()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/invoke":
+            body = json.loads(request.content)
+            if body["message"] == "first":
+                return httpx.Response(
+                    200,
+                    json={
+                        "answer": "",
+                        "status": "pending_approval",
+                        "pending_approval": _pending_json(pending),
+                    },
+                )
+            return httpx.Response(200, json={"answer": "second works", "status": "completed"})
+        return httpx.Response(404, json={"detail": "run not found"})
+
+    echo = CollectingEcho()
+    async with _mock_client(handler) as client:
+        await run_remote_chat(
+            "http://srv",
+            stream=False,
+            read_line=scripted_reader(["first", "o", "second"]),
+            echo=echo,
+            client=client,
+        )
+
+    assert any("server error 404" in line and "run not found" in line for line in echo.lines)
+    assert "Agent > second works" in echo.lines
