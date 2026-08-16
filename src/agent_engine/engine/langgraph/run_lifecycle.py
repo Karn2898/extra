@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections.abc import Callable
 
 from agent_engine.approvals.models import RunRecord, RunStatus
 from agent_engine.engine.types import RunResult
@@ -11,10 +10,6 @@ from agent_engine.runs.repository import RunRepository
 from agent_engine.runtime.hooks import HookManager, RunContext, RunEndContext
 
 logger = logging.getLogger(__name__)
-
-
-def _noop() -> None:
-    """Default ``on_completed`` callback: publish nothing between the phases."""
 
 
 class RunLifecycle:
@@ -64,17 +59,10 @@ class RunLifecycle:
             )
         )
 
-    async def succeed(
-        self,
-        ctx: RunContext,
-        result: RunResult,
-        *,
-        on_completed: Callable[[], None] = _noop,
-    ) -> None:
-        """Close a run that produced an answer. ``on_completed`` fires between
-        the status change and ``on_run_end``; callers depend on that order."""
+    async def succeed(self, ctx: RunContext, result: RunResult) -> None:
+        """Close a run that produced an answer. The terminal-event handshake that
+        used to interleave here now lives in ``StreamChannel``."""
         await self._mark(ctx.run_id, RunStatus.COMPLETED)
-        on_completed()
         await self._hooks.run_run_end(ctx, self._end_context(ctx, result))
         log(
             logger,
