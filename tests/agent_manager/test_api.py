@@ -280,9 +280,9 @@ def test_the_host_session_cookie_authenticates_a_same_origin_deployment() -> Non
     arrives on our requests and we verify it with the host's own secret."""
     app = build_test_app(
         ConversationService(RecordingEngine(), MemoryRepository()),
-        agent_auth_mode=AuthMode.HOST_TOKEN,
-        agent_auth_cookie=HOST_COOKIE,
-        agent_auth_claim_user_id="id",
+        extra_auth_mode=AuthMode.HOST_TOKEN,
+        extra_auth_cookie=HOST_COOKIE,
+        extra_auth_claim_user_id="id",
     )
     dana = TestClient(app, cookies=session_cookie(id="u_8412"))
 
@@ -293,6 +293,55 @@ def test_the_host_session_cookie_authenticates_a_same_origin_deployment() -> Non
 
     assert [t["conversation_id"] for t in dana.get("/conversations").json()] == [cid]
     assert TestClient(app).get(f"/conversations/{cid}/messages").status_code == 401
+
+
+def test_a_visitor_pass_does_not_shadow_the_host_session_cookie() -> None:
+    """Someone who browsed before signing in is holding a visitor pass, and the
+    widget keeps sending it. If that outranked the cookie they would stay
+    anonymous for as long as the pass lived — including across reloads, since
+    nothing on the client knows a cookie appeared."""
+    app = build_test_app(
+        ConversationService(RecordingEngine(), MemoryRepository()),
+        extra_auth_mode=AuthMode.HOST_TOKEN,
+        extra_auth_cookie=HOST_COOKIE,
+        extra_auth_claim_user_id="id",
+    )
+    visitor_pass = TestClient(app).post("/auth/anonymous").json()["token"]
+
+    # Browsed anonymously, then signed in: both credentials now travel together.
+    dana = TestClient(app, cookies=session_cookie(id="u_8412"))
+    dana.headers["Authorization"] = f"Bearer {visitor_pass}"
+    cid = dana.post("/conversations").json()["conversation_id"]
+
+    # The conversation belongs to Dana, not to the visitor she used to be.
+    as_dana = TestClient(app, cookies=session_cookie(id="u_8412"))
+    assert [t["conversation_id"] for t in as_dana.get("/conversations").json()] == [cid]
+    still_a_visitor = {"Authorization": f"Bearer {visitor_pass}"}
+    assert TestClient(app).get("/conversations", headers=still_a_visitor).json() == []
+
+
+def test_a_host_bearer_token_outranks_the_session_cookie() -> None:
+    """Sending a token that names a host user is a deliberate act — a backend
+    calling on the user's behalf, a page acting as someone it just minted a
+    token for. Only the visitor pass, which nobody chose to send, gives way to
+    the cookie."""
+    app = build_test_app(
+        ConversationService(RecordingEngine(), MemoryRepository()),
+        extra_auth_mode=AuthMode.HOST_TOKEN,
+        extra_auth_cookie=HOST_COOKIE,
+        extra_auth_claim_user_id="id",
+    )
+    as_noam = bearer("noam", id="u_noam")
+
+    # Signed in as Asaf in this browser, but explicitly asking to run as Noam.
+    caller = TestClient(app, cookies=session_cookie(id="u_asaf"))
+    caller.headers.update(as_noam)
+    cid = caller.post("/conversations").json()["conversation_id"]
+
+    assert [
+        t["conversation_id"] for t in TestClient(app).get("/conversations", headers=as_noam).json()
+    ] == [cid]
+    assert TestClient(app, cookies=session_cookie(id="u_asaf")).get("/conversations").json() == []
 
 
 def test_a_visitor_pass_is_an_identity_of_its_own(unauthenticated: TestClient) -> None:

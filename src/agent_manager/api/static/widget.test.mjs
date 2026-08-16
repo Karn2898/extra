@@ -53,6 +53,14 @@ class FakeElement {
       this.attributeChangedCallback?.(name, old, String(value));
     }
   }
+  hasAttribute(name) {
+    return this.attributes.has(name);
+  }
+
+  removeAttribute(name) {
+    this.attributes.delete(name);
+  }
+
   getAttribute(name) {
     return this.attributes.has(name) ? this.attributes.get(name) : null;
   }
@@ -231,6 +239,7 @@ const widget = await import(`./widget.js?test=${Date.now()}`);
 const {
   AgentChatClient,
   TokenSource,
+  applyConfigAttributes,
   visitorPassKey,
   attributeName,
   autoMountAgentChat,
@@ -273,6 +282,7 @@ assert.equal(customElements.defineCount, definesBefore, "defineAgentChat is idem
     avatar: "",
     mode: "floating",
     tokenUrl: "",
+    requireIdentity: false,
   });
 }
 
@@ -501,7 +511,7 @@ globalThis.fetch = async (url, options = {}) => {
 };
 const hosted = new AgentChatClient(
   "https://api.example",
-  new TokenSource("https://api.example", "/agent-chat/token"),
+  new TokenSource("https://api.example", { tokenUrl: "/agent-chat/token" }),
 );
 await hosted.createConversation();
 await hosted.createConversation();
@@ -546,7 +556,7 @@ globalThis.fetch = async (url, options = {}) => {
 };
 const signedIn = new AgentChatClient(
   "https://api.example",
-  new TokenSource("https://api.example", "/agent-chat/token"),
+  new TokenSource("https://api.example", { tokenUrl: "/agent-chat/token" }),
 );
 await signedIn.createConversation();
 
@@ -573,7 +583,7 @@ globalThis.fetch = async (url, options = {}) => {
 };
 const shared = new AgentChatClient(
   "https://api.example",
-  new TokenSource("https://api.example", "/agent-chat/token"),
+  new TokenSource("https://api.example", { tokenUrl: "/agent-chat/token" }),
 );
 await Promise.all([shared.createConversation(), shared.createConversation()]);
 assert.equal(calls.filter((c) => c.url === "/agent-chat/token").length, 1);
@@ -589,8 +599,229 @@ globalThis.fetch = async (url) => {
 };
 await new AgentChatClient(
   "https://api.example",
-  new TokenSource("https://api.example", "/agent-chat/token"),
+  new TokenSource("https://api.example", { tokenUrl: "/agent-chat/token" }),
 ).createConversation();
 assert.equal(localStorage.getItem(visitorPassKey("https://api.example")), "kept-pass");
+
+
+// A configured token-url that fails is reported, not swallowed — the silence
+// here is what made a broken integration look like a working anonymous chat.
+resetPage();
+let failures = [];
+globalThis.fetch = async (url) => {
+  if (url === "/agent-chat/token") return jsonResponse({}, false, 404);
+  if (url.endsWith("/auth/anonymous")) return jsonResponse({ token: "pass" });
+  return jsonResponse({ conversation_id: "c1" });
+};
+const reporting = new TokenSource("https://api.example", {
+  tokenUrl: "/agent-chat/token",
+  onIdentityFailure: (f) => failures.push(f),
+});
+assert.equal(await reporting.renew(), "pass", "still falls back by default");
+assert.deepEqual(failures, [{ reason: "unreachable", status: 404, url: "/agent-chat/token" }]);
+
+// 401 is the ordinary signed-out case, reported but distinguishable.
+resetPage();
+failures = [];
+globalThis.fetch = async (url) => {
+  if (url === "/agent-chat/token") return jsonResponse({}, false, 401);
+  if (url.endsWith("/auth/anonymous")) return jsonResponse({ token: "pass" });
+  return jsonResponse({});
+};
+await new TokenSource("https://api.example", {
+  tokenUrl: "/agent-chat/token",
+  onIdentityFailure: (f) => failures.push(f),
+}).renew();
+assert.equal(failures[0].reason, "unauthorized");
+
+// An endpoint answering 200 with the wrong shape is an integration bug too.
+resetPage();
+failures = [];
+globalThis.fetch = async (url) => {
+  if (url === "/agent-chat/token") return jsonResponse({ access_token: "wrong-key" });
+  if (url.endsWith("/auth/anonymous")) return jsonResponse({ token: "pass" });
+  return jsonResponse({});
+};
+await new TokenSource("https://api.example", {
+  tokenUrl: "/agent-chat/token",
+  onIdentityFailure: (f) => failures.push(f),
+}).renew();
+assert.equal(failures[0].reason, "malformed");
+
+// require-identity: no anonymous consolation prize.
+resetPage();
+let mintedPass = false;
+globalThis.fetch = async (url) => {
+  if (url === "/agent-chat/token") return jsonResponse({}, false, 401);
+  if (url.endsWith("/auth/anonymous")) {
+    mintedPass = true;
+    return jsonResponse({ token: "pass" });
+  }
+  return jsonResponse({});
+};
+const strict = new TokenSource("https://api.example", {
+  tokenUrl: "/agent-chat/token",
+  requireIdentity: true,
+});
+assert.equal(await strict.renew(), null, "no token rather than an anonymous one");
+assert.equal(mintedPass, false, "never asks for a visitor pass");
+
+
+// require-identity is opt-in in BOTH directions. The generic config mapper
+// stringifies booleans, so `requireIdentity: false` arrives as the string
+// "false" — reading presence alone would flip an explicit opt-out into opt-in
+// and make a login-less product fail closed.
+{
+  const absent = new FakeElement("agent-chat");
+  assert.equal(parseConfig(absent, "https://w.example").requireIdentity, false);
+
+  const bare = new FakeElement("agent-chat");
+  bare.setAttribute("require-identity", "");
+  assert.equal(parseConfig(bare, "https://w.example").requireIdentity, true);
+
+  const explicitTrue = new FakeElement("agent-chat");
+  explicitTrue.setAttribute("require-identity", "true");
+  assert.equal(parseConfig(explicitTrue, "https://w.example").requireIdentity, true);
+
+  const explicitFalse = new FakeElement("agent-chat");
+  explicitFalse.setAttribute("require-identity", "false");
+  assert.equal(
+    parseConfig(explicitFalse, "https://w.example").requireIdentity,
+    false,
+    'require-identity="false" must stay false',
+  );
+
+  // ...and end to end through the mapper the auto-mount path uses. A boolean
+  // that is off must not appear in the markup at all: HTML says an attribute
+  // that exists is on, whatever its value.
+  const mapped = new FakeElement("agent-chat");
+  applyConfigAttributes(mapped, { requireIdentity: false });
+  assert.equal(mapped.hasAttribute("require-identity"), false, "off means absent");
+  assert.equal(
+    parseConfig(mapped, "https://w.example").requireIdentity,
+    false,
+    "window.agentChatConfig { requireIdentity: false } must not fail closed",
+  );
+
+  const mappedOn = new FakeElement("agent-chat");
+  applyConfigAttributes(mappedOn, { requireIdentity: true });
+  assert.equal(mappedOn.getAttribute("require-identity"), "", "on is bare presence");
+  assert.equal(parseConfig(mappedOn, "https://w.example").requireIdentity, true);
+}
+
+
+
+// Signing in without a page reload must switch identity — the cached anonymous
+// pass otherwise survives the login and the user sees a stranger's empty chat.
+{
+  resetPage();
+  localStorage.setItem(visitorPassKey("https://api.example"), "old-pass");
+  let loggedIn = false;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, auth: options.headers?.Authorization });
+    if (url === "/agent-chat/token") {
+      return loggedIn ? jsonResponse({ token: "host-token" }) : jsonResponse({}, false, 401);
+    }
+    if (url.endsWith("/auth/anonymous")) return jsonResponse({ token: "anon-pass" });
+    if (url.endsWith("/auth/link")) return jsonResponse({ conversations_moved: 1 });
+    return jsonResponse({ conversation_id: "c1" });
+  };
+  const tokens = new TokenSource("https://api.example", { tokenUrl: "/agent-chat/token" });
+  const client = new AgentChatClient("https://api.example", tokens);
+
+  await client.createConversation();
+  const sentWhileSignedOut = calls.filter((c) => c.url.endsWith("/conversations")).pop().auth;
+  assert.equal(sentWhileSignedOut, "Bearer old-pass", "anonymous before login");
+
+  loggedIn = true;
+  tokens.reset(); // what refreshIdentity() does
+  await client.createConversation();
+  const sentAfterLogin = calls.filter((c) => c.url.endsWith("/conversations")).pop().auth;
+  assert.equal(sentAfterLogin, "Bearer host-token", "the signed-in user, not the visitor");
+
+  // ...and the pass survived long enough to be handed over.
+  assert.ok(
+    calls.some((c) => c.url.endsWith("/auth/link")),
+    "pre-login conversations are merged, not stranded",
+  );
+}
+
+// reset() keeps the visitor pass; only forget() discards it. Getting this
+// backwards silently throws away the conversations the merge exists to rescue.
+{
+  resetPage();
+  const key = visitorPassKey("https://api.example");
+  localStorage.setItem(key, "pass");
+  const tokens = new TokenSource("https://api.example");
+
+  tokens.reset();
+  assert.equal(localStorage.getItem(key), "pass", "reset keeps the pass");
+
+  tokens.forget();
+  assert.equal(localStorage.getItem(key), null, "forget drops it");
+}
+
+
+
+// refreshIdentity() must pick up a tokenProvider assigned after the element
+// connected — TokenSource only reads `provider` once, at construction, so
+// merely clearing the cached token (the original fix) leaves it bound to
+// whatever provider existed at connect time, forever.
+{
+  resetPage();
+  const el = document.createElement("agent-chat");
+  el.setAttribute("endpoint", "https://api.example");
+  el.tokenProvider = async () => "token-a";
+  // This harness's fake DOM cannot host a real React root; stub the one method
+  // that needs it, since this test is about identity resolution, not painting.
+  el.render = () => {};
+  el.connectedCallback();
+
+  assert.equal(await el.tokens.current(), "token-a");
+
+  el.tokenProvider = async () => "token-b";
+  el.refreshIdentity();
+
+  assert.equal(
+    await el.tokens.current(),
+    "token-b",
+    "refreshIdentity() must rebuild TokenSource so a provider swap after connecting takes effect",
+  );
+}
+
+// A resolution already in flight when refreshIdentity() runs must not land
+// afterwards and clobber the identity it was just asked to refresh.
+{
+  resetPage();
+  let releaseStale;
+  const staleGate = new Promise((resolve) => {
+    releaseStale = resolve;
+  });
+  let calls = 0;
+  const tokens = new TokenSource("https://api.example", {
+    provider: async () => {
+      calls += 1;
+      if (calls === 1) {
+        await staleGate; // held open until after reset()
+        return "stale-token";
+      }
+      return "fresh-token";
+    },
+  });
+
+  const stale = tokens.current(); // starts resolving, blocked on staleGate
+  await Promise.resolve(); // let it reach the provider call
+  tokens.reset(); // what refreshIdentity() does
+  const fresh = tokens.current(); // an independent, later resolution
+  releaseStale(); // the stale one can finish now, after reset() already ran
+  await Promise.all([stale, fresh]);
+
+  assert.equal(
+    await tokens.current(),
+    "fresh-token",
+    "a resolution in flight when reset() ran must not overwrite the refreshed identity",
+  );
+}
 
 console.log("widget self-check: OK");

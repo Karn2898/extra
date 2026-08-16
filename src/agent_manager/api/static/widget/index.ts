@@ -1,7 +1,12 @@
 import { autoMountAgentChat, defineAgentChat } from "./element/defineAgentChat";
 
 export { AgentChatClient } from "./api/AgentChatClient";
-export { TokenSource, visitorPassKey, type TokenProvider } from "./auth/tokenSource";
+export {
+  TokenSource,
+  visitorPassKey,
+  type IdentityFailure,
+  type TokenProvider,
+} from "./auth/tokenSource";
 export {
   DEFAULT_CONFIG,
   applyConfigAttributes,

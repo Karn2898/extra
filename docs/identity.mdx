@@ -87,6 +87,35 @@ EXTRA_AUTH_SECRET=<32+ random characters>
 
 Not logged in? Return `401` — the widget falls back to an anonymous pass.
 
+<Note>
+`token-url` is resolved like any other browser request: relative to the page.
+That is correct in production, where your app and its API share an origin. If
+your **dev** setup serves the frontend separately from your API, point it at the
+same base your own frontend uses.
+</Note>
+
+### When identity fails
+
+Anything other than a clean token is reported — a wrong URL, an endpoint
+answering with the wrong shape, an unreachable host. The widget logs a warning
+and raises an event, so a broken integration cannot quietly look like a working
+anonymous chat:
+
+```js
+document.querySelector("agent-chat").addEventListener("agent-chat:identity-error", (e) => {
+  // { reason: "unauthorized" | "unreachable" | "malformed", status, url,
+  //   anonymousFallbackEnabled }   <- whether falling back is allowed, not that it worked
+  console.log(e.detail);
+});
+```
+
+By default it then continues as an anonymous visitor. If a chat with no proven
+user is unacceptable in your product, opt out of that fallback entirely:
+
+```html
+<agent-chat title="Support" token-url="/agent-chat/token" require-identity></agent-chat>
+```
+
 <Warning>
 Sign `req.user.id` from the session, never a value from the request. An endpoint
 that accepts `?user=` lets anyone get a token as anyone.
@@ -100,14 +129,24 @@ Someone who chats before logging in doesn't lose it. On their first
 authenticated request the widget hands their pass over and those conversations
 move onto their account. Automatic, and it only happens once.
 
-## Signing out
+## Signing in and out
+
+A normal page navigation needs nothing — the widget works out who the caller is
+on every load. A single-page app that signs a user **in or out without
+reloading** should say so, or the widget keeps the identity it already resolved:
 
 ```js
-document.querySelector("agent-chat").logout();
+const chat = document.querySelector("agent-chat");
+
+chat.refreshIdentity();  // signed in, or switched user
+chat.logout();           // signed out
 ```
 
-Clears the stored identity and the open thread. Call it when your app signs a
-user out — and, in a single-page app, when it signs one *in* without a reload.
+<Warning>
+Use `refreshIdentity()` on sign-**in**, not `logout()`. `logout()` discards the
+visitor pass, and that pass is what carries a visitor's earlier conversations
+onto their account — calling it here throws them away instead of merging them.
+</Warning>
 
 ## Settings
 

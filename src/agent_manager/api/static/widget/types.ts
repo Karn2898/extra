@@ -12,6 +12,7 @@ export interface AgentChatConfig {
   avatar: string;
   mode: AgentChatMode;
   tokenUrl: string;
+  requireIdentity: boolean;
 }
 
 export interface AgentChatConfigInput {
@@ -23,6 +24,7 @@ export interface AgentChatConfigInput {
   avatar?: string;
   mode?: string;
   tokenUrl?: string;
+  requireIdentity?: boolean;
 }
 
 export interface ThreadSummary {
@@ -125,6 +127,18 @@ export interface StreamEvent {
   agent_id?: string;
   description?: string;
   arguments?: Record<string, unknown>;
+}
+
+/** Detail of the `agent-chat:identity-error` event, raised when a configured
+ *  host identity could not be obtained. */
+export interface AgentChatIdentityErrorDetail {
+  reason: "unauthorized" | "unreachable" | "malformed";
+  status?: number;
+  url: string;
+  /** Whether an anonymous fallback is permitted at all — capability, not
+   *  outcome. The fallback can itself fail, and a host session cookie may end
+   *  up authenticating the next request instead. */
+  anonymousFallbackEnabled: boolean;
 }
 
 /** Detail of the `agent-chat:answer` event a host page can listen for. */

@@ -52061,7 +52061,8 @@ var DEFAULT_CONFIG = {
   position: "bottom-right",
   avatar: "",
   mode: "floating",
-  tokenUrl: ""
+  tokenUrl: "",
+  requireIdentity: false
 };
 var HEX_COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 function normalizeEndpoint(value) {
@@ -52086,17 +52087,25 @@ function parseConfig(element7, scriptBaseUrl) {
     position: safePosition(element7.getAttribute("position")),
     avatar: element7.getAttribute("avatar") || DEFAULT_CONFIG.avatar,
     mode: safeMode(element7.getAttribute("mode")),
-    tokenUrl: element7.getAttribute("token-url") || DEFAULT_CONFIG.tokenUrl
+    tokenUrl: element7.getAttribute("token-url") || DEFAULT_CONFIG.tokenUrl,
+    requireIdentity: flag(element7, "require-identity")
   };
+}
+function flag(element7, name2) {
+  const value = element7.getAttribute(name2);
+  return value !== null && value.toLowerCase() !== "false";
 }
 function attributeName(configKey) {
   return configKey.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
 }
 function applyConfigAttributes(element7, config) {
   for (const [key, value] of Object.entries(config)) {
-    if (value !== void 0 && value !== null) {
-      element7.setAttribute(attributeName(key), String(value));
+    if (value === void 0 || value === null) continue;
+    if (value === false) {
+      element7.removeAttribute(attributeName(key));
+      continue;
     }
+    element7.setAttribute(attributeName(key), value === true ? "" : String(value));
   }
 }
 
@@ -52277,13 +52286,19 @@ function visitorPassKey(endpoint) {
   return `agent-chat:pass:${endpoint}`;
 }
 var TokenSource = class {
-  constructor(endpoint, tokenUrl = "", provider = null, storage = localStorage) {
+  constructor(endpoint, options = {}) {
     this.endpoint = endpoint;
-    this.tokenUrl = tokenUrl;
-    this.provider = provider;
-    this.storage = storage;
     this.cached = null;
     this.pending = null;
+    /** Bumped by `reset()` so a resolution already in flight, once it lands, can
+     *  tell it is answering a question nobody is asking anymore. */
+    this.generation = 0;
+    this.tokenUrl = options.tokenUrl ?? "";
+    this.provider = options.provider ?? null;
+    this.storage = options.storage ?? localStorage;
+    this.requireIdentity = options.requireIdentity ?? false;
+    this.onIdentityFailure = options.onIdentityFailure ?? (() => {
+    });
   }
   async current() {
     if (!this.cached) await this.resolve(() => this.storedPass());
@@ -52293,20 +52308,32 @@ var TokenSource = class {
   async renew() {
     return this.resolve(() => this.issuePass());
   }
-  /** Drop this browser's identity — a host app signing its user out. */
-  forget() {
+  /** Forget the token in hand, so the next request works out who the caller is
+   *  again. Keeps the visitor pass: that pass is what the sign-in merge hands
+   *  over, and dropping it here would strand whatever this browser chatted
+   *  about before logging in. */
+  reset() {
+    this.generation += 1;
     this.cached = null;
+    this.pending = null;
+  }
+  /** Drop this browser's identity entirely — a host app signing its user out. */
+  forget() {
+    this.reset();
     this.clearPass();
   }
   /** Concurrent callers share one resolution. Without this, parallel requests
    *  each fetch a token and each hand over the visitor pass. */
   resolve(fallback) {
+    const generation = this.generation;
     this.pending ?? (this.pending = (async () => {
       try {
-        this.cached = await this.hostToken() ?? await fallback();
-        return this.cached;
+        const host = await this.hostToken();
+        const result = host ?? (this.requireIdentity ? null : await fallback());
+        if (generation === this.generation) this.cached = result;
+        return result;
       } finally {
-        this.pending = null;
+        if (generation === this.generation) this.pending = null;
       }
     })());
     return this.pending;
@@ -52340,17 +52367,31 @@ var TokenSource = class {
   async fromHost() {
     if (this.provider) return this.provider();
     if (!this.tokenUrl) return null;
+    let response;
     try {
-      const response = await fetch(this.tokenUrl, {
+      response = await fetch(this.tokenUrl, {
         credentials: "include",
         headers: { Accept: "application/json" }
       });
-      if (!response.ok) return null;
-      const token = (await response.json())?.token;
-      return typeof token === "string" && token ? token : null;
     } catch {
-      return null;
+      return this.failed({ reason: "unreachable", url: this.tokenUrl });
     }
+    if (!response.ok) {
+      const reason = response.status === 401 || response.status === 403 ? "unauthorized" : "unreachable";
+      return this.failed({ reason, status: response.status, url: this.tokenUrl });
+    }
+    const token = await response.json().then((body) => body?.token).catch(() => null);
+    if (typeof token !== "string" || !token) {
+      return this.failed({ reason: "malformed", status: response.status, url: this.tokenUrl });
+    }
+    return token;
+  }
+  /** Report and degrade. A configured identity that cannot be obtained is worth
+   *  saying out loud — silence here is what makes a broken `token-url` look
+   *  like a working anonymous chat. */
+  failed(failure) {
+    this.onIdentityFailure(failure);
+    return null;
   }
   storedPass() {
     try {
@@ -54504,7 +54545,17 @@ var AgentChatElement = class extends HTMLElement {
     this.titleId = `${this.widgetId}-title`;
   }
   static get observedAttributes() {
-    return ["endpoint", "title", "color", "greeting", "position", "avatar", "mode", "token-url"];
+    return [
+      "endpoint",
+      "title",
+      "color",
+      "greeting",
+      "position",
+      "avatar",
+      "mode",
+      "token-url",
+      "require-identity"
+    ];
   }
   connectedCallback() {
     if (this.connected) return;
@@ -54524,8 +54575,21 @@ var AgentChatElement = class extends HTMLElement {
     if (previousEndpoint && previousEndpoint !== this.config.endpoint) this.instanceKey += 1;
     this.render();
   }
+  /** Work out who the caller is again — for a single-page app that signs a user
+   *  in, or switches user, without reloading the page.
+   *
+   *  Deliberately not `logout()`: that discards the visitor pass, which is what
+   *  the sign-in merge hands over, so using it here would throw away the
+   *  conversations the visitor had before logging in. The open thread is kept
+   *  too — the merge re-owns it, so the user carries straight on in it. */
+  refreshIdentity() {
+    if (!this.connected) return;
+    this.configure();
+    this.instanceKey += 1;
+    this.render();
+  }
   /** Forget this browser's identity and its open thread, so the next person on
-   *  this machine starts clean. Call it when the host signs a user in or out. */
+   *  this machine starts clean. Call it when the host signs a user out. */
   logout() {
     this.tokens?.forget();
     if (this.config) removeStoredConversationId(this.config.endpoint);
@@ -54534,8 +54598,35 @@ var AgentChatElement = class extends HTMLElement {
   }
   configure() {
     this.config = parseConfig(this, this.scriptBaseUrl);
-    this.tokens = new TokenSource(this.config.endpoint, this.config.tokenUrl, this.tokenProvider);
+    this.tokens = new TokenSource(this.config.endpoint, {
+      tokenUrl: this.config.tokenUrl,
+      provider: this.tokenProvider,
+      requireIdentity: this.config.requireIdentity,
+      onIdentityFailure: (failure) => this.emitIdentityFailure(failure)
+    });
     this.client = new AgentChatClient(this.config.endpoint, this.tokens);
+  }
+  /** A configured identity that could not be obtained is reported, never
+   *  swallowed: an unreachable `token-url` otherwise looks exactly like a
+   *  working anonymous chat, which is how a broken integration ships. */
+  emitIdentityFailure(failure) {
+    const anonymousFallbackEnabled = !this.config.requireIdentity;
+    const detail = { ...failure, anonymousFallbackEnabled };
+    if (failure.reason !== "unauthorized") {
+      console.warn(
+        `[agent-chat] could not obtain an identity from ${failure.url}${failure.status ? ` (HTTP ${failure.status})` : ""}: ${failure.reason}.${anonymousFallbackEnabled ? " May fall back to an anonymous visitor." : ""}`
+      );
+    }
+    try {
+      this.dispatchEvent(
+        new CustomEvent("agent-chat:identity-error", {
+          detail,
+          bubbles: true,
+          composed: true
+        })
+      );
+    } catch {
+    }
   }
   render() {
     const root7 = this.shadowRoot || this.attachShadow({ mode: "open" });
