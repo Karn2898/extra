@@ -793,6 +793,113 @@ async def test_closing_approval_stream_cancels_same_run_without_partial_assistan
     assert [(message.role, message.content) for message in messages] == [(Role.USER, "send it")]
 
 
+class _MidStreamFailureEngine(Engine):
+    async def build(self, _spec: object) -> None: ...
+
+    async def run(
+        self,
+        message: str,
+        *,
+        history: Sequence[ChatMessage] = (),
+        context: RunContext | None = None,
+    ) -> RunResult:
+        raise RuntimeError("private run failure")
+
+    async def stream(
+        self,
+        message: str,
+        *,
+        history: Sequence[ChatMessage] = (),
+        context: RunContext | None = None,
+    ) -> AsyncIterator[RunStreamEvent]:
+        yield RunStreamEvent(type="answer_delta", content="partial")
+        raise RuntimeError("private stream failure")
+
+
+async def test_failed_stream_stays_failed_and_is_not_also_cancelled() -> None:
+    """`fail_turn` is the terminal outcome; the cleanup path must not chase it with a cancel."""
+
+    class TransitionRecordingRunRepository(InMemoryRunRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.targets: list[RunStatus] = []
+
+        async def transition_if_allowed(self, run_id: str, target: RunStatus) -> bool:
+            self.targets.append(target)
+            return await super().transition_if_allowed(run_id, target)
+
+    runs = TransitionRecordingRunRepository()
+    service = ConversationService(
+        _MidStreamFailureEngine(), MemoryRepository(), run_repository=runs
+    )
+    principal = Principal.external("owner")
+    cid = await service.create(principal, session_id="session-1")
+
+    response = await stream_message(cid, SendMessageRequest(message="hello"), service, principal)
+    body = cast(AsyncGenerator[str, None], response.body_iterator)
+    frames = [frame async for frame in body]
+
+    assert any('"type": "error"' in frame for frame in frames)
+    run_id = json.loads(frames[0].split("data: ", 1)[1])["run_id"]
+    record = await runs.get(run_id)
+    assert record is not None and record.status == RunStatus.FAILED
+    assert RunStatus.CANCELLED not in runs.targets
+
+
+async def test_resume_stream_persists_final_when_its_consumer_is_cancelled_mid_write() -> None:
+    """An abort landing on the resume write must not leave a terminal run unanswered."""
+    write_started = asyncio.Event()
+    release_write = asyncio.Event()
+
+    class BlockingAssistantWriteRepository(MemoryRepository):
+        async def append_message_if_absent(
+            self,
+            message: ConversationMessage,
+            *,
+            snapshot_ttl_seconds: int | None = None,
+        ) -> bool:
+            if message.role is Role.ASSISTANT:
+                write_started.set()
+                await release_write.wait()
+            return await super().append_message_if_absent(
+                message, snapshot_ttl_seconds=snapshot_ttl_seconds
+            )
+
+    runs = InMemoryRunRepository()
+    engine = _ApprovalRecordingEngine(runs)
+    repository = BlockingAssistantWriteRepository()
+    service = ConversationService(engine, repository, run_repository=runs)
+    principal = Principal.external("owner")
+    cid = await service.create(principal, session_id="session-1")
+    pending = await service.send(cid, "send it", principal)
+    assert pending.pending_approval is not None
+
+    events = await service.stream_approval(
+        cid,
+        pending.pending_approval.run_id,
+        pending.pending_approval.approval_id,
+        ApprovalDecision.ALLOW_ONCE,
+        principal,
+    )
+
+    async def consume() -> None:
+        async for _event in events:
+            pass
+
+    consumer = asyncio.create_task(consume())
+    await asyncio.wait_for(write_started.wait(), timeout=1)
+    consumer.cancel()
+    release_write.set()
+    with pytest.raises(asyncio.CancelledError):
+        await consumer
+
+    messages = await service.history(cid, principal)
+    assert [(message.role, message.content) for message in messages] == [
+        (Role.USER, "send it"),
+        (Role.ASSISTANT, "sent"),
+    ]
+
+
 async def test_resuming_approval_after_edit_keeps_answer_on_original_branch() -> None:
     engine = _ApprovalRecordingEngine()
     repository = MemoryRepository()

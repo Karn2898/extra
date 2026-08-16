@@ -10,11 +10,11 @@ import asyncio
 import dataclasses
 import logging
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Coroutine, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import cast
+from typing import Any, cast
 
 from agent_engine.approvals.decision import ApprovalDecision
 from agent_engine.approvals.errors import ApprovalAlreadyProcessed, RunNotFound
@@ -387,16 +387,18 @@ class ConversationService:
             try:
                 async for event in engine_stream:
                     if event.type == "final":
-                        await self._persist_assistant_turn(
-                            session_id=session.session_id,
-                            run_id=run_id,
-                            user_id=session.user_id,
-                            parent_message_id=parent_message_id,
-                            content=event.content or "",
-                            input_tokens=event.input_tokens,
-                            output_tokens=event.output_tokens,
-                            visited=event.route or (),
-                            used_tools=event.used_tools,
+                        await self._persist_durably(
+                            self._persist_assistant_turn(
+                                session_id=session.session_id,
+                                run_id=run_id,
+                                user_id=session.user_id,
+                                parent_message_id=parent_message_id,
+                                content=event.content or "",
+                                input_tokens=event.input_tokens,
+                                output_tokens=event.output_tokens,
+                                visited=event.route or (),
+                                used_tools=event.used_tools,
+                            )
                         )
                     yield event
             finally:
@@ -429,6 +431,8 @@ class ConversationService:
             raise
         except Exception:
             await self.fail_turn(turn)
+            # The run is already terminal; `finally` must not try to cancel it.
+            exhausted = True
             raise
         finally:
             try:
@@ -471,7 +475,7 @@ class ConversationService:
         self, turn: PreparedConversationTurn, final: RunStreamEvent
     ) -> None:
         """Finish persistence before exposing a terminal answer downstream."""
-        persistence = asyncio.create_task(
+        await self._persist_durably(
             self._persist_assistant_turn(
                 session_id=turn.session_id,
                 run_id=turn.run_id,
@@ -484,10 +488,18 @@ class ConversationService:
                 used_tools=final.used_tools,
             )
         )
+
+    async def _persist_durably(self, persistence: Coroutine[Any, Any, None]) -> None:
+        """Complete one write even if the awaiting task is cancelled.
+
+        Every path that exposes a terminal answer goes through here: an abort
+        landing on the await must not leave a run terminal with no message.
+        """
+        task = asyncio.create_task(persistence)
         try:
-            await asyncio.shield(persistence)
+            await asyncio.shield(task)
         except asyncio.CancelledError:
-            await persistence
+            await task
             raise
 
     async def _persist_assistant_turn(

@@ -403,6 +403,8 @@ async def stream_message(
             exhausted = True
         except Exception:
             await service.fail_turn(turn)
+            # The run is already terminal; `finally` must not try to cancel it.
+            exhausted = True
             logger.exception("conversation stream failed")
             payload = {"type": "error", "error": _INTERNAL_ERROR_MESSAGE}
             yield f"event: error\ndata: {json.dumps(payload)}\n\n"
