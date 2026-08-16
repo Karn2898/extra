@@ -330,7 +330,18 @@ async def run_remote_chat(
         echo(BANNER, err=True)
         echo(f"Session: {headers[SESSION_HEADER]}", err=True)
         for question in _iter_questions(read_line):
-            await _answer_remote(client, base, question, stream=stream, headers=headers, echo=echo)
+            try:
+                await _answer_remote(
+                    client,
+                    base,
+                    question,
+                    stream=stream,
+                    headers=headers,
+                    read_line=read_line,
+                    echo=echo,
+                )
+            except _StopChat:
+                return
     finally:
         if owns_client:
             await client.aclose()
@@ -343,6 +354,7 @@ async def _answer_remote(
     *,
     stream: bool,
     headers: dict[str, str],
+    read_line: ReadLine,
     echo: Callable[..., None],
 ) -> None:
     """Send one question to the server. Network/server errors never kill the loop."""
@@ -350,9 +362,13 @@ async def _answer_remote(
 
     try:
         if stream:
-            await _remote_stream(client, base, question, headers=headers, echo=echo)
+            await _remote_stream(
+                client, base, question, headers=headers, read_line=read_line, echo=echo
+            )
         else:
-            await _remote_invoke(client, base, question, headers=headers, echo=echo)
+            await _remote_invoke(
+                client, base, question, headers=headers, read_line=read_line, echo=echo
+            )
     except httpx.HTTPError as exc:
         echo(f"✗ request failed: {exc}", err=True)
 
@@ -363,6 +379,7 @@ async def _remote_invoke(
     question: str,
     *,
     headers: dict[str, str],
+    read_line: ReadLine,
     echo: Callable[..., None],
 ) -> None:
     resp = await client.post(f"{base}/invoke", json={"message": question}, headers=headers)
@@ -370,7 +387,49 @@ async def _remote_invoke(
         echo(f"✗ server error {resp.status_code}: {_error_detail(resp)}", err=True)
         return
     data = resp.json()
+    if data.get("status") == "pending_approval":
+        data = await _resolve_remote_approvals(
+            client, base, headers, data, read_line=read_line, echo=echo
+        )
+        if data is None:
+            return
     echo(f"{ANSWER_PREFIX}{data.get('answer', '')}")
+
+
+async def _resolve_remote_approvals(
+    client: httpx.AsyncClient,
+    base: str,
+    headers: dict[str, str],
+    data: dict[str, object],
+    *,
+    read_line: ReadLine,
+    echo: Callable[..., None],
+) -> dict[str, object] | None:
+    """Prompt and resume until a run completes or stops requesting approvals.
+
+    Mirrors ``_resolve_local_approvals``'s loop shape, but over HTTP: every
+    decision is sent to ``/decision`` (not ``/approve``/``/reject``), since it
+    accepts all three ``ApprovalDecision`` values with one request shape.
+    Returns ``None`` (instead of raising) on a non-200 response, consistent
+    with how ``_answer_remote`` already treats other HTTP errors — the caller
+    should treat that as "nothing more to print" and move on.
+    """
+    while data.get("status") == "pending_approval":
+        pending_raw = data.get("pending_approval")
+        if not isinstance(pending_raw, dict):
+            raise RuntimeError("The server paused for approval without approval details.")
+        pending = PendingApproval(**pending_raw)
+        decision = _prompt_for_approval(pending, read_line=read_line, echo=echo)
+        resp = await client.post(
+            f"{base}/runs/{pending.run_id}/approvals/{pending.approval_id}/decision",
+            json={"decision": decision.value},
+            headers=headers,
+        )
+        if resp.status_code != 200:
+            echo(f"✗ server error {resp.status_code}: {_error_detail(resp)}", err=True)
+            return None
+        data = resp.json()
+    return data
 
 
 async def _remote_stream(
@@ -379,10 +438,12 @@ async def _remote_stream(
     question: str,
     *,
     headers: dict[str, str],
+    read_line: ReadLine,
     echo: Callable[..., None],
 ) -> None:
     sys.stdout.write(ANSWER_PREFIX)
     sys.stdout.flush()
+    pending: PendingApproval | None = None
     async with client.stream(
         "POST", f"{base}/stream", json={"message": question}, headers=headers
     ) as resp:
@@ -398,11 +459,37 @@ async def _remote_stream(
             if payload.get("type") == "answer_delta" and payload.get("content"):
                 sys.stdout.write(payload["content"])
                 sys.stdout.flush()
+            elif payload.get("type") == "pending_approval":
+                pending = _pending_approval_from_stream_event(payload)
             elif payload.get("type") == "error":
                 sys.stdout.write("\n")
                 echo(f"✗ {payload.get('detail', 'stream error')}", err=True)
                 return
     sys.stdout.write("\n")
+
+    if pending is None:
+        return
+    data: dict[str, object] = {"status": "pending_approval", "pending_approval": pending.__dict__}
+    resolved = await _resolve_remote_approvals(
+        client, base, headers, data, read_line=read_line, echo=echo
+    )
+    if resolved is not None:
+        echo(f"{ANSWER_PREFIX}{resolved.get('answer', '')}")
+
+
+def _pending_approval_from_stream_event(payload: dict[str, object]) -> PendingApproval:
+    """The SSE ``pending_approval`` event carries the same fields flat (not
+    nested), unlike the ``/invoke``/``/decision`` JSON response shape."""
+    return PendingApproval(
+        run_id=str(payload["run_id"]),
+        approval_id=str(payload["approval_id"]),
+        agent_id=str(payload["agent_id"]),
+        tool_name=str(payload["tool_name"]),
+        description=str(payload["description"]),
+        provider=payload.get("provider") or "local",  # type: ignore[arg-type]
+        server_id=payload.get("server_id"),  # type: ignore[arg-type]
+        arguments=payload.get("arguments") or {},  # type: ignore[arg-type]
+    )
 
 
 def _error_detail(resp: httpx.Response) -> str:
