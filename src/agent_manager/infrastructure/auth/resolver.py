@@ -118,6 +118,20 @@ class IdentityResolver:
             raise TokenError("no host identity is configured; only visitor passes are accepted")
         return self._host.resolve(token)
 
+    def names_a_host_user(self, token: str) -> bool:
+        """Whether this token claims to name a host user, read from its header
+        alone.
+
+        Only ever used to choose between two tokens the caller supplied. It
+        grants nothing on its own — whichever token is chosen still goes
+        through `resolve`, and the signature check there is what decides. A
+        token too malformed to read is not treated as a claim.
+        """
+        try:
+            return not _is_anonymous_pass(token)
+        except TokenError:
+            return False
+
 
 def _is_anonymous_pass(token: str) -> bool:
     """Route on `kid` only — the signature check that follows is what decides."""
