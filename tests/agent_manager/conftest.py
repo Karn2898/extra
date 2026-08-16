@@ -30,10 +30,10 @@ def build_test_app(service: ConversationService, **settings: Any) -> FastAPI:
     app = FastAPI()
     app.state.service = service
     config = Settings.from_values(
-        **{"agent_auth_mode": AuthMode.MINT, "agent_auth_secret": AUTH_SECRET, **settings}
+        **{"extra_auth_mode": AuthMode.MINT, "extra_auth_secret": AUTH_SECRET, **settings}
     )
     app.state.caller_identity = CallerIdentity(
-        resolver=build_identity_resolver(config), cookie_name=config.agent_auth_cookie
+        resolver=build_identity_resolver(config), cookie_name=config.extra_auth_cookie
     )
     app.include_router(router)
     return app

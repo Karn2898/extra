@@ -169,18 +169,19 @@ def _settings(**overrides: Any) -> Settings:
 
 
 def test_host_identity_requires_a_configured_secret() -> None:
-    with pytest.raises(ValidationError, match="AGENT_AUTH_SECRET"):
-        _settings(agent_auth_mode=AuthMode.HOST_TOKEN)
+    with pytest.raises(ValidationError, match="EXTRA_AUTH_SECRET"):
+        _settings(extra_auth_mode=AuthMode.HOST_TOKEN)
 
 
 def test_visitor_passes_are_not_signed_with_the_host_key() -> None:
     """A host that can mint tokens still must not be able to mint passes."""
-    settings = _settings(agent_auth_mode=AuthMode.MINT, agent_auth_secret=SECRET)
+    settings = _settings(extra_auth_mode=AuthMode.MINT, extra_auth_secret=SECRET)
 
     assert anonymous_secret(settings) != SECRET
 
 
 def test_a_visitor_pass_round_trips_but_a_host_token_does_not_become_one() -> None:
+    # Intentionally uses deprecated kwarg aliases to verify backward-compat fallback.
     resolver = build_identity_resolver(
         _settings(agent_auth_mode=AuthMode.MINT, agent_auth_secret=SECRET)
     )
@@ -198,6 +199,7 @@ def test_mint_mode_accepts_the_token_our_own_docs_tell_hosts_to_produce() -> Non
     """Pins docs/identity.mdx against the code. The documented snippet signs
     `sub` with `expiresIn`; Node's jsonwebtoken adds `iat` itself. Drop the
     expiry from the docs and mint mode rejects every token a host produces."""
+    # Intentionally uses deprecated kwarg aliases to verify backward-compat fallback.
     resolver = build_identity_resolver(
         _settings(agent_auth_mode=AuthMode.MINT, agent_auth_secret=SECRET)
     )

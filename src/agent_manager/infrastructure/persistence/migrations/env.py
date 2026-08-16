@@ -19,7 +19,7 @@ config = context.config
 settings = Settings()
 database_url = settings.effective_database_url
 if settings.uses_process_memory or database_url is None:
-    raise RuntimeError("Set AGENT_DB_URL or DATABASE_URL before running Alembic migrations")
+    raise RuntimeError("Set EXTRA_DB_URL or DATABASE_URL before running Alembic migrations")
 config.set_main_option("sqlalchemy.url", database_url)
 
 if config.config_file_name is not None:

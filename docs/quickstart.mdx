@@ -116,7 +116,7 @@ below opts into a SQLite file mounted with the workspace.
       -v $(pwd):/workspace \
       -w /workspace \
       -e ANTHROPIC_API_KEY=sk-... \
-      -e AGENT_DB_URL=sqlite+aiosqlite:///chat.db \
+      -e EXTRA_DB_URL=sqlite+aiosqlite:///chat.db \
       ghcr.io/extra-org/extra:latest \
       agent-manager --config agents.yml --port 8100
     ```

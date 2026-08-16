@@ -74,7 +74,7 @@ message, which is already a stable domain identity.
   was updated in place.
 - With no database URL configured, the manager composes process-local
   conversation and run repositories and opens no SQL connection. Setting
-  `AGENT_DB_URL` or `DATABASE_URL` opts into SQL persistence and Alembic.
+  `EXTRA_DB_URL` or `DATABASE_URL` opts into SQL persistence and Alembic.
 
 ## Consequences
 

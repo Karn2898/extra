@@ -68,7 +68,7 @@ def build_identity_resolver(settings: Settings) -> IdentityResolver:
     return IdentityResolver(
         anonymous=AnonymousIdentitySource(
             anonymous_secret(settings),
-            ttl_seconds=settings.agent_auth_anonymous_ttl_seconds,
+            ttl_seconds=settings.extra_auth_anonymous_ttl_seconds,
         ),
         host=_build_host_identity_source(settings),
     )
@@ -77,45 +77,45 @@ def build_identity_resolver(settings: Settings) -> IdentityResolver:
 def anonymous_secret(settings: Settings) -> str:
     """Derived from the host secret rather than reused, so a host that can mint
     tokens still cannot mint passes."""
-    if settings.agent_auth_anonymous_secret:
-        return settings.agent_auth_anonymous_secret
-    if settings.agent_auth_secret:
+    if settings.extra_auth_anonymous_secret:
+        return settings.extra_auth_anonymous_secret
+    if settings.extra_auth_secret:
         return hmac.new(
-            settings.agent_auth_secret.encode(),
+            settings.extra_auth_secret.encode(),
             ANONYMOUS_KEY_DERIVATION_INFO,
             hashlib.sha256,
         ).hexdigest()
     logger.warning(
-        "No AGENT_AUTH_SECRET or AGENT_AUTH_ANONYMOUS_SECRET set;"
+        "No EXTRA_AUTH_SECRET or EXTRA_AUTH_ANONYMOUS_SECRET set;"
         " signing visitor passes with an ephemeral key that will not survive a restart."
     )
     return secrets.token_hex(EPHEMERAL_SECRET_BYTES)
 
 
 def _build_host_identity_source(settings: Settings) -> IdentitySource | None:
-    if settings.agent_auth_mode is AuthMode.ANONYMOUS:
+    if settings.extra_auth_mode is AuthMode.ANONYMOUS:
         return None
-    if not settings.agent_auth_secret:
-        raise ValueError(f"AGENT_AUTH_SECRET is required for auth mode {settings.agent_auth_mode}")
+    if not settings.extra_auth_secret:
+        raise ValueError(f"EXTRA_AUTH_SECRET is required for auth mode {settings.extra_auth_mode}")
 
-    mints_for_us = settings.agent_auth_mode is AuthMode.MINT
+    mints_for_us = settings.extra_auth_mode is AuthMode.MINT
     verifier = TokenVerifier(
-        StaticSecretKeySource(settings.agent_auth_secret),
+        StaticSecretKeySource(settings.extra_auth_secret),
         TokenPolicy(
-            issuer=settings.agent_auth_issuer,
-            audience=settings.agent_auth_audience,
+            issuer=settings.extra_auth_issuer,
+            audience=settings.extra_auth_audience,
             require_expiry=mints_for_us,
-            max_ttl_seconds=settings.agent_auth_max_ttl_seconds if mints_for_us else None,
+            max_ttl_seconds=settings.extra_auth_max_ttl_seconds if mints_for_us else None,
         ),
     )
     return HostIdentitySource(
         verifier,
         ClaimMapping(
-            user_id=settings.agent_auth_claim_user_id,
-            email=settings.agent_auth_claim_email,
-            display_name=settings.agent_auth_claim_display_name,
-            roles=settings.agent_auth_claim_roles,
-            organization_id=settings.agent_auth_claim_organization_id,
+            user_id=settings.extra_auth_claim_user_id,
+            email=settings.extra_auth_claim_email,
+            display_name=settings.extra_auth_claim_display_name,
+            roles=settings.extra_auth_claim_roles,
+            organization_id=settings.extra_auth_claim_organization_id,
         ),
     )
 

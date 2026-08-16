@@ -85,7 +85,7 @@ On failure a `{"type": "error", "detail": "..."}` event is emitted.
 Base URL: `http://localhost:8100`
 
 Manages multi-turn conversations using process memory by default, without
-opening a database connection. Set `AGENT_DB_URL` (or `DATABASE_URL`) to an
+opening a database connection. Set `EXTRA_DB_URL` (or `DATABASE_URL`) to an
 explicit SQLite or Postgres URL when history must survive process restarts.
 
 ### Caller identity
@@ -99,7 +99,7 @@ Identity arrives as a signed JWT, in either of two places:
 
 - `Authorization: Bearer <token>` — a token the host app minted, or a visitor
   pass the manager issued.
-- The host's own session cookie, named by `AGENT_AUTH_COOKIE`, when the manager
+- The host's own session cookie, named by `EXTRA_AUTH_COOKIE`, when the manager
   is served from the host's origin.
 
 See [Identity](/docs/identity) for how a host product is wired up, including the
