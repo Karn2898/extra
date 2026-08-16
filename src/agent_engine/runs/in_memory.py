@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import time
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 
 from agent_engine.approvals.errors import InvalidStateTransition
@@ -83,6 +83,15 @@ class InMemoryRunRepository:
     async def get(self, run_id: str) -> RunRecord | None:
         entry = self._get_unexpired_entry(run_id)
         return None if entry is None else entry.record
+
+    async def get_many(self, run_ids: Collection[str]) -> dict[str, RunRecord]:
+        """Resolve many ids against the same dict, skipping unknown and expired ones."""
+        found: dict[str, RunRecord] = {}
+        for run_id in run_ids:
+            entry = self._get_unexpired_entry(run_id)
+            if entry is not None:
+                found[run_id] = entry.record
+        return found
 
     async def transition_if_allowed(self, run_id: str, target: RunStatus) -> bool:
         now = self._clock()

@@ -75,6 +75,10 @@ message, which is already a stable domain identity.
 - The default persistent SQLite database is unchanged. Only an explicitly
   in-memory SQLite URL composes process-local conversation and run repositories
   and skips Alembic, so tests and throwaway processes open no file.
+- Branch traversal stays a repository concern: the SQL adapter walks
+  `parent_message_id` from the head in a recursive CTE that also carries the
+  limit, and run lifecycle state is projected through one batched lookup, so
+  reading history costs neither a full-session scan nor a query per run.
 
 ## Consequences
 

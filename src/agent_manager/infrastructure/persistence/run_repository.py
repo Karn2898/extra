@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Collection
 from typing import Any
 
 from sqlalchemy import func, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
-from sqlmodel import col
+from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agent_engine.approvals.models import RunRecord, RunStatus, can_transition_run
@@ -37,6 +38,18 @@ class SqlRunRepository(RunRepository):
         async with self._sessions() as session:
             row = await session.get(RunRecordRow, run_id)
         return _record(row) if row is not None else None
+
+    async def get_many(self, run_ids: Collection[str]) -> dict[str, RunRecord]:
+        """Resolve every requested id in one statement."""
+        wanted = set(run_ids)
+        if not wanted:
+            return {}
+        async with self._sessions() as session:
+            result = await session.exec(
+                select(RunRecordRow).where(col(RunRecordRow.run_id).in_(wanted))
+            )
+            rows = result.all()
+        return {row.run_id: _record(row) for row in rows}
 
     async def transition_if_allowed(self, run_id: str, target: RunStatus) -> bool:
         sources = frozenset(status for status in RunStatus if can_transition_run(status, target))

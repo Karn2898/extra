@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from pathlib import Path
 
 import pytest
@@ -28,6 +29,9 @@ class RegistrationSpy(RunRepository):
         return True
 
     async def get(self, run_id: str) -> RunRecord | None:
+        raise AssertionError("RunLifecycle must not read before registration")
+
+    async def get_many(self, run_ids: Collection[str]) -> dict[str, RunRecord]:
         raise AssertionError("RunLifecycle must not read before registration")
 
     async def transition_if_allowed(self, run_id: str, target: RunStatus) -> bool:

@@ -230,7 +230,9 @@ class MemoryRepository(Repository):
             self._messages.get(session_id, []),
             session.head_message_id if session is not None else None,
         )
-        return list(msgs[-limit:] if limit is not None else msgs)
+        if limit is None:
+            return list(msgs)
+        return list(msgs[-limit:]) if limit > 0 else []
 
     async def list_messages(self, conversation_id: str, limit: int | None = None) -> list[Message]:
         msgs = await self.list_conversation_messages(conversation_id, limit)

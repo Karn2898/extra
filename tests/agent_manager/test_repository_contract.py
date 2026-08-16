@@ -214,6 +214,54 @@ async def test_limit_returns_most_recent_oldest_first(repo: Repository) -> None:
     for i in range(5):
         await repo.add_message(cid, Role.USER, f"m{i}")
     assert [m.content for m in await repo.list_messages(cid, limit=2)] == ["m3", "m4"]
+    assert await repo.list_messages(cid, limit=0) == []
+
+
+async def test_limit_counts_only_the_active_branch(repo: Repository) -> None:
+    """A limited read walks the selected ancestry, not whatever else the session stores."""
+    now = datetime.now(UTC)
+    await repo.create_session("branch", user_id="u1")
+    await repo.append_message_if_head(
+        ConversationMessage("root", "branch", Role.USER, "Q1", now), None
+    )
+    await repo.append_message_if_head(
+        ConversationMessage(
+            "answer",
+            "branch",
+            Role.ASSISTANT,
+            "A1",
+            now + timedelta(microseconds=1),
+            parent_message_id="root",
+        ),
+        "root",
+    )
+    await repo.append_message_if_head(
+        ConversationMessage(
+            "abandoned",
+            "branch",
+            Role.USER,
+            "Q2",
+            now + timedelta(microseconds=2),
+            parent_message_id="answer",
+        ),
+        "answer",
+    )
+    # Edit Q2: a sibling of `abandoned` becomes the head, leaving it stored but inactive.
+    await repo.append_message_if_head(
+        ConversationMessage(
+            "edited",
+            "branch",
+            Role.USER,
+            "Q2 edited",
+            now + timedelta(microseconds=3),
+            parent_message_id="answer",
+        ),
+        "abandoned",
+    )
+
+    limited = await repo.list_conversation_messages("branch", limit=2)
+
+    assert [message.message_id for message in limited] == ["answer", "edited"]
 
 
 async def test_same_turn_keeps_order(repo: Repository) -> None:

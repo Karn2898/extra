@@ -11,9 +11,10 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, update
+from sqlalchemy import delete, literal, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.orm import aliased
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -324,9 +325,7 @@ class SqlRepository(Repository):
         self, session_id: str, limit: int | None = None
     ) -> list[ConversationMessage]:
         async with self._sessions() as session:
-            rows = await self._active_message_rows(session, session_id)
-        if limit is not None:
-            rows = rows[-limit:]
+            rows = await self._active_message_rows(session, session_id, limit)
         return [_message(row) for row in rows]
 
     async def list_messages(self, conversation_id: str, limit: int | None = None) -> list[Message]:
@@ -384,8 +383,7 @@ class SqlRepository(Repository):
         max_chars: int | None = None,
     ) -> ConversationContext:
         async with self._sessions() as session:
-            rows = await self._message_rows(session, session_id, None)
-        branch = _branch_rows(rows, head_message_id)
+            branch = await self._branch_message_rows(session, session_id, head_message_id)
         messages = [
             Message(role=Role(row.role), content=row.content, created_at=row.created_at)
             for row in branch
@@ -470,13 +468,52 @@ class SqlRepository(Repository):
         return list(result.all())
 
     async def _active_message_rows(
-        self, session: AsyncSession, session_id: str
+        self, session: AsyncSession, session_id: str, limit: int | None = None
     ) -> list[ConversationMessageRow]:
         session_row = await session.get(ConversationSessionRow, session_id)
         if session_row is None:
             return []
-        rows = await self._message_rows(session, session_id, None)
-        return _branch_rows(rows, session_row.head_message_id)
+        return await self._branch_message_rows(
+            session, session_id, session_row.head_message_id, limit
+        )
+
+    async def _branch_message_rows(
+        self,
+        session: AsyncSession,
+        session_id: str,
+        head_message_id: str | None,
+        limit: int | None = None,
+    ) -> list[ConversationMessageRow]:
+        """Return one branch, oldest first, walking `parent_message_id` in SQL.
+
+        A recursive CTE keeps both the traversal and the limit in the database:
+        history reads the tail of the active branch, never every message the
+        conversation has stored.
+        """
+        if head_message_id is None or (limit is not None and limit <= 0):
+            return []
+        head = (
+            select(ConversationMessageRow, literal(0).label("depth"))
+            .where(
+                col(ConversationMessageRow.session_id) == session_id,
+                col(ConversationMessageRow.message_id) == head_message_id,
+            )
+            .cte("branch", recursive=True)
+        )
+        parent = aliased(ConversationMessageRow, name="parent_message")
+        ancestors = select(parent, (head.c.depth + 1).label("depth")).where(
+            col(parent.session_id) == session_id,
+            col(parent.message_id) == head.c.parent_message_id,
+        )
+        if limit is not None:
+            ancestors = ancestors.where(head.c.depth < limit - 1)
+        branch = head.union_all(ancestors)
+        result = await session.exec(
+            select(ConversationMessageRow)
+            .join(branch, col(ConversationMessageRow.message_id) == branch.c.message_id)
+            .order_by(branch.c.depth.desc())
+        )
+        return list(result.all())
 
 
 def _rows_affected(result: Any) -> int:
@@ -614,21 +651,6 @@ def _bound_messages(
         if total >= max_chars:
             break
     return list(reversed(kept))
-
-
-def _branch_rows(
-    rows: list[ConversationMessageRow], head_message_id: str | None
-) -> list[ConversationMessageRow]:
-    if head_message_id is None:
-        return []
-    by_id = {row.message_id: row for row in rows}
-    path: list[ConversationMessageRow] = []
-    cursor = by_id.get(head_message_id)
-    while cursor is not None:
-        path.append(cursor)
-        cursor = by_id.get(cursor.parent_message_id) if cursor.parent_message_id else None
-    path.reverse()
-    return path
 
 
 def _utc(value: datetime | None) -> datetime | None:

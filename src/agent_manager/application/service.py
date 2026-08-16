@@ -553,14 +553,13 @@ class ConversationService:
             for message in messages
             if message.role == Role.ASSISTANT and message.run_id is not None
         }
+        run_ids = {message.run_id for message in messages if message.run_id is not None}
         statuses: dict[str, str] = {}
         if self._run_repository is not None:
-            for run_id in {message.run_id for message in messages if message.run_id is not None}:
-                record = await self._run_repository.get(run_id)
-                if record is not None:
-                    statuses[run_id] = record.status.value
+            records = await self._run_repository.get_many(run_ids)
+            statuses = {run_id: record.status.value for run_id, record in records.items()}
         elif isinstance(self._engine, RunStatusEngine):
-            for run_id in {message.run_id for message in messages if message.run_id is not None}:
+            for run_id in run_ids:
                 with suppress(RunNotFound):
                     statuses[run_id] = await self._engine.get_run_status(run_id)
         return [

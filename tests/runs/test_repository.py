@@ -57,6 +57,17 @@ async def test_run_repository_registers_new_run(run_repository: RunRepository) -
     assert await run_repository.get("r1") == record
 
 
+async def test_run_repository_resolves_many_ids_at_once(run_repository: RunRepository) -> None:
+    await run_repository.create_if_absent(_run("r1"))
+    await run_repository.create_if_absent(_run("r2", status=RunStatus.COMPLETED))
+
+    found = await run_repository.get_many(["r1", "r2", "unknown"])
+
+    assert set(found) == {"r1", "r2"}
+    assert found["r2"].status is RunStatus.COMPLETED
+    assert await run_repository.get_many([]) == {}
+
+
 async def test_run_repository_accumulates_reported_token_usage(
     run_repository: RunRepository,
 ) -> None:

@@ -31,3 +31,20 @@ async def test_sql_run_repository_persists_status_and_usage_atomically() -> None
     assert stored.status in {RunStatus.COMPLETED, RunStatus.CANCELLED}
     assert (stored.input_tokens, stored.output_tokens) == (4, 2)
     await engine.dispose()
+
+
+async def test_sql_run_repository_reads_many_runs_in_one_statement() -> None:
+    engine = create_db_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(SQLModel.metadata.create_all)
+    repository = SqlRunRepository(session_factory(engine))
+    for run_id in ("run-1", "run-2", "run-3"):
+        await repository.create_if_absent(RunRecord(run_id, run_id, "system"))
+    await repository.transition_if_allowed("run-2", RunStatus.COMPLETED)
+
+    found = await repository.get_many(["run-1", "run-2", "missing"])
+
+    assert set(found) == {"run-1", "run-2"}
+    assert found["run-2"].status is RunStatus.COMPLETED
+    assert await repository.get_many([]) == {}
+    await engine.dispose()
