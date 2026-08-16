@@ -52264,6 +52264,9 @@ var TokenSource = class {
     this.endpoint = endpoint;
     this.cached = null;
     this.pending = null;
+    /** Bumped by `reset()` so a resolution already in flight, once it lands, can
+     *  tell it is answering a question nobody is asking anymore. */
+    this.generation = 0;
     this.tokenUrl = options.tokenUrl ?? "";
     this.provider = options.provider ?? null;
     this.storage = options.storage ?? localStorage;
@@ -52284,7 +52287,9 @@ var TokenSource = class {
    *  over, and dropping it here would strand whatever this browser chatted
    *  about before logging in. */
   reset() {
+    this.generation += 1;
     this.cached = null;
+    this.pending = null;
   }
   /** Drop this browser's identity entirely — a host app signing its user out. */
   forget() {
@@ -52294,13 +52299,15 @@ var TokenSource = class {
   /** Concurrent callers share one resolution. Without this, parallel requests
    *  each fetch a token and each hand over the visitor pass. */
   resolve(fallback) {
+    const generation = this.generation;
     this.pending ?? (this.pending = (async () => {
       try {
         const host = await this.hostToken();
-        this.cached = host ?? (this.requireIdentity ? null : await fallback());
-        return this.cached;
+        const result = host ?? (this.requireIdentity ? null : await fallback());
+        if (generation === this.generation) this.cached = result;
+        return result;
       } finally {
-        this.pending = null;
+        if (generation === this.generation) this.pending = null;
       }
     })());
     return this.pending;
@@ -54262,9 +54269,10 @@ var AgentChatElement = class extends HTMLElement {
    *  conversations the visitor had before logging in. The open thread is kept
    *  too — the merge re-owns it, so the user carries straight on in it. */
   refreshIdentity() {
-    this.tokens?.reset();
+    if (!this.connected) return;
+    this.configure();
     this.instanceKey += 1;
-    if (this.connected) this.render();
+    this.render();
   }
   /** Forget this browser's identity and its open thread, so the next person on
    *  this machine starts clean. Call it when the host signs a user out. */

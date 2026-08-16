@@ -659,4 +659,66 @@ assert.equal(mintedPass, false, "never asks for a visitor pass");
   assert.equal(localStorage.getItem(key), null, "forget drops it");
 }
 
+
+
+// refreshIdentity() must pick up a tokenProvider assigned after the element
+// connected — TokenSource only reads `provider` once, at construction, so
+// merely clearing the cached token (the original fix) leaves it bound to
+// whatever provider existed at connect time, forever.
+{
+  resetPage();
+  const el = document.createElement("agent-chat");
+  el.setAttribute("endpoint", "https://api.example");
+  el.tokenProvider = async () => "token-a";
+  // This harness's fake DOM cannot host a real React root; stub the one method
+  // that needs it, since this test is about identity resolution, not painting.
+  el.render = () => {};
+  el.connectedCallback();
+
+  assert.equal(await el.tokens.current(), "token-a");
+
+  el.tokenProvider = async () => "token-b";
+  el.refreshIdentity();
+
+  assert.equal(
+    await el.tokens.current(),
+    "token-b",
+    "refreshIdentity() must rebuild TokenSource so a provider swap after connecting takes effect",
+  );
+}
+
+// A resolution already in flight when refreshIdentity() runs must not land
+// afterwards and clobber the identity it was just asked to refresh.
+{
+  resetPage();
+  let releaseStale;
+  const staleGate = new Promise((resolve) => {
+    releaseStale = resolve;
+  });
+  let calls = 0;
+  const tokens = new TokenSource("https://api.example", {
+    provider: async () => {
+      calls += 1;
+      if (calls === 1) {
+        await staleGate; // held open until after reset()
+        return "stale-token";
+      }
+      return "fresh-token";
+    },
+  });
+
+  const stale = tokens.current(); // starts resolving, blocked on staleGate
+  await Promise.resolve(); // let it reach the provider call
+  tokens.reset(); // what refreshIdentity() does
+  const fresh = tokens.current(); // an independent, later resolution
+  releaseStale(); // the stale one can finish now, after reset() already ran
+  await Promise.all([stale, fresh]);
+
+  assert.equal(
+    await tokens.current(),
+    "fresh-token",
+    "a resolution in flight when reset() ran must not overwrite the refreshed identity",
+  );
+}
+
 console.log("widget self-check: OK");

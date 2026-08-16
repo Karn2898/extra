@@ -76,9 +76,13 @@ export class AgentChatElement extends HTMLElement {
    *  conversations the visitor had before logging in. The open thread is kept
    *  too — the merge re-owns it, so the user carries straight on in it. */
   refreshIdentity(): void {
-    this.tokens?.reset();
+    if (!this.connected) return;
+    // Rebuilds TokenSource from scratch, not just tokens.reset(): a
+    // tokenProvider assigned after the element connected is otherwise never
+    // seen, since TokenSource only reads it once, at construction.
+    this.configure();
     this.instanceKey += 1;
-    if (this.connected) this.render();
+    this.render();
   }
 
   /** Forget this browser's identity and its open thread, so the next person on

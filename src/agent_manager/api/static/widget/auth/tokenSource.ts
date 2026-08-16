@@ -43,6 +43,9 @@ export function visitorPassKey(endpoint: string): string {
 export class TokenSource {
   private cached: string | null = null;
   private pending: Promise<string | null> | null = null;
+  /** Bumped by `reset()` so a resolution already in flight, once it lands, can
+   *  tell it is answering a question nobody is asking anymore. */
+  private generation = 0;
   private readonly tokenUrl: string;
   private readonly provider: TokenProvider | null;
   private readonly storage: Storage;
@@ -75,7 +78,12 @@ export class TokenSource {
    *  over, and dropping it here would strand whatever this browser chatted
    *  about before logging in. */
   reset(): void {
+    this.generation += 1;
     this.cached = null;
+    // Not just the value — the in-flight resolution itself is disowned, so the
+    // next call starts a fresh one instead of awaiting an answer to a question
+    // that no longer applies (e.g. the old tokenProvider).
+    this.pending = null;
   }
 
   /** Drop this browser's identity entirely — a host app signing its user out. */
@@ -87,15 +95,20 @@ export class TokenSource {
   /** Concurrent callers share one resolution. Without this, parallel requests
    *  each fetch a token and each hand over the visitor pass. */
   private resolve(fallback: () => string | null | Promise<string | null>): Promise<string | null> {
+    const generation = this.generation;
     this.pending ??= (async () => {
       try {
         const host = await this.hostToken();
         // A host that demands a proven user gets no anonymous consolation
         // prize: better a visibly broken chat than a silently wrong identity.
-        this.cached = host ?? (this.requireIdentity ? null : await fallback());
-        return this.cached;
+        const result = host ?? (this.requireIdentity ? null : await fallback());
+        // A reset() since this resolution started means someone has already
+        // moved on — most likely `refreshIdentity()` with a new tokenProvider.
+        // Landing late must not overwrite whatever answered in the meantime.
+        if (generation === this.generation) this.cached = result;
+        return result;
       } finally {
-        this.pending = null;
+        if (generation === this.generation) this.pending = null;
       }
     })();
     return this.pending;
