@@ -2,14 +2,59 @@
 
 from __future__ import annotations
 
+import os
+import warnings
 from enum import StrEnum
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, NamedTuple
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 ONE_HOUR_SECONDS = 3_600
 THIRTY_DAYS_SECONDS = 2_592_000
+
+
+class _EnvAlias(NamedTuple):
+    """Maps one deprecated environment variable name to its canonical replacement."""
+
+    old: str  # e.g. "AGENT_AUTH_MODE"  — the legacy env var operators may still have set
+    new: str  # e.g. "EXTRA_AUTH_MODE"  — the canonical env var they should migrate to
+    field: str  # e.g. "extra_auth_mode"  — the pydantic Settings field name
+
+
+_DEPRECATED_ENV_VARS: tuple[_EnvAlias, ...] = (
+    _EnvAlias("AGENT_DB_BACKEND", "EXTRA_DB_BACKEND", "extra_db_backend"),
+    _EnvAlias("AGENT_DB_URL", "EXTRA_DB_URL", "extra_db_url"),
+    _EnvAlias("AGENT_AUTH_MODE", "EXTRA_AUTH_MODE", "extra_auth_mode"),
+    _EnvAlias("AGENT_AUTH_SECRET", "EXTRA_AUTH_SECRET", "extra_auth_secret"),
+    _EnvAlias(
+        "AGENT_AUTH_ANONYMOUS_SECRET", "EXTRA_AUTH_ANONYMOUS_SECRET", "extra_auth_anonymous_secret"
+    ),
+    _EnvAlias(
+        "AGENT_AUTH_ANONYMOUS_TTL_SECONDS",
+        "EXTRA_AUTH_ANONYMOUS_TTL_SECONDS",
+        "extra_auth_anonymous_ttl_seconds",
+    ),
+    _EnvAlias(
+        "AGENT_AUTH_MAX_TTL_SECONDS", "EXTRA_AUTH_MAX_TTL_SECONDS", "extra_auth_max_ttl_seconds"
+    ),
+    _EnvAlias("AGENT_AUTH_ISSUER", "EXTRA_AUTH_ISSUER", "extra_auth_issuer"),
+    _EnvAlias("AGENT_AUTH_AUDIENCE", "EXTRA_AUTH_AUDIENCE", "extra_auth_audience"),
+    _EnvAlias("AGENT_AUTH_COOKIE", "EXTRA_AUTH_COOKIE", "extra_auth_cookie"),
+    _EnvAlias("AGENT_AUTH_CLAIM_USER_ID", "EXTRA_AUTH_CLAIM_USER_ID", "extra_auth_claim_user_id"),
+    _EnvAlias("AGENT_AUTH_CLAIM_EMAIL", "EXTRA_AUTH_CLAIM_EMAIL", "extra_auth_claim_email"),
+    _EnvAlias(
+        "AGENT_AUTH_CLAIM_DISPLAY_NAME",
+        "EXTRA_AUTH_CLAIM_DISPLAY_NAME",
+        "extra_auth_claim_display_name",
+    ),
+    _EnvAlias("AGENT_AUTH_CLAIM_ROLES", "EXTRA_AUTH_CLAIM_ROLES", "extra_auth_claim_roles"),
+    _EnvAlias(
+        "AGENT_AUTH_CLAIM_ORGANIZATION_ID",
+        "EXTRA_AUTH_CLAIM_ORGANIZATION_ID",
+        "extra_auth_claim_organization_id",
+    ),
+)
 
 
 class AuthMode(StrEnum):
@@ -27,18 +72,30 @@ class AuthMode(StrEnum):
 
 
 def normalize_database_url(url: str, backend: str) -> str:
-    if backend == "sqlite" and url.startswith("sqlite:///"):
-        return "sqlite+aiosqlite:///" + url.removeprefix("sqlite:///")
-    if backend == "postgres" and url.startswith("postgresql://"):
-        return "postgresql+asyncpg://" + url.removeprefix("postgresql://")
+    if backend == "sqlite":
+        if url.startswith("sqlite:///"):
+            return "sqlite+aiosqlite:///" + url.removeprefix("sqlite:///")
+        if not url.startswith("sqlite+"):
+            raise ValueError(
+                f"EXTRA_DB_URL {url!r} does not look like a sqlite URL "
+                f"(expected 'sqlite:///' or 'sqlite+aiosqlite:///')."
+            )
+    if backend == "postgres":
+        if url.startswith("postgresql://"):
+            return "postgresql+asyncpg://" + url.removeprefix("postgresql://")
+        if not url.startswith("postgresql+"):
+            raise ValueError(
+                f"EXTRA_DB_URL {url!r} does not look like a postgresql URL "
+                f"(expected 'postgresql://' or 'postgresql+asyncpg://')."
+            )
     return url
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    agent_db_backend: Literal["sqlite", "postgres"] = "sqlite"
-    agent_db_url: str | None = None
+    extra_db_backend: Literal["sqlite", "postgres"] = "sqlite"
+    extra_db_url: str | None = None
     database_url: str = "sqlite+aiosqlite:///chat.db"
     context_window: int = 10
     context_max_chars: int | None = None
@@ -50,23 +107,52 @@ class Settings(BaseSettings):
     # e.g. CORS_ORIGINS=https://acmecorp.com,https://www.acmecorp.com
     cors_origins: Annotated[list[str], NoDecode] = []
 
-    agent_auth_mode: AuthMode = AuthMode.ANONYMOUS
-    agent_auth_secret: str | None = None
-    # Derived from `agent_auth_secret` when unset, so visitor passes are never
+    extra_auth_mode: AuthMode = AuthMode.ANONYMOUS
+    extra_auth_secret: str | None = None
+    # Derived from `extra_auth_secret` when unset, so visitor passes are never
     # signed with the host's key.
-    agent_auth_anonymous_secret: str | None = None
-    agent_auth_anonymous_ttl_seconds: int = THIRTY_DAYS_SECONDS
-    agent_auth_max_ttl_seconds: int = ONE_HOUR_SECONDS
-    agent_auth_issuer: str | None = None
-    agent_auth_audience: str | None = None
+    extra_auth_anonymous_secret: str | None = None
+    extra_auth_anonymous_ttl_seconds: int = THIRTY_DAYS_SECONDS
+    extra_auth_max_ttl_seconds: int = ONE_HOUR_SECONDS
+    extra_auth_issuer: str | None = None
+    extra_auth_audience: str | None = None
     # Name of the host's session cookie. Only reachable when the manager is
     # served from the host's own origin — see `get_principal`.
-    agent_auth_cookie: str | None = None
-    agent_auth_claim_user_id: str = "sub"
-    agent_auth_claim_email: str = "email"
-    agent_auth_claim_display_name: str = "name"
-    agent_auth_claim_roles: str = "roles"
-    agent_auth_claim_organization_id: str = "org_id"
+    extra_auth_cookie: str | None = None
+    extra_auth_claim_user_id: str = "sub"
+    extra_auth_claim_email: str = "email"
+    extra_auth_claim_display_name: str = "name"
+    extra_auth_claim_roles: str = "roles"
+    extra_auth_claim_organization_id: str = "org_id"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _backfill_deprecated_agent_vars(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        for alias in _DEPRECATED_ENV_VARS:
+            if alias.field in data:
+                continue
+            # Also accept the deprecated name as a Python kwarg (e.g. in tests or
+            # programmatic callers that haven't migrated yet).
+            old_key = alias.old.lower()
+            if old_key in data:
+                warnings.warn(
+                    f"{alias.old} is deprecated; rename it to {alias.new}.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+                data[alias.field] = data[old_key]
+                continue
+            old_val = os.getenv(alias.old)
+            if old_val is not None:
+                warnings.warn(
+                    f"{alias.old} is deprecated; rename it to {alias.new}.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+                data[alias.field] = old_val
+        return data
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -75,9 +161,9 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _require_secret_for_host_identity(self) -> Settings:
-        if self.agent_auth_mode is not AuthMode.ANONYMOUS and not self.agent_auth_secret:
+        if self.extra_auth_mode is not AuthMode.ANONYMOUS and not self.extra_auth_secret:
             raise ValueError(
-                f"AGENT_AUTH_SECRET is required when AGENT_AUTH_MODE={self.agent_auth_mode}"
+                f"EXTRA_AUTH_SECRET is required when EXTRA_AUTH_MODE={self.extra_auth_mode}"
             )
         return self
 
@@ -89,4 +175,4 @@ class Settings(BaseSettings):
 
     @property
     def effective_database_url(self) -> str:
-        return normalize_database_url(self.agent_db_url or self.database_url, self.agent_db_backend)
+        return normalize_database_url(self.extra_db_url or self.database_url, self.extra_db_backend)

@@ -201,15 +201,15 @@ def token(user: str, ttl: int) -> None:
     from agent_manager.infrastructure.auth import encode_token
 
     settings = Settings()
-    if not settings.agent_auth_secret:
-        click.echo("✗ AGENT_AUTH_SECRET is not set; there is no key to sign with.", err=True)
+    if not settings.extra_auth_secret:
+        click.echo("✗ EXTRA_AUTH_SECRET is not set; there is no key to sign with.", err=True)
         sys.exit(1)
 
     issued = encode_token(
-        settings.agent_auth_secret,
+        settings.extra_auth_secret,
         subject=user,
         ttl_seconds=ttl,
-        claims={settings.agent_auth_claim_user_id: user},
+        claims={settings.extra_auth_claim_user_id: user},
     )
     click.echo(f"  expires: {issued.expires_at.isoformat()}", err=True)
     click.echo(issued.token)

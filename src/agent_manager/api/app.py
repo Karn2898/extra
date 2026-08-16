@@ -65,7 +65,7 @@ def create_app(config_path: str, settings: Settings | None = None) -> FastAPI:
     app = FastAPI(lifespan=lifespan)
     app.state.caller_identity = CallerIdentity(
         resolver=build_identity_resolver(settings),
-        cookie_name=settings.agent_auth_cookie,
+        cookie_name=settings.extra_auth_cookie,
     )
 
     @app.get("/health")
