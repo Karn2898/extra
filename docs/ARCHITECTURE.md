@@ -66,9 +66,8 @@ The long-term promise:
 > **implemented**. Model access supports Anthropic and Amazon Bedrock. Two
 > HTTP API layers exist: a thin stateless API directly over the engine
 > (`/invoke`, `/stream` in `agent_engine`) and a conversation-lifecycle service
-> built on top of it (`agent_manager`) with process-local storage by default,
-> opt-in SQLite/Postgres persistence, SSE streaming, and an embeddable JS/React
-> chat widget. Basic observability
+> built on top of it (`agent_manager`) with SQLite-backed persistence, SSE
+> streaming, and an embeddable JS/React chat widget. Basic observability
 > (structured logging + a Langfuse callback provider) is wired in, and a
 > `Dockerfile` provides a basic container image. The access plugin **is**
 > wired into child filtering, but the request-context gate that should feed it
@@ -154,8 +153,7 @@ Responsibilities:
   optional structured prior user/assistant turns supplied by its caller, and
   owns no conversation memory. The optional
   `agent_manager` layer sits in front of it and **does** own conversation
-  memory: it retains messages per conversation/session (process-local by
-  default, or persisted when a database URL is configured),
+  memory: it persists messages per conversation/session (SQLite by default),
   loads prior messages in order, passes them through the engine's typed history
   boundary, and exposes
   `/conversations` endpoints and SSE streaming
@@ -622,13 +620,12 @@ also what serves the embeddable chat widget. `agentctl chat` talks to neither
 server by default; in `--url` mode it talks to `agentctl serve`'s stateless
 `/invoke`/`/stream` API and does not persist anything.
 
-**Conversation storage (✅ done, not in the original task list):**
+**Conversation persistence (✅ done, not in the original task list):**
 `agent_manager` is a DDD-style service (`domain/`, `application/`,
 `infrastructure/persistence/`) providing `ConversationService` (send/stream,
-structured prior-context assembly, final-response storage), a process-local
-`MemoryRepository` by default, plus an opt-in `SqlRepository` with Alembic
-migrations and tables for conversations, messages, users, and sessions. It is
-wired into both `agentctl run`/`chat`
+structured prior-context assembly, final-response persistence), a SQLite-backed
+`SqlRepository` with Alembic migrations, and tables for conversations,
+messages, users, and sessions. It is wired into both `agentctl run`/`chat`
 (CLI) and the `agent_manager` API server. `agent_engine` has no dependency on
 `agent_manager`; the boundary is one-directional.
 

@@ -84,9 +84,7 @@ On failure a `{"type": "error", "detail": "..."}` event is emitted.
 
 Base URL: `http://localhost:8100`
 
-Manages multi-turn conversations using process memory by default, without
-opening a database connection. Set `EXTRA_DB_URL` (or `DATABASE_URL`) to an
-explicit SQLite or Postgres URL when history must survive process restarts.
+Manages multi-turn conversations with history persisted in SQLite (or Postgres via `EXTRA_DB_URL`).
 
 ### Caller identity
 

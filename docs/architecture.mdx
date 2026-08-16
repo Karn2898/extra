@@ -57,9 +57,7 @@ The engine itself holds no per-request state. Everything specific to a request l
     Stateless. Takes a `messages` array, returns a response. No memory, no sessions. Port 8090.
   </Card>
   <Card title="agent-manager" icon="database">
-    Adds conversation storage, session management, and SSE streaming on top of
-    the engine. Storage is process-local unless a SQLite/Postgres URL is
-    configured. Serves the embeddable widget. Port 8100.
+    Adds conversation persistence, session management, and SSE streaming on top of the engine. Serves the embeddable widget. Port 8100.
   </Card>
 </CardGroup>
 

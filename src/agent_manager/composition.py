@@ -137,7 +137,6 @@ async def application_repositories(
         )
         return
 
-    assert database_url is not None
     db_engine = create_db_engine(database_url)
     sessions = session_factory(db_engine)
     try:

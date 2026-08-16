@@ -72,9 +72,9 @@ message, which is already a stable domain identity.
   durable run records. Because no database environment currently exists, no new
   migration revision was created; the existing fresh-database baseline revision
   was updated in place.
-- With no database URL configured, the manager composes process-local
-  conversation and run repositories and opens no SQL connection. Setting
-  `EXTRA_DB_URL` or `DATABASE_URL` opts into SQL persistence and Alembic.
+- The default persistent SQLite database is unchanged. Only an explicitly
+  in-memory SQLite URL composes process-local conversation and run repositories
+  and skips Alembic, so tests and throwaway processes open no file.
 
 ## Consequences
 
@@ -92,8 +92,8 @@ message, which is already a stable domain identity.
 - External side effects completed before cancellation are not rolled back.
 - If an approval claim wins before cancellation, the cancellation request
   returns a conflict because execution may already have started.
-- Unconfigured conversation history and run state are lost on process restart;
-  deployments that require durability must configure a database URL.
+- Conversation history and run state configured as in-memory SQLite are lost on
+  process restart; that remains an explicit opt-out from the persistent default.
 - Provider-reported usage observed before cancellation is retained. Providers
   that report usage only after a cancelled request cannot be counted exactly.
 

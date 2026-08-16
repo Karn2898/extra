@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import os
 import warnings
+from collections.abc import Mapping
 from enum import StrEnum
 from typing import Annotated, Any, Literal, NamedTuple
+from urllib.parse import parse_qs, urlsplit
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 ONE_HOUR_SECONDS = 3_600
 THIRTY_DAYS_SECONDS = 2_592_000
@@ -91,14 +95,43 @@ def normalize_database_url(url: str, backend: str) -> str:
     return url
 
 
+def _query_mode(query: Mapping[str, Any]) -> str | None:
+    value = query.get("mode")
+    if isinstance(value, list | tuple):
+        return str(value[0]) if value else None
+    return None if value is None else str(value)
+
+
+def _is_in_memory_sqlite(url: str) -> bool:
+    """Whether ``url`` names a SQLite database that lives only in process memory.
+
+    Parsed rather than substring-matched, so an on-disk path containing
+    ``:memory:`` keeps its persistence.
+    """
+    try:
+        parsed = make_url(url)
+    except ArgumentError:
+        return False
+    if parsed.get_backend_name() != "sqlite":
+        return False
+    database = parsed.database
+    if not database or database == ":memory:":
+        return True
+    if _query_mode(parsed.query) == "memory":
+        return True
+    if database.startswith("file:"):
+        # A SQLite URI filename carries its own query, e.g. `file:x?mode=memory`.
+        uri = urlsplit(database)
+        return uri.path == ":memory:" or _query_mode(parse_qs(uri.query)) == "memory"
+    return False
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     extra_db_backend: Literal["sqlite", "postgres"] = "sqlite"
     extra_db_url: str | None = None
-    # Persistence is opt-in. Without either URL the manager uses its process-local
-    # repository adapters and never opens a database connection.
-    database_url: str | None = None
+    database_url: str = "sqlite+aiosqlite:///chat.db"
     context_window: int = 10
     context_max_chars: int | None = None
     context_max_tokens: int | None = None
@@ -176,11 +209,10 @@ class Settings(BaseSettings):
         return cls(_env_file=None, **values)  # type: ignore[call-arg]
 
     @property
-    def effective_database_url(self) -> str | None:
-        url = self.extra_db_url or self.database_url
-        return normalize_database_url(url, self.extra_db_backend) if url else None
+    def effective_database_url(self) -> str:
+        return normalize_database_url(self.extra_db_url or self.database_url, self.extra_db_backend)
 
     @property
     def uses_process_memory(self) -> bool:
-        url = self.effective_database_url
-        return url is None or ":memory:" in url
+        """True only for a SQLite URL that names no on-disk database."""
+        return _is_in_memory_sqlite(self.effective_database_url)

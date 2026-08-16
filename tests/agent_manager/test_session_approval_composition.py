@@ -47,17 +47,18 @@ async def test_new_application_repository_starts_without_prior_grants() -> None:
     assert await second.is_allowed(key) is False
 
 
-async def test_unconfigured_application_uses_only_process_memory(
+async def test_in_memory_database_url_uses_only_process_memory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def fail_if_sql_engine_is_created(_url: str) -> None:
-        raise AssertionError("unconfigured storage must not create a database engine")
+        raise AssertionError("in-memory storage must not create a database engine")
 
     monkeypatch.setattr(
         "agent_manager.composition.create_db_engine",
         fail_if_sql_engine_is_created,
     )
+    settings = Settings.from_values(database_url="sqlite+aiosqlite:///:memory:")
 
-    async with application_repositories(Settings.from_values()) as repositories:
+    async with application_repositories(settings) as repositories:
         assert isinstance(repositories.conversations, MemoryRepository)
         assert isinstance(repositories.runs, InMemoryRunRepository)

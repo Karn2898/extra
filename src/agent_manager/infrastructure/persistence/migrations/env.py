@@ -17,10 +17,9 @@ from agent_manager.config import Settings
 
 config = context.config
 settings = Settings()
-database_url = settings.effective_database_url
-if settings.uses_process_memory or database_url is None:
-    raise RuntimeError("Set EXTRA_DB_URL or DATABASE_URL before running Alembic migrations")
-config.set_main_option("sqlalchemy.url", database_url)
+if settings.uses_process_memory:
+    raise RuntimeError("Set EXTRA_DB_URL or DATABASE_URL to a persistent database before migrating")
+config.set_main_option("sqlalchemy.url", settings.effective_database_url)
 
 if config.config_file_name is not None:
     # Do not silence already-configured application loggers when a migration
