@@ -3,7 +3,9 @@
 from agent_manager.application.service import (
     ConversationAccessDenied,
     ConversationAlreadyExists,
+    ConversationBranchConflict,
     ConversationLinkRefused,
+    ConversationMessageNotFound,
     ConversationNotFound,
     ConversationService,
     ConversationTokenBudgetExceeded,
@@ -13,7 +15,9 @@ from agent_manager.application.service import (
 __all__ = [
     "ConversationAccessDenied",
     "ConversationAlreadyExists",
+    "ConversationBranchConflict",
     "ConversationLinkRefused",
+    "ConversationMessageNotFound",
     "ConversationNotFound",
     "ConversationService",
     "ConversationTokenBudgetExceeded",

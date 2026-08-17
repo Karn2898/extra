@@ -67,3 +67,39 @@ class ApprovalEngine(Protocol):
         caller_user_id: str | None = None,
         caller_session_id: str | None = None,
     ) -> RunResult: ...
+
+
+@runtime_checkable
+class ApprovalCancellationEngine(Protocol):
+    """Optional engine capability for terminally cancelling a pending HITL run."""
+
+    async def cancel_pending_approval(
+        self,
+        run_id: str,
+        approval_id: str,
+        *,
+        caller_user_id: str | None = None,
+        caller_session_id: str | None = None,
+    ) -> None: ...
+
+
+@runtime_checkable
+class ApprovalStreamingEngine(Protocol):
+    """Optional engine capability for streaming an existing HITL run."""
+
+    def resume_stream(
+        self,
+        run_id: str,
+        approval_id: str,
+        decision: ApprovalDecision | str,
+        *,
+        caller_user_id: str | None = None,
+        caller_session_id: str | None = None,
+    ) -> AsyncIterator[RunStreamEvent]: ...
+
+
+@runtime_checkable
+class RunStatusEngine(Protocol):
+    """Optional engine capability exposing authoritative run lifecycle state."""
+
+    async def get_run_status(self, run_id: str) -> str: ...

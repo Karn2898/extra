@@ -14,6 +14,8 @@ from agent_engine.approvals.session_store import (
     InMemorySessionApprovalRepository,
     SessionApprovalRepository,
 )
+from agent_engine.runs.in_memory import InMemoryRunRepository
+from agent_engine.runs.repository import RunRepository
 from agent_engine.tool_usage.in_memory import InMemoryToolUsageRepository
 from agent_engine.tool_usage.repository import ToolUsageRepository
 from agent_manager.config import AuthMode, Settings
@@ -28,6 +30,8 @@ from agent_manager.infrastructure.auth.resolver import (
 )
 from agent_manager.infrastructure.auth.tokens import TokenPolicy, TokenVerifier
 from agent_manager.infrastructure.persistence.database import create_db_engine, session_factory
+from agent_manager.infrastructure.persistence.memory_repository import MemoryRepository
+from agent_manager.infrastructure.persistence.run_repository import SqlRunRepository
 from agent_manager.infrastructure.persistence.sql_repository import SqlRepository
 
 logger = logging.getLogger(__name__)
@@ -41,6 +45,7 @@ class ApplicationRepositories:
     conversations: Repository
     session_approvals: SessionApprovalRepository
     tool_usage: ToolUsageRepository
+    runs: RunRepository
 
 
 def build_session_approval_repository() -> SessionApprovalRepository:
@@ -120,13 +125,26 @@ async def application_repositories(
     settings: Settings,
 ) -> AsyncIterator[ApplicationRepositories]:
     """Own application repositories for one complete process lifespan."""
-    db_engine = create_db_engine(settings.effective_database_url)
+    database_url = settings.effective_database_url
+    session_approvals = build_session_approval_repository()
+    tool_usage = build_tool_usage_repository()
+    if settings.uses_process_memory:
+        yield ApplicationRepositories(
+            conversations=MemoryRepository(),
+            session_approvals=session_approvals,
+            tool_usage=tool_usage,
+            runs=InMemoryRunRepository(),
+        )
+        return
+
+    db_engine = create_db_engine(database_url)
     sessions = session_factory(db_engine)
     try:
         yield ApplicationRepositories(
             conversations=SqlRepository(sessions),
-            session_approvals=build_session_approval_repository(),
-            tool_usage=build_tool_usage_repository(),
+            session_approvals=session_approvals,
+            tool_usage=tool_usage,
+            runs=SqlRunRepository(sessions),
         )
     finally:
         await db_engine.dispose()

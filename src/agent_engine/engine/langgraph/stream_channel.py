@@ -2,15 +2,25 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass, field
 
 from agent_engine.runtime.streaming import RunStreamEvent, StreamSinks
+
+
+@dataclass
+class _TerminalEvent:
+    event: RunStreamEvent
+    accepted: asyncio.Event = field(default_factory=asyncio.Event)
+    finalized: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 class StreamChannel:
     """An in-order channel of :class:`RunStreamEvent` for one streamed run."""
 
     def __init__(self) -> None:
-        self._queue: asyncio.Queue[RunStreamEvent | BaseException | None] = asyncio.Queue()
+        self._queue: asyncio.Queue[RunStreamEvent | _TerminalEvent | BaseException | None] = (
+            asyncio.Queue()
+        )
 
     def sinks(self, *, token: Callable[[int, int], None]) -> StreamSinks:
         """Per-run sinks publishing onto this channel. Install before creating
@@ -24,6 +34,16 @@ class StreamChannel:
     def emit(self, event: RunStreamEvent) -> None:
         """Publish an event. Non-blocking, so it is safe from sync sink callbacks."""
         self._queue.put_nowait(event)
+
+    def publish_terminal(self, event: RunStreamEvent) -> _TerminalEvent:
+        """Publish a terminal event whose lifecycle must be acknowledged.
+
+        Holding the producer open prevents an abandoned consumer from racing a
+        queued-but-unobserved final answer into a completed run.
+        """
+        terminal = _TerminalEvent(event)
+        self._queue.put_nowait(terminal)
+        return terminal
 
     def abort(self, error: BaseException) -> None:
         """Hand a producer failure to the consumer, after anything already emitted."""
@@ -42,4 +62,9 @@ class StreamChannel:
                 return
             if isinstance(item, BaseException):
                 raise item
+            if isinstance(item, _TerminalEvent):
+                item.accepted.set()
+                await item.finalized.wait()
+                yield item.event
+                continue
             yield item

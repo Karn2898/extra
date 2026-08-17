@@ -59,6 +59,7 @@ RunStreamEventType = Literal[
     "tool_failed",
     "final",
     "pending_approval",
+    "resume_started",
 ]
 
 

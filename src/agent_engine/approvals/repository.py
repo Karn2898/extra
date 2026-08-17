@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 from typing import Protocol, runtime_checkable
 
-from agent_engine.approvals.errors import ApprovalNotFound
+from agent_engine.approvals.errors import ApprovalNotFound, InvalidStateTransition
 from agent_engine.approvals.models import (
     ApprovalRecord,
     ApprovalStatus,
@@ -28,6 +28,7 @@ class ApprovalRepository(Protocol):
     async def get_by_tool_call(self, run_id: str, tool_call_id: str) -> ApprovalRecord | None: ...
     async def get_pending_for_run(self, run_id: str) -> ApprovalRecord | None: ...
     async def claim(self, approval_id: str) -> ApprovalRecord: ...
+    async def reject_pending(self, approval_id: str) -> ApprovalRecord: ...
     async def set_status(self, approval_id: str, target: ApprovalStatus) -> ApprovalRecord: ...
 
 
@@ -84,6 +85,25 @@ class InMemoryApprovalRepository:
             # which the manager maps to ApprovalAlreadyProcessed.
             ensure_approval_transition(record.status, ApprovalStatus.RESUMING)
             record.transition(ApprovalStatus.RESUMING)
+            return record
+
+    async def reject_pending(self, approval_id: str) -> ApprovalRecord:
+        """Atomically reject an approval only while it is still pending.
+
+        This compare-and-set races safely with :meth:`claim`: cancellation and
+        approval can never both win for the same tool call.
+        """
+        async with self._lock:
+            record = self._approvals.get(approval_id)
+            if record is None:
+                raise ApprovalNotFound(approval_id)
+            if record.status != ApprovalStatus.PENDING:
+                # Keep the public failure consistent with ``claim`` while
+                # forbidding cancellation of an already-resuming tool call.
+                raise InvalidStateTransition(
+                    "approval", record.status.value, ApprovalStatus.REJECTED.value
+                )
+            record.transition(ApprovalStatus.REJECTED)
             return record
 
     async def set_status(self, approval_id: str, target: ApprovalStatus) -> ApprovalRecord:

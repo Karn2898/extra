@@ -278,6 +278,43 @@ class ApprovalManager:
         )
         return claimed
 
+    async def cancel_pending(
+        self,
+        *,
+        run_id: str,
+        approval_id: str,
+        caller_user_id: str | None = None,
+        caller_auth_ref: str | None = None,
+    ) -> ApprovalRecord:
+        """Atomically win cancellation against a competing approval decision."""
+        record = await self.get_authorized(
+            run_id=run_id,
+            approval_id=approval_id,
+            caller_user_id=caller_user_id,
+            caller_auth_ref=caller_auth_ref,
+        )
+        try:
+            cancelled = await self._approvals.reject_pending(approval_id)
+        except InvalidStateTransition as exc:
+            log(
+                logger,
+                logging.INFO,
+                "approval cancellation lost race",
+                run_id=run_id,
+                approval_id=approval_id,
+                status=record.status.value,
+            )
+            raise ApprovalAlreadyProcessed(approval_id, record.status.value) from exc
+        log(
+            logger,
+            logging.INFO,
+            "pending approval cancelled",
+            run_id=run_id,
+            approval_id=approval_id,
+            tool_call_id=cancelled.tool_call_id,
+        )
+        return cancelled
+
     @staticmethod
     def _ensure_authorized(
         record: ApprovalRecord,

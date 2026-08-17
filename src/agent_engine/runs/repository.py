@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import Protocol, runtime_checkable
 
 from agent_engine.approvals.models import RunRecord, RunStatus
@@ -29,6 +30,15 @@ class RunRepository(Protocol):
 
     async def get(self, run_id: str) -> RunRecord | None:
         """Return the stored run, or ``None`` when ``run_id`` is unknown."""
+        ...
+
+    async def get_many(self, run_ids: Collection[str]) -> dict[str, RunRecord]:
+        """Return the stored runs for ``run_ids``, keyed by id.
+
+        Unknown ids are simply absent. Implementations must answer in a bounded
+        number of round trips so callers projecting many runs at once — history
+        endpoints in particular — do not degrade into one query per run.
+        """
         ...
 
     async def transition_if_allowed(self, run_id: str, target: RunStatus) -> bool:

@@ -113,12 +113,17 @@ export function styles(config: AgentChatConfig): string {
     .msg pre code { background: none; padding: 0; white-space: pre-wrap; }
     .msg-actions { display: flex; gap: 4px; margin-top: 6px;
       opacity: 0; transition: opacity .15s ease; }
-    .msg.ai:hover .msg-actions, .msg-actions:focus-within { opacity: 1; }
+    .msg.ai:hover .msg-actions, .msg.user:hover .msg-actions, .msg-actions:focus-within { opacity: 1; }
     .msg-action { display: inline-flex; align-items: center; justify-content: center;
       width: 26px; height: 26px; border: 0; border-radius: 7px; background: transparent;
       color: #71717a; cursor: pointer; transition: background .12s, color .12s; }
     .msg-action:hover { background: #f4f4f5; color: #18181b; }
     .msg-action svg { width: 15px; height: 15px; animation: aui-icon-in .15s ease; }
+    .user-actions { justify-content: flex-end; margin-bottom: -4px; opacity: 1; }
+    .user-edit, .edit-cancel { border: 0; background: transparent; color: #71717a;
+      cursor: pointer; font: inherit; padding: 2px 4px; }
+    .user-edit:hover, .edit-cancel:hover { color: #18181b; text-decoration: underline; }
+    .msg-cancelled { color: #71717a; font-style: italic; }
     @keyframes aui-icon-in { from { opacity: 0; transform: scale(.75); } }
     .tool-list { margin-bottom: 10px; display: flex; flex-direction: column; gap: 8px; }
     .agent-meta { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; color: #71717a;
@@ -160,6 +165,8 @@ export function styles(config: AgentChatConfig): string {
     .approval-button.primary:hover:not(:disabled) { opacity: .88; }
     .approval-button.danger { border-color: transparent; background: transparent; color: #71717a; }
     .approval-button.danger:hover:not(:disabled) { background: #f4f4f5; color: #18181b; }
+    .approval-button.cancel-run { border-color: #fca5a5; color: #b91c1c; }
+    .approval-button.cancel-run:hover:not(:disabled) { background: #fef2f2; }
     .approval-button:disabled { cursor: default; opacity: .55; }
     .approval-error { margin: 8px 0 0; color: #b91c1c; font-size: 12px; }
     .approval-status { display: block; margin-top: 8px; color: #71717a; font-size: 12px; }

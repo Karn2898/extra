@@ -8,6 +8,7 @@ from typing import cast
 
 import pytest
 
+from agent_engine.approvals.errors import RunNotFound
 from agent_engine.engine.types import ChatMessage, ChatRole
 from agent_engine.runtime.hooks.models import RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
@@ -43,6 +44,50 @@ class FinalThenCleanupErrorEngine(RecordingEngine):
         raise CleanupAfterFinalError("cleanup after final")
 
 
+class RenameFailingRepository(MemoryRepository):
+    async def rename_session(self, session_id: str, title: str) -> None:
+        del session_id, title
+        raise RuntimeError("title storage unavailable")
+
+
+class CancellableThenSuccessfulEngine(RecordingEngine):
+    def __init__(self) -> None:
+        super().__init__()
+        self.cancelled = asyncio.Event()
+        self.stream_count = 0
+        self.statuses: dict[str, str] = {}
+
+    async def get_run_status(self, run_id: str) -> str:
+        try:
+            return self.statuses[run_id]
+        except KeyError:
+            raise RunNotFound(run_id) from None
+
+    async def stream(
+        self,
+        message: str,
+        *,
+        history: Sequence[ChatMessage] = (),
+        context: RunContext | None = None,
+    ) -> AsyncIterator[RunStreamEvent]:
+        self.prompts.append(message)
+        self.histories.append(tuple(history))
+        self.contexts.append(context)
+        assert context is not None and context.run_id is not None
+        self.statuses[context.run_id] = "running"
+        self.stream_count += 1
+        if self.stream_count > 1:
+            self.statuses[context.run_id] = "completed"
+            yield RunStreamEvent(type="final", content=f"answer:{message}", route=("agent",))
+            return
+        try:
+            yield RunStreamEvent(type="answer_delta", content="partial")
+            await asyncio.Event().wait()
+        finally:
+            self.statuses[context.run_id] = "cancelled"
+            self.cancelled.set()
+
+
 def _service(window: int = 10) -> tuple[ConversationService, RecordingEngine]:
     engine = RecordingEngine()
     return ConversationService(engine, MemoryRepository(), window=window), engine
@@ -58,6 +103,18 @@ async def test_send_persists_user_and_assistant_in_order() -> None:
         (Role.USER, "hello"),
         (Role.ASSISTANT, "answer:hello"),
     ]
+
+
+async def test_cosmetic_title_failure_does_not_orphan_an_accepted_turn() -> None:
+    repository = RenameFailingRepository()
+    service = ConversationService(RecordingEngine(), repository)
+    cid = await service.create(ALICE)
+
+    result = await service.send(cid, "hello", ALICE)
+
+    assert result.answer == "answer:hello"
+    messages = await service.history(cid, ALICE)
+    assert [message.content for message in messages] == ["hello", "answer:hello"]
 
 
 async def test_stream_persists_final_before_propagating_late_engine_failure() -> None:
@@ -84,13 +141,105 @@ async def test_stream_persists_final_when_consumer_closes_generator() -> None:
 
     final = await events.__anext__()
     assert final.type == "final"
-    await events.aclose()
-
     messages = await service.history(cid, ALICE)
     assert [(message.role, message.content) for message in messages] == [
         (Role.USER, "hello"),
         (Role.ASSISTANT, "persisted"),
     ]
+    await events.aclose()
+
+
+async def test_cancelled_stream_persists_no_partial_assistant_and_next_turn_succeeds() -> None:
+    repository = MemoryRepository()
+    engine = CancellableThenSuccessfulEngine()
+    service = ConversationService(engine, repository)
+    cid = await service.create(ALICE)
+    events = cast(AsyncGenerator[RunStreamEvent, None], service.stream(cid, "first", ALICE))
+
+    partial = await events.__anext__()
+    assert partial.content == "partial"
+    await events.aclose()
+    await asyncio.wait_for(engine.cancelled.wait(), timeout=1)
+
+    messages = await service.history(cid, ALICE)
+    assert [(message.role, message.content) for message in messages] == [(Role.USER, "first")]
+    assert messages[0].status == "cancelled"
+
+    assert [event.type async for event in service.stream(cid, "second", ALICE)] == ["final"]
+    messages = await service.history(cid, ALICE)
+    assert [(message.role, message.content) for message in messages] == [
+        (Role.USER, "first"),
+        (Role.USER, "second"),
+        (Role.ASSISTANT, "answer:second"),
+    ]
+    assert [message.content for message in engine.histories[-1]] == ["first"]
+    assert all(message.content != "Generation stopped" for message in engine.histories[-1])
+
+
+async def test_edit_creates_an_immutable_branch_with_only_ancestor_context() -> None:
+    repository = MemoryRepository()
+    engine = RecordingEngine()
+    service = ConversationService(engine, repository)
+    cid = await service.create(ALICE)
+    await service.send(cid, "U1", ALICE)
+    await service.send(cid, "U2", ALICE)
+    original = await service.history(cid, ALICE)
+    original_u2 = next(message for message in original if message.content == "U2")
+    original_a2 = next(message for message in original if message.content == "answer:U2")
+
+    await service.send(
+        cid,
+        "U2 edited",
+        ALICE,
+        edit_message_id=original_u2.message_id,
+    )
+
+    assert engine.histories[-1] == (
+        ChatMessage(ChatRole.USER, "U1"),
+        ChatMessage(ChatRole.ASSISTANT, "answer:U1"),
+    )
+    active = await service.history(cid, ALICE)
+    assert [message.content for message in active] == [
+        "U1",
+        "answer:U1",
+        "U2 edited",
+        "answer:U2 edited",
+    ]
+    stored_u2 = await repository.get_message(original_u2.message_id)
+    stored_a2 = await repository.get_message(original_a2.message_id)
+    assert stored_u2 is not None and stored_u2.content == "U2"
+    assert stored_a2 is not None and stored_a2.content == "answer:U2"
+    edited = next(message for message in active if message.content == "U2 edited")
+    assert edited.run_id != original_u2.run_id
+    assert edited.parent_message_id == original_u2.parent_message_id
+
+
+async def test_editing_root_starts_a_new_root_without_old_branch_context() -> None:
+    repository = MemoryRepository()
+    engine = RecordingEngine()
+    service = ConversationService(engine, repository)
+    cid = await service.create(ALICE)
+    await service.send(cid, "original root", ALICE)
+    original = await service.history(cid, ALICE)
+
+    await service.send(
+        cid,
+        "edited root",
+        ALICE,
+        edit_message_id=original[0].message_id,
+    )
+
+    assert engine.histories[-1] == ()
+    active = await service.history(cid, ALICE)
+    assert [message.content for message in active] == [
+        "edited root",
+        "answer:edited root",
+    ]
+    assert active[0].parent_message_id is None
+    stored_user = await repository.get_message(original[0].message_id)
+    stored_assistant = await repository.get_message(original[1].message_id)
+    assert stored_user is not None and stored_user.content == "original root"
+    assert stored_assistant is not None and stored_assistant.content == "answer:original root"
 
 
 async def test_prior_history_passed_to_engine_as_structured_messages() -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any, cast
@@ -605,20 +605,14 @@ class LangGraphEngine(Engine):
         """
         app, lifecycle = self._require_built("resuming")
         kind = parse_decision(decision)
-        approval = await self._approval_manager.claim(
+        ctx = await self._activate_approval_resume(
+            lifecycle,
             run_id=run_id,
             approval_id=approval_id,
             caller_user_id=caller_user_id,
-            caller_auth_ref=caller_session_id,
+            caller_session_id=caller_session_id,
         )
         approved = kind != ApprovalDecision.DENY
-        ctx = RunContext(
-            run_id=run_id,
-            conversation_id=approval.auth_ref,
-            user_id=approval.authorized_user_id,
-            organization_id=approval.organization_id,
-            metadata={"approval_id": approval.approval_id},
-        )
         log(
             logger,
             logging.INFO,
@@ -648,9 +642,141 @@ class LangGraphEngine(Engine):
                     decision=kind.value,
                 )
                 return run_result
+            except asyncio.CancelledError:
+                await asyncio.shield(
+                    lifecycle.cancel(ctx, reason="approval resume request cancelled")
+                )
+                raise
             except Exception as exc:
                 await lifecycle.fail(ctx, exc)
                 raise
+
+    async def resume_stream(
+        self,
+        run_id: str,
+        approval_id: str,
+        decision: ApprovalDecision | str,
+        *,
+        caller_user_id: str | None = None,
+        caller_session_id: str | None = None,
+    ) -> AsyncIterator[RunStreamEvent]:
+        """Resume one approval through the same owned stream used by new runs."""
+        app, lifecycle = self._require_built("streaming an approval resume")
+        kind = parse_decision(decision)
+        ctx = await self._activate_approval_resume(
+            lifecycle,
+            run_id=run_id,
+            approval_id=approval_id,
+            caller_user_id=caller_user_id,
+            caller_session_id=caller_session_id,
+        )
+        approved = kind != ApprovalDecision.DENY
+
+        async def finalize_approval() -> None:
+            await self._approval_manager.finalize(approval_id, approved=approved)
+
+        log(
+            logger,
+            logging.INFO,
+            "resume stream started",
+            run_id=run_id,
+            approval_id=approval_id,
+            decision=kind.value,
+        )
+        command: Command[Any] = Command(resume={"decision": kind.value})
+        execution = cast(
+            AsyncGenerator[RunStreamEvent, None],
+            self._stream_execution(
+                app,
+                lifecycle,
+                ctx,
+                command,
+                after_invoke=finalize_approval,
+                started_event=RunStreamEvent(type="resume_started", run_id=run_id),
+            ),
+        )
+        try:
+            async for event in execution:
+                yield event
+        finally:
+            await execution.aclose()
+
+    async def _activate_approval_resume(
+        self,
+        lifecycle: RunLifecycle,
+        *,
+        run_id: str,
+        approval_id: str,
+        caller_user_id: str | None,
+        caller_session_id: str | None,
+    ) -> RunContext:
+        """Claim and activate one resume without an interruptible ownership gap.
+
+        The response may be cancelled before its first SSE frame. Shielding this
+        short transition ensures that cancellation observes either an unclaimed
+        approval or an active run that it can terminally cancel, never a claimed
+        approval stranded before graph-task ownership begins.
+        """
+
+        async def activate() -> RunContext:
+            approval = await self._approval_manager.claim(
+                run_id=run_id,
+                approval_id=approval_id,
+                caller_user_id=caller_user_id,
+                caller_auth_ref=caller_session_id,
+            )
+            ctx = RunContext(
+                run_id=run_id,
+                conversation_id=approval.auth_ref,
+                user_id=approval.authorized_user_id,
+                organization_id=approval.organization_id,
+                metadata={"approval_id": approval.approval_id},
+            )
+            await lifecycle.activate_resume(ctx)
+            return ctx
+
+        activation = asyncio.create_task(activate())
+        try:
+            return await asyncio.shield(activation)
+        except asyncio.CancelledError:
+            try:
+                ctx = await asyncio.shield(activation)
+            except Exception:
+                # The claim lost or activation failed, so there is no active
+                # execution owned by this request to terminally cancel.
+                pass
+            else:
+                await asyncio.shield(
+                    lifecycle.cancel(ctx, reason="approval resume request cancelled")
+                )
+            raise
+
+    async def cancel_pending_approval(
+        self,
+        run_id: str,
+        approval_id: str,
+        *,
+        caller_user_id: str | None = None,
+        caller_session_id: str | None = None,
+    ) -> None:
+        """Cancel a suspended HITL run if no approval decision has claimed it."""
+        _, lifecycle = self._require_built("cancelling a pending approval")
+        approval = await self._approval_manager.cancel_pending(
+            run_id=run_id,
+            approval_id=approval_id,
+            caller_user_id=caller_user_id,
+            caller_auth_ref=caller_session_id,
+        )
+        await lifecycle.cancel(
+            RunContext(
+                run_id=run_id,
+                conversation_id=approval.auth_ref,
+                user_id=approval.authorized_user_id,
+                organization_id=approval.organization_id,
+                metadata={"approval_id": approval.approval_id},
+            ),
+            reason="user cancelled pending approval",
+        )
 
     async def stream(
         self,
@@ -665,24 +791,56 @@ class LangGraphEngine(Engine):
         state = _initial_state(
             message, history=history, ctx=ctx, expose_run_context=context is not None
         )
+        execution = cast(
+            AsyncGenerator[RunStreamEvent, None],
+            self._stream_execution(app, lifecycle, ctx, state),
+        )
+        try:
+            async for event in execution:
+                yield event
+        finally:
+            await execution.aclose()
+
+    async def _stream_execution(
+        self,
+        app: RunGraph,
+        lifecycle: RunLifecycle,
+        ctx: RunContext,
+        graph_input: Any,
+        *,
+        after_invoke: Callable[[], Awaitable[None]] | None = None,
+        started_event: RunStreamEvent | None = None,
+    ) -> AsyncIterator[RunStreamEvent]:
+        """Own one active graph leg and cancel it when its consumer leaves."""
         channel = StreamChannel()
         tokens = TokenUsage()
         with self._run_scope(ctx, sinks=channel.sinks(token=tokens.add)):
             task = asyncio.create_task(
-                self._stream_graph(app, lifecycle, ctx, state, channel=channel, tokens=tokens)
+                self._stream_graph(
+                    app,
+                    lifecycle,
+                    ctx,
+                    graph_input,
+                    channel=channel,
+                    tokens=tokens,
+                    after_invoke=after_invoke,
+                )
             )
+            if started_event is not None:
+                channel.emit(started_event)
             try:
                 async for event in channel.events():
                     yield event
                 await task
             finally:
-                await self._stop_abandoned_stream(task, lifecycle, ctx)
+                await self._stop_abandoned_stream(task, lifecycle, ctx, tokens)
 
-    @staticmethod
     async def _stop_abandoned_stream(
+        self,
         task: asyncio.Task[None],
         lifecycle: RunLifecycle,
         ctx: RunContext,
+        tokens: TokenUsage,
     ) -> None:
         """Stop a graph producer when its stream is closed before completion."""
         if task.done():
@@ -690,17 +848,33 @@ class LangGraphEngine(Engine):
         task.cancel()
         with suppress(asyncio.CancelledError):
             await task
-        await asyncio.shield(lifecycle.cancel(ctx))
+        await asyncio.shield(self._cancel_abandoned_run(lifecycle, ctx, tokens))
+
+    async def _cancel_abandoned_run(
+        self,
+        lifecycle: RunLifecycle,
+        ctx: RunContext,
+        tokens: TokenUsage,
+    ) -> None:
+        """Persist reported partial usage, then make cancellation terminal."""
+        try:
+            if tokens.totals() != (None, None):
+                await self._record_token_usage(ctx, tokens)
+        except Exception:
+            logger.exception("failed to record token usage for cancelled run")
+        finally:
+            await lifecycle.cancel(ctx)
 
     async def _stream_graph(
         self,
         app: RunGraph,
         lifecycle: RunLifecycle,
         ctx: RunContext,
-        state: dict[str, Any],
+        graph_input: Any,
         *,
         channel: StreamChannel,
         tokens: TokenUsage,
+        after_invoke: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         """Execute the graph for a streamed run and report the outcome.
 
@@ -710,18 +884,21 @@ class LangGraphEngine(Engine):
         channel: an exception raised here would reach nobody.
         """
         try:
-            result = await self._invoke_graph(app, ctx, state)
+            result = await self._invoke_graph(app, ctx, graph_input)
             token_usage = await self._record_token_usage(ctx, tokens)
+            if after_invoke is not None:
+                await after_invoke()
             pending = await self._pending_result(ctx, result, token_usage=token_usage)
             if pending is not None:
                 channel.emit(_pending_approval_event(self._system_name, pending))
                 return
             run_result = await self._completed_result(ctx, result, token_usage=token_usage)
-            await lifecycle.succeed(
-                ctx,
-                run_result,
-                on_completed=lambda: channel.emit(_final_event(self._system_name, run_result)),
-            )
+            terminal = channel.publish_terminal(_final_event(self._system_name, run_result))
+            await terminal.accepted.wait()
+            try:
+                await lifecycle.succeed(ctx, run_result)
+            finally:
+                terminal.finalized.set()
         except Exception as exc:
             await lifecycle.fail(ctx, exc)
             channel.abort(exc)
