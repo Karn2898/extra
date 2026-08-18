@@ -20,6 +20,11 @@ class Role(StrEnum):
     AGENT = "agent"
 
 
+class MessageFeedback(StrEnum):
+    POSITIVE = "positive"
+    NEGATIVE = "negative"
+
+
 @dataclass(frozen=True)
 class Message:
     role: Role
@@ -74,6 +79,7 @@ class ConversationMessage:
     latency_ms: int | None = None
     status: str = "succeeded"
     error_type: str | None = None
+    feedback: MessageFeedback | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

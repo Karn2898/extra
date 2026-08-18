@@ -30,6 +30,7 @@ export interface Conversation {
   listThreads(): Promise<ThreadSummary[]>;
   switchTo(conversationId: string): void;
   startNew(): void;
+  setFeedback(conversationId: string, messageId: string, feedback: string): Promise<void>;
 }
 
 /** A stored conversation the server will not serve us: gone (404), or owned by
@@ -131,6 +132,13 @@ export function useConversation(
     [endpoint, userId],
   );
 
+  const setFeedback = useCallback(
+    async (conversationId: string, messageId: string, feedback: string) => {
+      await client.setFeedback(conversationId, messageId, feedback);
+    },
+    [client],
+  );
+
   return useMemo(
     () => ({
       peekId,
@@ -142,8 +150,9 @@ export function useConversation(
       listThreads,
       switchTo,
       startNew,
+      setFeedback,
     }),
-    [peekId, ensureId, send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew],
+    [peekId, ensureId, send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew, setFeedback],
   );
 }
 

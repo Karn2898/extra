@@ -77,6 +77,13 @@ export class AgentChatClient {
     return (await response.json()) as ChatMessage[];
   }
 
+  async setFeedback(conversationId: string, messageId: string, feedback: string): Promise<void> {
+    await this.request(`/conversations/${conversationId}/messages/${messageId}/feedback`, {
+      method: "PATCH",
+      body: JSON.stringify({ feedback }),
+    });
+  }
+
   async sendMessage(conversationId: string, message: string): Promise<SendMessageResponse> {
     const response = await this.request(`/conversations/${conversationId}/messages`, {
       method: "POST",

@@ -29,9 +29,15 @@ class ConversationSummary(BaseModel):
 
 
 class MessageOut(BaseModel):
+    message_id: str
     role: Role
     content: str
     created_at: datetime
+    feedback: str | None = None
+
+
+class FeedbackUpdateRequest(BaseModel):
+    feedback: str
 
 
 class SendMessageRequest(BaseModel):

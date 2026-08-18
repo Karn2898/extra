@@ -14,6 +14,7 @@ from agent_manager.domain import (
     ConversationSession,
     ConversationSnapshot,
     Message,
+    MessageFeedback,
     Repository,
     Role,
     User,
@@ -210,6 +211,17 @@ class MemoryRepository(Repository):
             del self._snapshots[session_id]
         return len(expired)
 
+    async def update_message_feedback(
+        self, message_id: str, feedback: MessageFeedback
+    ) -> ConversationMessage | None:
+        for session_id, messages in self._messages.items():
+            for index, message in enumerate(messages):
+                if message.message_id == message_id:
+                    updated = replace(message, feedback=feedback)
+                    self._messages[session_id][index] = updated
+                    return updated
+        return None
+
     def _build_snapshot(
         self, session_id: str, snapshot_ttl_seconds: int | None
     ) -> ConversationSnapshot:
@@ -227,6 +239,7 @@ class MemoryRepository(Repository):
                     "content": msg.content,
                     "content_type": msg.content_type,
                     "created_at": msg.created_at.isoformat(),
+                    "feedback": msg.feedback.value if msg.feedback else None,
                     "metadata": deepcopy(msg.metadata),
                 }
                 for msg in messages

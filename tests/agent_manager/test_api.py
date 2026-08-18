@@ -427,4 +427,81 @@ def test_tool_error_text_is_sanitized_in_stream_message() -> None:
     assert "localhost" not in response.text
 
 
+def test_set_message_feedback_persists_positive(client: TestClient) -> None:
+    cid = client.post("/conversations").json()["conversation_id"]
+    client.post(f"/conversations/{cid}/messages", json={"message": "hi"})
+    messages = client.get(f"/conversations/{cid}/messages").json()
+    message_id = messages[1]["message_id"]
+
+    response = client.patch(
+        f"/conversations/{cid}/messages/{message_id}/feedback",
+        json={"feedback": "positive"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"message_id": message_id, "feedback": "positive"}
+
+    updated = client.get(f"/conversations/{cid}/messages").json()
+    assert updated[1]["feedback"] == "positive"
+
+
+def test_set_message_feedback_persists_negative(client: TestClient) -> None:
+    cid = client.post("/conversations").json()["conversation_id"]
+    client.post(f"/conversations/{cid}/messages", json={"message": "bad"})
+    messages = client.get(f"/conversations/{cid}/messages").json()
+    message_id = messages[1]["message_id"]
+
+    response = client.patch(
+        f"/conversations/{cid}/messages/{message_id}/feedback",
+        json={"feedback": "negative"},
+    )
+    assert response.status_code == 200
+    assert response.json()["feedback"] == "negative"
+
+
+def test_set_message_feedback_unknown_message_returns_404(client: TestClient) -> None:
+    cid = client.post("/conversations").json()["conversation_id"]
+    response = client.patch(
+        f"/conversations/{cid}/messages/unknown-id/feedback",
+        json={"feedback": "positive"},
+    )
+    assert response.status_code == 404
+
+
+def test_set_message_feedback_requires_ownership(client: TestClient) -> None:
+    u1 = {"X-Agent-Chat-User": "u1"}
+    u2 = {"X-Agent-Chat-User": "u2"}
+    cid = client.post("/conversations", headers=u1).json()["conversation_id"]
+    client.post(f"/conversations/{cid}/messages", json={"message": "hi"}, headers=u1)
+    messages = client.get(f"/conversations/{cid}/messages", headers=u1).json()
+    message_id = messages[1]["message_id"]
+
+    response = client.patch(
+        f"/conversations/{cid}/messages/{message_id}/feedback",
+        json={"feedback": "positive"},
+        headers=u2,
+    )
+    assert response.status_code == 403
+
+
+def test_set_message_feedback_rejects_invalid_value(client: TestClient) -> None:
+    cid = client.post("/conversations").json()["conversation_id"]
+    client.post(f"/conversations/{cid}/messages", json={"message": "hi"})
+    messages = client.get(f"/conversations/{cid}/messages").json()
+    message_id = messages[1]["message_id"]
+
+    response = client.patch(
+        f"/conversations/{cid}/messages/{message_id}/feedback",
+        json={"feedback": "maybe"},
+    )
+    assert response.status_code == 422
+
+
+def test_list_messages_returns_message_ids_and_feedback(client: TestClient) -> None:
+    cid = client.post("/conversations").json()["conversation_id"]
+    client.post(f"/conversations/{cid}/messages", json={"message": "hi"})
+    messages = client.get(f"/conversations/{cid}/messages").json()
+    assert all("message_id" in m for m in messages)
+    assert all("feedback" in m for m in messages)
+    assert messages[1]["feedback"] is None
+
 

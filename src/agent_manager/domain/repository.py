@@ -12,6 +12,7 @@ from agent_manager.domain.models import (
     ConversationSession,
     ConversationSnapshot,
     Message,
+    MessageFeedback,
     Role,
     User,
 )
@@ -127,3 +128,8 @@ class Repository(ABC):
     async def list_messages(self, conversation_id: str, limit: int | None = None) -> list[Message]:
         """Messages oldest-first. With `limit`, the most recent `limit`, still
         oldest-first."""
+
+    @abstractmethod
+    async def update_message_feedback(
+        self, message_id: str, feedback: MessageFeedback
+    ) -> ConversationMessage | None: ...

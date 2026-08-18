@@ -5,6 +5,8 @@ import {
   CopyIcon,
   HistoryIcon,
   SquarePenIcon,
+  ThumbsDownIcon,
+  ThumbsUpIcon,
   XIcon,
 } from "lucide-react";
 import { type Ref, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -48,9 +50,10 @@ const COPIED_RESET_MS = 2000;
 const newId = randomId;
 
 const toEntry = (message: ChatMessage): MessageEntry => ({
-  id: newId(),
+  id: message.message_id || newId(),
   role: message.role === "user" ? "user" : "ai",
   text: message.content,
+  feedback: message.feedback ?? null,
 });
 
 export interface AgentChatAppProps {
@@ -179,6 +182,24 @@ export function AgentChatApp({
     [putEntries],
   );
 
+  const onFeedback = useCallback(
+    async (messageId: string, feedback: "positive" | "negative") => {
+      const cid = conversation.peekId();
+      if (!cid || !messageId) return;
+      try {
+        await conversation.setFeedback(cid, messageId, feedback);
+        putEntries(cid, (prev) =>
+          prev.map((entry) =>
+            entry.message_id === messageId ? { ...entry, feedback } : entry,
+          ),
+        );
+      } catch {
+        // silently ignore feedback submission errors
+      }
+    },
+    [conversation, putEntries],
+  );
+
 
   const sendWithoutStreaming = useCallback(
     async (cid: string, text: string, entryId: string) => {
@@ -305,7 +326,7 @@ export function AgentChatApp({
                 <Welcome title={config.greeting || DEFAULT_GREETING} />
               ) : null}
               {entries.map((entry) => (
-                <ChatMessage key={entry.id} entry={entry} />
+                <ChatMessage key={entry.id} entry={entry} onFeedback={onFeedback} />
               ))}
             </ConversationContent>
           </Conversation>
@@ -365,7 +386,7 @@ function Launcher({
   );
 }
 
-function ChatMessage({ entry }: { entry: MessageEntry }) {
+function ChatMessage({ entry, onFeedback }: { entry: MessageEntry; onFeedback?: (messageId: string, feedback: "positive" | "negative") => void }) {
   const from = entry.role === "user" ? "user" : "assistant";
 
   if (entry.error) {
@@ -398,7 +419,7 @@ function ChatMessage({ entry }: { entry: MessageEntry }) {
           <MessageContent>
             <MessageResponse>{entry.text}</MessageResponse>
           </MessageContent>
-          {entry.text.trim() ? <MessageActions text={entry.text} /> : null}
+          {entry.text.trim() ? <MessageActions text={entry.text} messageId={entry.message_id} feedback={entry.feedback} onFeedback={onFeedback} /> : null}
         </>
       )}
     </Message>
@@ -415,10 +436,32 @@ function ThinkingDots() {
   );
 }
 
-function MessageActions({ text }: { text: string }) {
+function MessageActions({ text, messageId, feedback, onFeedback }: { text: string; messageId?: string; feedback?: "positive" | "negative" | null; onFeedback?: (messageId: string, feedback: "positive" | "negative") => void }) {
+  const current = feedback === "positive" ? "positive" : feedback === "negative" ? "negative" : null;
+
   return (
     <div className="msg-actions">
       <CopyButton text={text} />
+      {messageId && onFeedback ? (
+        <>
+          <button
+            aria-label="Good response"
+            className={`msg-action${current === "positive" ? " active" : ""}`}
+            onClick={() => onFeedback(messageId, "positive")}
+            type="button"
+          >
+            <ThumbsUpIcon aria-hidden />
+          </button>
+          <button
+            aria-label="Bad response"
+            className={`msg-action${current === "negative" ? " active" : ""}`}
+            onClick={() => onFeedback(messageId, "negative")}
+            type="button"
+          >
+            <ThumbsDownIcon aria-hidden />
+          </button>
+        </>
+      ) : null}
     </div>
   );
 }

@@ -188,3 +188,64 @@ async def test_concurrent_sessions_do_not_leak_history() -> None:
         "second private context",
         "answer:second private context",
     )
+
+
+async def test_set_message_feedback_persists_positive() -> None:
+    service, _ = _service()
+    cid = await service.create(user_id="u1", session_id="sess-1")
+    await service.send(cid, "hello", caller_id="u1")
+
+    messages = await service.history(cid, caller_id="u1")
+    message_id = messages[1].message_id
+
+    feedback = await service.set_message_feedback(cid, message_id, "positive", caller_id="u1")
+    assert feedback is not None
+    assert feedback.value == "positive"
+
+    updated = await service.history(cid, caller_id="u1")
+    assert updated[1].feedback == feedback
+
+
+async def test_set_message_feedback_persists_negative() -> None:
+    service, _ = _service()
+    cid = await service.create(user_id="u1", session_id="sess-1")
+    await service.send(cid, "bad answer", caller_id="u1")
+
+    messages = await service.history(cid, caller_id="u1")
+    message_id = messages[1].message_id
+
+    feedback = await service.set_message_feedback(cid, message_id, "negative", caller_id="u1")
+    assert feedback is not None
+    assert feedback.value == "negative"
+
+
+async def test_set_message_feedback_returns_none_for_unknown_message() -> None:
+    service, _ = _service()
+    cid = await service.create(user_id="u1", session_id="sess-1")
+
+    feedback = await service.set_message_feedback(cid, "unknown", "positive", caller_id="u1")
+    assert feedback is None
+
+
+async def test_set_message_feedback_rejects_invalid_value() -> None:
+    service, _ = _service()
+    cid = await service.create(user_id="u1", session_id="sess-1")
+    await service.send(cid, "hi", caller_id="u1")
+
+    messages = await service.history(cid, caller_id="u1")
+    message_id = messages[1].message_id
+
+    with pytest.raises(ValueError, match="invalid feedback value"):
+        await service.set_message_feedback(cid, message_id, "maybe", caller_id="u1")
+
+
+async def test_set_message_feedback_requires_ownership() -> None:
+    service, _ = _service()
+    cid = await service.create(user_id="u1", session_id="sess-1")
+    await service.send(cid, "hi", caller_id="u1")
+
+    messages = await service.history(cid, caller_id="u1")
+    message_id = messages[1].message_id
+
+    with pytest.raises(ConversationAccessDenied):
+        await service.set_message_feedback(cid, message_id, "positive", caller_id="u2")

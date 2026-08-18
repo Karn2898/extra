@@ -20,7 +20,7 @@ from agent_manager.application.context import build_history
 from agent_manager.domain import (
     ConversationMessage,
     ConversationSession,
-    Message,
+    MessageFeedback,
     Repository,
     Role,
     TokenBudgetUsage,
@@ -98,9 +98,27 @@ class ConversationService:
             raise ConversationAlreadyExists(session.session_id)
         return session.session_id
 
-    async def history(self, conversation_id: str, *, caller_id: str | None = None) -> list[Message]:
+    async def history(
+        self, conversation_id: str, *, caller_id: str | None = None
+    ) -> list[ConversationMessage]:
         await self._authorize(conversation_id, caller_id)
-        return await self._repository.list_messages(conversation_id)
+        return await self._repository.list_conversation_messages(conversation_id)
+
+    async def set_message_feedback(
+        self,
+        conversation_id: str,
+        message_id: str,
+        feedback: str,
+        *,
+        caller_id: str | None = None,
+    ) -> MessageFeedback | None:
+        await self._authorize(conversation_id, caller_id)
+        try:
+            parsed = MessageFeedback(feedback)
+        except ValueError:
+            raise ValueError(f"invalid feedback value: {feedback!r}") from None
+        updated = await self._repository.update_message_feedback(message_id, parsed)
+        return updated.feedback if updated else None
 
     async def usage(
         self, conversation_id: str, *, caller_id: str | None = None

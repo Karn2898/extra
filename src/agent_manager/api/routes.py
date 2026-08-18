@@ -17,6 +17,7 @@ from agent_manager.api.schemas import (
     ConversationSummary,
     CreateConversationRequest,
     CreateConversationResponse,
+    FeedbackUpdateRequest,
     MessageOut,
     SendMessageRequest,
     SendMessageResponse,
@@ -93,7 +94,36 @@ async def list_messages(
 ) -> list[MessageOut]:
     with _as_http_error():
         msgs = await service.history(conversation_id, caller_id=caller_id)
-    return [MessageOut(role=m.role, content=m.content, created_at=m.created_at) for m in msgs]
+    return [
+        MessageOut(
+            message_id=m.message_id,
+            role=m.role,
+            content=m.content,
+            created_at=m.created_at,
+            feedback=m.feedback.value if m.feedback else None,
+        )
+        for m in msgs
+    ]
+
+
+@router.patch("/conversations/{conversation_id}/messages/{message_id}/feedback")
+async def set_message_feedback(
+    conversation_id: str,
+    message_id: str,
+    body: FeedbackUpdateRequest,
+    service: Service,
+    caller_id: CallerId,
+) -> dict[str, str]:
+    try:
+        with _as_http_error():
+            feedback = await service.set_message_feedback(
+                conversation_id, message_id, body.feedback, caller_id=caller_id
+            )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if feedback is None:
+        raise HTTPException(status_code=404, detail="message not found")
+    return {"message_id": message_id, "feedback": feedback.value}
 
 
 @router.get("/conversations/{conversation_id}/usage", response_model=TokenBudgetResponse)

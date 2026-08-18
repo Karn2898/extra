@@ -31,9 +31,11 @@ export interface ThreadSummary {
 }
 
 export interface ChatMessage {
+  message_id?: string;
   role: ChatRole;
   content: string;
   created_at?: string;
+  feedback?: "positive" | "negative" | null;
 }
 
 export type BudgetSeverity = "normal" | "warning" | "critical";
@@ -48,12 +50,14 @@ export interface TokenBudget {
 
 export interface MessageEntry {
   id: string;
+  message_id?: string;
   role: "user" | "ai";
   text: string;
   typing?: boolean;
   error?: boolean;
   route?: string[];
   tools?: ToolRecord[];
+  feedback?: "positive" | "negative" | null;
 }
 
 export interface ToolRecord {

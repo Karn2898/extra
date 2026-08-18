@@ -22,6 +22,7 @@ from agent_manager.domain import (
     ConversationSession,
     ConversationSnapshot,
     Message,
+    MessageFeedback,
     Repository,
     Role,
     User,
@@ -253,6 +254,18 @@ class SqlRepository(Repository):
             result = await session.exec(stmt)
         return int(result.rowcount or 0)
 
+    async def update_message_feedback(
+        self, message_id: str, feedback: MessageFeedback
+    ) -> ConversationMessage | None:
+        async with self._sessions() as session, session.begin():
+            row = await session.get(ConversationMessageRow, message_id)
+            if row is None:
+                return None
+            row.feedback = feedback.value
+            session.add(row)
+            await session.flush()
+            return _message(row)
+
     async def _rebuild_snapshot_in_session(
         self,
         session: AsyncSession,
@@ -355,6 +368,7 @@ def _message_row(message: ConversationMessage) -> ConversationMessageRow:
         latency_ms=message.latency_ms,
         status=message.status,
         error_type=message.error_type,
+        feedback=message.feedback.value if message.feedback else None,
         metadata_json=dict(message.metadata),
         created_at=message.created_at,
     )
@@ -381,6 +395,7 @@ def _message(row: ConversationMessageRow) -> ConversationMessage:
         latency_ms=row.latency_ms,
         status=row.status,
         error_type=row.error_type,
+        feedback=MessageFeedback(row.feedback) if row.feedback else None,
         metadata=dict(row.metadata_json or {}),
         created_at=_utc(row.created_at) or row.created_at,
     )
@@ -398,6 +413,7 @@ def _message_json(row: ConversationMessageRow) -> dict[str, Any]:
         "tool_name": row.tool_name,
         "provider": row.provider,
         "status": row.status,
+        "feedback": row.feedback,
         "created_at": (_utc(row.created_at) or row.created_at).isoformat(),
         "metadata": dict(row.metadata_json or {}),
     }
