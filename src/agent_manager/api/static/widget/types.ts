@@ -10,6 +10,7 @@ export interface AgentChatConfig {
   position: AgentChatPosition;
   avatar: string;
   mode: AgentChatMode;
+  user: string;
 }
 
 export interface AgentChatConfigInput {
@@ -20,12 +21,43 @@ export interface AgentChatConfigInput {
   position?: string;
   avatar?: string;
   mode?: string;
+  user?: string;
+}
+
+export interface ThreadSummary {
+  conversation_id: string;
+  title: string | null;
+  last_message_at: string | null;
 }
 
 export interface ChatMessage {
+  message_id?: string;
   role: ChatRole;
   content: string;
   created_at?: string;
+  feedback?: "positive" | "negative" | null;
+}
+
+export type BudgetSeverity = "normal" | "warning" | "critical";
+
+/** Cumulative tokens spent by a conversation against its configured budget. */
+export interface TokenBudget {
+  used_tokens: number;
+  max_tokens: number | null;
+  percent: number;
+  severity: BudgetSeverity;
+}
+
+export interface MessageEntry {
+  id: string;
+  message_id?: string;
+  role: "user" | "ai";
+  text: string;
+  typing?: boolean;
+  error?: boolean;
+  route?: string[];
+  tools?: ToolRecord[];
+  feedback?: "positive" | "negative" | null;
 }
 
 export interface ToolRecord {

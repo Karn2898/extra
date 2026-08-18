@@ -14,6 +14,9 @@ from agent_engine.core.spec import (
     HooksConfig,
     HookSpec,
     ModelConfig,
+    OrchestratorPromptSet,
+    OrchestratorSpec,
+    PluginsConfig,
     ResolverSpec,
     SystemMeta,
     SystemSpec,
@@ -73,10 +76,28 @@ def test_existing_manifest_is_not_overwritten(tmp_path: Path) -> None:
     assert path.read_text() == before  # untouched
 
 
-def test_derives_package_from_path(tmp_path: Path) -> None:
-    root = tmp_path / "examples" / "plugins"
+def test_derives_package_from_import_root(tmp_path: Path) -> None:
+    """The package is the plugin dir relative to the import root on sys.path."""
+    example = tmp_path / "examples" / "starter"
+    root = example / "plugins"
+    path, _ = ensure_plugins_manifest_exists(root, import_roots=(example,))
+    assert manifest_package(path, (example,)) == "plugins"
+
+
+def test_derives_nested_package_when_import_root_is_higher(tmp_path: Path) -> None:
+    """A root above the example makes the example itself part of the package."""
+    examples = tmp_path / "examples"
+    root = examples / "starter" / "plugins"
+    path, _ = ensure_plugins_manifest_exists(root, import_roots=(examples,))
+    assert manifest_package(path, (examples,)) == "starter.plugins"
+
+
+def test_derives_package_from_dir_name_without_import_roots(tmp_path: Path) -> None:
+    """With no roots to measure against, use the directory's own name — never
+    the parent's, which would produce a prefix that does not import."""
+    root = tmp_path / "starter" / "plugins"
     path, _ = ensure_plugins_manifest_exists(root)
-    assert manifest_package(path) == "examples.plugins"
+    assert manifest_package(path) == "plugins"
 
 
 # -- update_manifest ---------------------------------------------------------
@@ -164,7 +185,7 @@ def test_hook_plugin_refs_loads_plugins_table(tmp_path: Path) -> None:
 # -- Generator integration ---------------------------------------------------
 
 
-def _spec_with_plugins() -> SystemSpec:
+def _spec_with_plugins(import_roots: tuple[str, ...] = ()) -> SystemSpec:
     agent = AgentSpec(
         id="flights",
         name="flights",
@@ -184,6 +205,7 @@ def _spec_with_plugins() -> SystemSpec:
                 HookSpec("before_mcp_request", plugin="mcp_auth", method="before_mcp_request"),
             )
         ),
+        plugins=PluginsConfig(import_roots=import_roots),
     )
 
 
@@ -192,14 +214,15 @@ def test_generate_creates_manifest_with_refs(tmp_path: Path) -> None:
 
     manifest = tmp_path / "plugins" / MANIFEST_NAME
     assert manifest.is_file()
-    assert MANIFEST_NAME in result.created
+    assert f"plugins/{MANIFEST_NAME}" in result.created
 
     data = _read(manifest)
-    assert data["tools"]["book_flight"].endswith(".plugins.tools.book_flight:book_flight")
-    assert data["resolvers"]["shared"].endswith(".plugins.resolvers.shared:SharedResolver")
-    assert data["resolvers"]["flights"].endswith(".plugins.resolvers.flights:Resolver")
+    # Refs are rooted at `plugins`, matching what the runtime puts on sys.path.
+    assert data["tools"]["book_flight"] == "plugins.tools.book_flight:book_flight"
+    assert data["resolvers"]["shared"] == "plugins.resolvers.shared:SharedResolver"
+    assert data["resolvers"]["flights"] == "plugins.resolvers.flights:Resolver"
     assert data["hooks"]["after_tool_call"] == ["pkg.hooks.audit:record"]
-    assert data["hooks"]["plugins"]["mcp_auth"].endswith(".plugins.hooks.mcp_auth:McpAuthHook")
+    assert data["hooks"]["plugins"]["mcp_auth"] == "plugins.hooks.mcp_auth:McpAuthHook"
     # Regression: resolver/tool stubs are still generated.
     assert (tmp_path / "plugins" / "tools" / "book_flight.py").is_file()
     assert (tmp_path / "plugins" / "resolvers" / "flights.py").is_file()
@@ -216,4 +239,169 @@ def test_generate_is_idempotent_and_preserves_manifest(tmp_path: Path) -> None:
     result = Generator().generate(_spec_with_plugins(), tmp_path)
 
     assert manifest.read_text() == snapshot  # no churn
-    assert MANIFEST_NAME in result.skipped  # existed, not recreated
+    assert f"plugins/{MANIFEST_NAME}" in result.skipped  # existed, not recreated
+
+
+def test_generate_reports_declared_tools_not_referenced_by_an_agent(tmp_path: Path) -> None:
+    used = ToolSpec("book_flight", "book a flight")
+    unused = ToolSpec("cancel_flight", "cancel a flight")
+    agent = AgentSpec(
+        id="flights",
+        name="flights",
+        description="books flights",
+        model=_MODEL,
+        tools=(used,),
+    )
+    spec = SystemSpec(
+        meta=SystemMeta(name="gen-test"),
+        defaults=None,
+        graph=GraphNode(node=agent),
+        tools=(used, unused),
+    )
+
+    result = Generator().generate(spec, tmp_path)
+
+    assert result.ignored == ["cancel_flight"]
+    assert (tmp_path / "plugins" / "tools" / "book_flight.py").is_file()
+    assert not (tmp_path / "plugins" / "tools" / "cancel_flight.py").exists()
+
+
+def test_generator_creates_missing_prompt_stubs(tmp_path: Path) -> None:
+    # Setup spec with an orchestrator routing to an agent, both having missing prompts
+    agent = AgentSpec(
+        id="flights",
+        name="flights",
+        description="books flights",
+        model=_MODEL,
+        prompts=BasePromptSet(system="prompts/flights/system.md", user="prompts/flights/user.md"),
+    )
+    orch = OrchestratorSpec(
+        id="router",
+        name="router",
+        description="routes to flights",
+        model=_MODEL,
+        prompts=OrchestratorPromptSet(orchestrator="prompts/router.md"),
+    )
+    spec = SystemSpec(
+        meta=SystemMeta(name="gen-test"),
+        defaults=None,
+        graph=GraphNode(node=orch, children=(GraphNode(node=agent),)),
+    )
+
+    result = Generator().generate(spec, tmp_path)
+
+    # Verify stubs created
+    sys_prompt = tmp_path / "prompts" / "flights" / "system.md"
+    user_prompt = tmp_path / "prompts" / "flights" / "user.md"
+    orch_prompt = tmp_path / "prompts" / "router.md"
+
+    assert sys_prompt.is_file()
+    assert user_prompt.is_file()
+    assert orch_prompt.is_file()
+
+    assert sys_prompt.read_text() == "<!-- STUB: fill in this prompt -->\n"
+    assert user_prompt.read_text() == "<!-- STUB: fill in this prompt -->\n"
+    assert orch_prompt.read_text() == "<!-- STUB: fill in this prompt -->\n"
+
+    # Verify result records
+    assert "prompts/flights/system.md" in result.created
+    assert "prompts/flights/user.md" in result.created
+    assert "prompts/router.md" in result.created
+
+
+def test_generator_does_not_overwrite_existing_prompt(tmp_path: Path) -> None:
+    """Never-overwrite rule: an existing prompt file must be left untouched."""
+    real_content = "You are a real, implemented flight-booking assistant.\n"
+    prompt_path = tmp_path / "prompts" / "flights" / "system.md"
+    prompt_path.parent.mkdir(parents=True, exist_ok=True)
+    prompt_path.write_text(real_content, encoding="utf-8")
+
+    agent = AgentSpec(
+        id="flights",
+        name="flights",
+        description="books flights",
+        model=_MODEL,
+        prompts=BasePromptSet(system="prompts/flights/system.md"),
+    )
+    spec = SystemSpec(
+        meta=SystemMeta(name="gen-test"),
+        defaults=None,
+        graph=GraphNode(node=agent),
+    )
+
+    result = Generator().generate(spec, tmp_path)
+
+    assert prompt_path.read_text() == real_content  # untouched
+    assert "prompts/flights/system.md" in result.skipped
+    assert "prompts/flights/system.md" not in result.created
+
+
+def test_generator_deduplicates_shared_prompt_path(tmp_path: Path) -> None:
+    """A prompt path referenced by two agents must be scaffolded only once
+    and appear in result.created exactly once — not in both created and skipped."""
+    shared_prompt = BasePromptSet(system="prompts/shared/system.md")
+    agent_a = AgentSpec(id="a", name="a", description="a", model=_MODEL, prompts=shared_prompt)
+    agent_b = AgentSpec(id="b", name="b", description="b", model=_MODEL, prompts=shared_prompt)
+    orch = OrchestratorSpec(
+        id="root", name="root", description="root", model=_MODEL, prompts=OrchestratorPromptSet()
+    )
+    spec = SystemSpec(
+        meta=SystemMeta(name="gen-test"),
+        defaults=None,
+        graph=GraphNode(node=orch, children=(GraphNode(node=agent_a), GraphNode(node=agent_b))),
+    )
+
+    result = Generator().generate(spec, tmp_path)
+
+    # File must exist and contain the sentinel
+    p = tmp_path / "prompts" / "shared" / "system.md"
+    assert p.is_file()
+    assert p.read_text() == "<!-- STUB: fill in this prompt -->\n"
+
+    # Must appear in created exactly once, never in skipped
+    assert result.created.count("prompts/shared/system.md") == 1
+    assert "prompts/shared/system.md" not in result.skipped
+
+
+# -- regression: generated refs must actually import --------------------------
+
+
+def _hook_ref(base_dir: Path) -> str:
+    data = tomllib.loads((base_dir / "plugins" / MANIFEST_NAME).read_text(encoding="utf-8"))
+    return str(data["hooks"]["plugins"]["mcp_auth"])
+
+
+def test_package_prefix_ignores_the_example_directory_name(tmp_path: Path) -> None:
+    """A plugin dir whose parent is a valid identifier must not gain a prefix.
+
+    The package was previously derived from the parent directory name, so an
+    example in ``starter/`` produced ``starter.plugins.hooks...`` — which does
+    not import, because ``import_roots: ["."]`` puts ``starter/`` itself on
+    sys.path. An example in a hyphenated directory accidentally avoided this.
+    """
+    base_dir = tmp_path / "starter"  # a valid Python identifier
+    base_dir.mkdir()
+
+    Generator().generate(_spec_with_plugins(import_roots=(".",)), base_dir)
+
+    assert _hook_ref(base_dir) == "plugins.hooks.mcp_auth:McpAuthHook"
+
+
+def test_generated_hook_ref_is_importable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """End-to-end guard: import the ref exactly as the runtime would."""
+    import importlib
+    import sys
+
+    base_dir = tmp_path / "starter"
+    base_dir.mkdir()
+    Generator().generate(_spec_with_plugins(import_roots=(".",)), base_dir)
+
+    # The engine puts each import root on sys.path before importing plugins.
+    monkeypatch.syspath_prepend(str(base_dir))
+    for name in [n for n in sys.modules if n == "plugins" or n.startswith("plugins.")]:
+        monkeypatch.delitem(sys.modules, name, raising=False)
+
+    module_path, _, class_name = _hook_ref(base_dir).partition(":")
+    module = importlib.import_module(module_path)
+
+    assert hasattr(module, class_name)

@@ -1,5 +1,101 @@
 # Changelog
 
+## [0.4.1](https://github.com/extra-org/extra/compare/agent-engine-v0.4.0...agent-engine-v0.4.1) (2026-08-01)
+
+
+### Bug Fixes
+
+* **lint:** import Any and format import blocks ([a897dc1](https://github.com/extra-org/extra/commit/a897dc15f6151b2963ab87b4e85fa2c01ef6e3d4))
+* **widget:** show context-limit message on HTTP 429 token budget exceeded and disable composer ([e49e814](https://github.com/extra-org/extra/commit/e49e8144ca7990a4650b37d3c4157c7aa8694380))
+
+## [0.4.0](https://github.com/extra-org/extra/compare/agent-engine-v0.3.1...agent-engine-v0.4.0) (2026-07-31)
+
+
+### Features
+
+* add agent auto mode config ([a1d1016](https://github.com/extra-org/extra/commit/a1d10165769e86b93d256d9c29d7ba90d65d5b20))
+* add approval lifecycle primitives ([5a9422f](https://github.com/extra-org/extra/commit/5a9422ffa95576363b6a770da7d8ce991e05265f))
+* add data class for hidm ([6b0d71a](https://github.com/extra-org/extra/commit/6b0d71ad462132f9517fa3443115dc09a1e5bf4b))
+* add examples/starter — a small, complete reference system ([a27d072](https://github.com/extra-org/extra/commit/a27d072fc9fb4cc7d0a986e0ba8dcd8d06446646))
+* add scoped session approval repository ([ad5d487](https://github.com/extra-org/extra/commit/ad5d48725df618da17b74199efe82fe38d2907be))
+* **approvals:** propagate identity and grant metadata through HITL ([3f46464](https://github.com/extra-org/extra/commit/3f464641a9b2e74ab0a6da02467d936f83e831da))
+* build first layer engine for hidm ([3fa3b49](https://github.com/extra-org/extra/commit/3fa3b49edcde02e2c3b410306ff2b35f5620cdf2))
+* **cli:** handle tool approvals in local chat ([03e26de](https://github.com/extra-org/extra/commit/03e26deef2d33d3de60fac300fee1bc7b141f362))
+* **cli:** share session approvals across application lifetime ([621d8c4](https://github.com/extra-org/extra/commit/621d8c415c72afee2cd6aa33950c8a0c4fe1d4c9))
+* **composition:** manage session approval repository lifetime ([db5b0e3](https://github.com/extra-org/extra/commit/db5b0e367019a789a332e919b82a14f4c6034ec7))
+* coordinate function that decide when to invoke tool or wait for approve ([be30aee](https://github.com/extra-org/extra/commit/be30aee9ea532bde9661e63f8335f1e1e2a50fcc))
+* enable auto mode in enterprise knowledge example ([62c1b87](https://github.com/extra-org/extra/commit/62c1b8752767647acca0e3d85bcf5d33c4876407))
+* **examples:** add deterministic approval demo ([a69ac63](https://github.com/extra-org/extra/commit/a69ac632c584a8dad2838a307f1d6aa0a281b8f5))
+* **examples:** add real LLM local MCP approval flow ([854cae2](https://github.com/extra-org/extra/commit/854cae2099116d423af713f4c30c7c625168bc71))
+* **examples:** demonstrate MCP session approvals ([4597748](https://github.com/extra-org/extra/commit/4597748406fb904bfe3428034cda81f8b077e267))
+* execute tool after approve ([c690438](https://github.com/extra-org/extra/commit/c690438f8418a5ea113b05f1f0c472cbf3023c63))
+* expose approval resume API ([e633f98](https://github.com/extra-org/extra/commit/e633f983e70cc1ad25707bee845750de57472eac))
+* fail startup validation on declared-but-unimplemented plugin stubs ([0b6ee39](https://github.com/extra-org/extra/commit/0b6ee39e1c1438e66df4bfcb342ab1b79a65639a))
+* one-command local dev stack for the flagship example ([b88ed5f](https://github.com/extra-org/extra/commit/b88ed5f171eea7647df54110056df61be4af576a))
+* scaffold missing prompt files during generate and validate them at startup ([#18](https://github.com/extra-org/extra/issues/18)) ([cdefacb](https://github.com/extra-org/extra/commit/cdefacbd3dc9122e9dd7682775f9a9a56e098db9))
+* startup validation fails on declared-but-unimplemented plugin stubs ([89355a1](https://github.com/extra-org/extra/commit/89355a1e24f507ee3214b23137f12e69c9761c32))
+* support fallback models and automatic retries on LLM failure ([#25](https://github.com/extra-org/extra/issues/25)) ([cfce637](https://github.com/extra-org/extra/commit/cfce6376f53ec08491e8c9e7e9de314f64efc302))
+* support fallback models and automatic retries on LLM failure ([#25](https://github.com/extra-org/extra/issues/25)) ([b6b5018](https://github.com/extra-org/extra/commit/b6b501830f8603661c7d7ea9218dbd9ca33d73ab))
+* **widget:** context-usage meter backed by the agent manager ([160813d](https://github.com/extra-org/extra/commit/160813d26525582e8728821c2b87748b7554f95a))
+* **widget:** context-usage meter backed by the agent manager ([2239cd5](https://github.com/extra-org/extra/commit/2239cd50108cf01ec895d2fe7264260516d86e40))
+* **widget:** conversation thread list — list, new, switch, auto-title ([40175e1](https://github.com/extra-org/extra/commit/40175e118b38057b0b261433f7417fb71e4ba60e))
+* **widget:** conversation thread list — list, new, switch, auto-title ([6a3d111](https://github.com/extra-org/extra/commit/6a3d111373bc66730672a38433d9cd776cf5e795))
+* **widget:** fluent assistant-ui-style UI and internal refactor ([ee6ec09](https://github.com/extra-org/extra/commit/ee6ec091fb9d914514ddafaccd73eb45dcd9e3b8))
+* **widget:** fluent assistant-ui-style UI and internal refactor ([5dde997](https://github.com/extra-org/extra/commit/5dde99746654cf661920b2aacb225010f6b884d9))
+* wire approvals into langgraph runtime ([2b325ed](https://github.com/extra-org/extra/commit/2b325ede090da696a15ff86503524f35e079d4df))
+
+
+### Bug Fixes
+
+* **approvals:** harden interrupted tool resumption ([4da978b](https://github.com/extra-org/extra/commit/4da978bb529fb7f95dcd0709296da8c6398b36ab))
+* bundle all built-in providers and optional integrations into base deps ([d2284bb](https://github.com/extra-org/extra/commit/d2284bb5629434ecd4ca8072abc46e930011e352))
+* bundle all built-in providers and optional integrations into base deps ([c862e54](https://github.com/extra-org/extra/commit/c862e54f99f6d9b7c7daaff4d0faa8be01dc7044))
+* change the pending object property to description ([9186999](https://github.com/extra-org/extra/commit/91869990102384f490b23ab36ae7831e94585d85))
+* **deploy:** publish multi-arch container image and optimize Docker layer caching ([d1be5de](https://github.com/extra-org/extra/commit/d1be5dedeb5fd2b424b991c3797cac0a47a3ea49))
+* **deploy:** revert Dockerfile layer caching optimization to fix build backend lookup ([73fb756](https://github.com/extra-org/extra/commit/73fb7566c9b519d06f3783b15634a447bd2e9372))
+* **generate:** derive the plugin package from import_roots, not the folder name ([56f24f3](https://github.com/extra-org/extra/commit/56f24f3131ea9026bfd0d3519863611725a0ca12))
+* **generate:** derive the plugin package from import_roots, not the folder name ([50e1db9](https://github.com/extra-org/extra/commit/50e1db9a78b69d8352b593139c46b70bacfe35fb))
+* GHSA-f4xh-w4cj-qxq8 security vulnerability ([3529eaf](https://github.com/extra-org/extra/commit/3529eaf9cded81fb23d12a2aa657f59e3dae6b33))
+* **hooks:** log only meaningful hook actions ([25b25f2](https://github.com/extra-org/extra/commit/25b25f2026c6c598451a1263cb7a8e0f2858db35))
+* make hidm docs simple ([2fda83d](https://github.com/extra-org/extra/commit/2fda83d586a9f156eba2fc57de33948258818318))
+* **orchestrator:** load both system and orchestrator prompt files ([65b2812](https://github.com/extra-org/extra/commit/65b281234e8d6e11e35cc4631b7c9fd4a1355c4f))
+* **orchestrator:** load both system and orchestrator prompt files ([677cca2](https://github.com/extra-org/extra/commit/677cca231f493ce320887c5779b426c33b8d0623)), closes [#38](https://github.com/extra-org/extra/issues/38)
+* **orchestrator:** load both system and orchestrator prompt files ([8b1eec5](https://github.com/extra-org/extra/commit/8b1eec54a19b2150c442050f05c09f5e42b7626d)), closes [#38](https://github.com/extra-org/extra/issues/38)
+* **persistence:** make create_session insert atomically ([506d21d](https://github.com/extra-org/extra/commit/506d21dfd685a9d3037d39914b232573ab49d858))
+* **persistence:** write nothing when the conversation id is taken ([144cb4c](https://github.com/extra-org/extra/commit/144cb4c2b8bf5c35ccadf3ce9b034518cb76ec5a))
+* publish multi-arch container image (linux/amd64 + linux/arm64) — closes [#37](https://github.com/extra-org/extra/issues/37) ([cbd37c0](https://github.com/extra-org/extra/commit/cbd37c039aa1f58b6af0cf6f503839dd33d4b7a3))
+* resolve pre-existing lint and mypy errors so CI lands green ([7976bdc](https://github.com/extra-org/extra/commit/7976bdc3cb8b81a0070b2131a0ce6347e8a976e4))
+* **runtime:** pass structured conversation history ([19f8281](https://github.com/extra-org/extra/commit/19f8281e36ebba7dfaef70adf8243c4de200d466))
+* support backward compatible for auto mode ([cb4b695](https://github.com/extra-org/extra/commit/cb4b69548b548af2455b2b8874c9666f773f2eb6))
+* **test:** repair the header name in the conversation listing test ([2f44394](https://github.com/extra-org/extra/commit/2f44394382d087e8510ddf9cbd6a545702797e8d))
+* upgrade langsmith to &gt;=0.8.18 to address GHSA-f4xh-w4cj-qxq8 ([9ba25f8](https://github.com/extra-org/extra/commit/9ba25f89f13507d7d49b0982a884ed9243c81163))
+* upgrade langsmith to 0.8.18 (GHSA-f4xh-w4cj-qxq8) ([3399cfd](https://github.com/extra-org/extra/commit/3399cfd1c063ca652e0330976d7bcd312b58e41f))
+* use typing_extensions.TypedDict in local MCP tools for Python 3.11 ([98cd6c1](https://github.com/extra-org/extra/commit/98cd6c12caef2289d8a1c3f4b7d302f22171e3aa))
+* **widget:** authorize conversations against the caller, not the id ([3aa5b40](https://github.com/extra-org/extra/commit/3aa5b401b746ec9cf4ae638066935596dbed0d2f))
+* **widget:** close the remaining ownership-write and identity edges ([ea80caf](https://github.com/extra-org/extra/commit/ea80cafe2f82497ca2439914d8c24820d0bec00f))
+* **widget:** derive turn identity from the session, scope storage per user ([f074134](https://github.com/extra-org/extra/commit/f074134a5e0acb27f9962b07ce9227d01b3a2c99))
+* **widget:** fix the owner of a conversation at creation ([eb998d2](https://github.com/extra-org/extra/commit/eb998d2848f2684294897e4e902fbaeea48e77fb))
+* **widget:** name the meter for what it measures — a token budget ([e4705b0](https://github.com/extra-org/extra/commit/e4705b0c286e7114f5b2dae4db5dd241357767a2))
+
+
+### Reverts
+
+* leave the enterprise example exactly as it was ([be900bf](https://github.com/extra-org/extra/commit/be900bfd2b44e86219ec90d11e8d881731cac0da))
+
+
+### Documentation
+
+* add human-in-the-loop approval guide ([c1e78d1](https://github.com/extra-org/extra/commit/c1e78d175a648492951724acc7d729669456412e))
+* add human-in-the-loop approval guide ([d249b6f](https://github.com/extra-org/extra/commit/d249b6fd11403a2e3880c4d9db02e3b015eeb056))
+* add human-in-the-loop design ([d9d321b](https://github.com/extra-org/extra/commit/d9d321bee578e1e614d2a774c13d2ff695d1fee3))
+* document agent-level `auto` field for HITL approval bypass ([0de6731](https://github.com/extra-org/extra/commit/0de673155bafbcb5c685ac4e29d6b99f5c534812))
+* document agent-level auto field for HITL ([e43851b](https://github.com/extra-org/extra/commit/e43851bedec370b912d1e61cfdf7181083cfc35f))
+* **hitl:** document session approval scope and lifecycle ([a7dfedd](https://github.com/extra-org/extra/commit/a7dfedd39e4397c6768d4760e00c491df2accc64))
+* restore README docs paths ([a083a24](https://github.com/extra-org/extra/commit/a083a24ee80437c1e7a422fd54cc408e2950e0db))
+* **runtime:** document conversational MCP validation ([1e44ffe](https://github.com/extra-org/extra/commit/1e44ffeaa33b34e086567593230da2c622089330))
+* update hidm docs ([bf60f9e](https://github.com/extra-org/extra/commit/bf60f9eaf7d9e0fa51ea21fbba63645c83b7b58b))
+* update YAML and add auto property ([2e3d05e](https://github.com/extra-org/extra/commit/2e3d05e537c56dfcac5e2c7b90fcc2352467883e))
+
 ## [0.3.1](https://github.com/extra-org/extra/compare/agent-engine-v0.3.0...agent-engine-v0.3.1) (2026-07-12)
 
 

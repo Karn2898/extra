@@ -40239,7 +40239,7 @@ var init_remark_gfm = __esm({
 });
 
 // node_modules/remend/dist/index.js
-var cn, un, fn, $2, dn, gn, O, I, k, c, hn, L, f, mn, E, M, N, y, R, U, W, K, d, b, H, D, w, G, F, T, g, X, C, h2, In, m, z, p, kn, Y, bn, Tn, Cn, A, v, An, j, Bn, Q, Sn, Z, q, _n, Pn, J, $n, On, V, Ln, x, En, Mn, nn, en, Nn, yn, Rn, rn, sn, Un, on, Wn, B, Kn, Hn, Dn, wn, ln, Gn, tn, an, S, Fn, u, Xn, zn, vn, $e;
+var cn, un, fn, $2, dn, gn, O, I, k, c, hn, L, f, mn, E, M, N, y, R, U, W, K, d, b, H, D, w, G, F, T, g, X2, C, h2, In, m, z, p, kn, Y, bn, Tn, Cn, A, v, An, j, Bn, Q, Sn, Z, q, _n, Pn, J, $n, On, V, Ln, x, En, Mn, nn, en, Nn, yn, Rn, rn, sn, Un, on, Wn, B, Kn, Hn, Dn, wn, ln, Gn, tn, an, S, Fn, u, Xn, zn, vn, $e;
 var init_dist3 = __esm({
   "node_modules/remend/dist/index.js"() {
     cn = Object.defineProperty;
@@ -40325,7 +40325,7 @@ var init_dist3 = __esm({
       let r2 = n.charCodeAt(0);
       return r2 >= 48 && r2 <= 57 || r2 >= 65 && r2 <= 90 || r2 >= 97 && r2 <= 122 || r2 === 95 ? true : H.test(n);
     };
-    X = (n, r2) => {
+    X2 = (n, r2) => {
       let e = 1;
       for (let i = r2 - 1; i >= 0; i -= 1) if (n[i] === "]") e += 1;
       else if (n[i] === "[" && (e -= 1, e === 0)) return i;
@@ -40626,7 +40626,7 @@ $$` : `${n}$$`;
     sn = (n) => yn(n) % 2 === 1 ? `${n}$` : n;
     Un = (n, r2, e) => {
       if (n.substring(r2 + 2).includes(")")) return null;
-      let s2 = X(n, r2);
+      let s2 = X2(n, r2);
       if (s2 === -1 || c(n, s2)) return null;
       let o = s2 > 0 && n[s2 - 1] === "!", t = o ? s2 - 1 : s2, a = n.substring(0, t);
       if (o) return a;
@@ -49689,7 +49689,7 @@ function nt(u4, e, t) {
 function g2(u4, e) {
   return L2.parse(u4, e);
 }
-var O2, _, be, m2, Re, Oe, Te, C2, we, Q2, se, ie, ye, j2, Pe, F2, Se, $e2, v2, U2, _e, oe, Le, K2, ne, Me, ze, Ee, Ie, ae, Ae, z2, H2, W2, Ce, le, Be, De, qe, ue, ve, He, pe, Ze, Ge, Ne, Qe, je, Fe, Ue, Ke, We, Xe, q2, Je, ce, he, Ve, re2, X2, Ye, N2, et, B2, E2, tt, ke, w2, x2, y2, $3, b2, _a2, P, D2, L2, Qt, jt, Ft, Ut, Kt, Xt, Jt;
+var O2, _, be, m2, Re, Oe, Te, C2, we, Q2, se, ie, ye, j2, Pe, F2, Se, $e2, v2, U2, _e, oe, Le, K2, ne, Me, ze, Ee, Ie, ae, Ae, z2, H2, W2, Ce, le, Be, De, qe, ue, ve, He, pe, Ze, Ge, Ne, Qe, je, Fe, Ue, Ke, We, Xe, q2, Je, ce, he, Ve, re2, X3, Ye, N2, et, B2, E2, tt, ke, w2, x2, y2, $3, b2, _a2, P, D2, L2, Qt, jt, Ft, Ut, Kt, Xt, Jt;
 var init_marked_esm = __esm({
   "node_modules/marked/lib/marked.esm.js"() {
     O2 = M2();
@@ -49758,12 +49758,12 @@ var init_marked_esm = __esm({
     he = k2(/^!?\[(ref)\](?:\[\])?/).replace("ref", F2).getRegex();
     Ve = k2("reflink|nolink(?!\\()", "g").replace("reflink", ce).replace("nolink", he).getRegex();
     re2 = /[hH][tT][tT][pP][sS]?|[fF][tT][pP]/;
-    X2 = { _backpedal: _, anyPunctuation: Ue, autolink: Ke, blockSkip: qe, br: ae, code: Ie, del: _, delLDelim: _, delRDelim: _, emStrongLDelim: ve, emStrongRDelimAst: Ze, emStrongRDelimUnd: Ne, escape: Ee, link: Je, nolink: he, punctuation: Ce, reflink: ce, reflinkSearch: Ve, tag: Xe, text: Ae, url: _ };
-    Ye = { ...X2, link: k2(/^!?\[(label)\]\((.*?)\)/).replace("label", q2).getRegex(), reflink: k2(/^!?\[(label)\]\s*\[([^\]]*)\]/).replace("label", q2).getRegex() };
-    N2 = { ...X2, emStrongRDelimAst: Ge, emStrongLDelim: He, delLDelim: Qe, delRDelim: Fe, url: k2(/^((?:protocol):\/\/|www\.)(?:[a-zA-Z0-9\-]+\.?)+[^\s<]*|^email/).replace("protocol", re2).replace("email", /[A-Za-z0-9._+-]+(@)[a-zA-Z0-9-_]+(?:\.[a-zA-Z0-9-_]*[a-zA-Z0-9])+(?![-_])/).getRegex(), _backpedal: /(?:[^?!.,:;*_'"~()&]+|\([^)]*\)|&(?![a-zA-Z0-9]+;$)|[?!.,:;*_'"~)]+(?!$))+/, del: /^(~~?)(?=[^\s~])((?:\\[\s\S]|[^\\])*?(?:\\[\s\S]|[^\s~\\]))\1(?=[^~]|$)/, text: k2(/^([`~]+|[^`~])(?:(?= {2,}\n)|(?=[a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-]+@)|[\s\S]*?(?:(?=[\\<!\[`*~_]|\b_|protocol:\/\/|www\.|$)|[^ ](?= {2,}\n)|[^a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-](?=[a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-]+@)))/).replace("protocol", re2).getRegex() };
+    X3 = { _backpedal: _, anyPunctuation: Ue, autolink: Ke, blockSkip: qe, br: ae, code: Ie, del: _, delLDelim: _, delRDelim: _, emStrongLDelim: ve, emStrongRDelimAst: Ze, emStrongRDelimUnd: Ne, escape: Ee, link: Je, nolink: he, punctuation: Ce, reflink: ce, reflinkSearch: Ve, tag: Xe, text: Ae, url: _ };
+    Ye = { ...X3, link: k2(/^!?\[(label)\]\((.*?)\)/).replace("label", q2).getRegex(), reflink: k2(/^!?\[(label)\]\s*\[([^\]]*)\]/).replace("label", q2).getRegex() };
+    N2 = { ...X3, emStrongRDelimAst: Ge, emStrongLDelim: He, delLDelim: Qe, delRDelim: Fe, url: k2(/^((?:protocol):\/\/|www\.)(?:[a-zA-Z0-9\-]+\.?)+[^\s<]*|^email/).replace("protocol", re2).replace("email", /[A-Za-z0-9._+-]+(@)[a-zA-Z0-9-_]+(?:\.[a-zA-Z0-9-_]*[a-zA-Z0-9])+(?![-_])/).getRegex(), _backpedal: /(?:[^?!.,:;*_'"~()&]+|\([^)]*\)|&(?![a-zA-Z0-9]+;$)|[?!.,:;*_'"~)]+(?!$))+/, del: /^(~~?)(?=[^\s~])((?:\\[\s\S]|[^\\])*?(?:\\[\s\S]|[^\s~\\]))\1(?=[^~]|$)/, text: k2(/^([`~]+|[^`~])(?:(?= {2,}\n)|(?=[a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-]+@)|[\s\S]*?(?:(?=[\\<!\[`*~_]|\b_|protocol:\/\/|www\.|$)|[^ ](?= {2,}\n)|[^a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-](?=[a-zA-Z0-9.!#$%&'*+\/=?_`{\|}~-]+@)))/).replace("protocol", re2).getRegex() };
     et = { ...N2, br: k2(ae).replace("{2,}", "*").getRegex(), text: k2(N2.text).replace("\\b_", "\\b_| {2,}\\n").replace(/\{2,\}/g, "*").getRegex() };
     B2 = { normal: K2, gfm: Me, pedantic: ze };
-    E2 = { normal: X2, gfm: N2, breaks: et, pedantic: Ye };
+    E2 = { normal: X3, gfm: N2, breaks: et, pedantic: Ye };
     tt = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
     ke = (u4) => tt[u4];
     w2 = class {
@@ -51925,16 +51925,16 @@ var init_chunk_BO2N2NFS = __esm({
     });
     Tn2.displayName = "Block";
     Qs = (0, import_react5.memo)(({ children: e, mode: t = "streaming", dir: o, parseIncompleteMarkdown: n = true, normalizeHtmlIndentation: r2 = false, components: s2, rehypePlugins: a = gn2, remarkPlugins: l = Us, className: i, shikiTheme: d2 = vn2, mermaid: c2, controls: p2 = true, isAnimating: m3 = false, animated: u4, BlockComponent: f2 = Tn2, parseMarkdownIntoBlocksFn: h3 = kt, caret: b3, plugins: g3, remend: T3, linkSafety: v3 = xn, lineNumbers: w3 = true, allowedTags: P2, literalTagContent: M3, translations: H3, icons: S2, prefix: F3, onAnimationStart: j3, onAnimationEnd: z3, ...B3 }) => {
-      let _2 = (0, import_react5.useId)(), [Q3, U3] = (0, import_react5.useTransition)(), x3 = (0, import_react5.useMemo)(() => Dt(F3), [F3]), q3 = (0, import_react5.useRef)(null), X3 = (0, import_react5.useRef)(j3), Re2 = (0, import_react5.useRef)(z3);
-      X3.current = j3, Re2.current = z3, (0, import_react5.useEffect)(() => {
+      let _2 = (0, import_react5.useId)(), [Q3, U3] = (0, import_react5.useTransition)(), x3 = (0, import_react5.useMemo)(() => Dt(F3), [F3]), q3 = (0, import_react5.useRef)(null), X4 = (0, import_react5.useRef)(j3), Re2 = (0, import_react5.useRef)(z3);
+      X4.current = j3, Re2.current = z3, (0, import_react5.useEffect)(() => {
         var A2, K3, ee;
         if (t === "static") return;
         let k3 = q3.current;
         if (q3.current = m3, k3 === null) {
-          m3 && ((A2 = X3.current) == null || A2.call(X3));
+          m3 && ((A2 = X4.current) == null || A2.call(X4));
           return;
         }
-        m3 && !k3 ? (K3 = X3.current) == null || K3.call(X3) : !m3 && k3 && ((ee = Re2.current) == null || ee.call(Re2));
+        m3 && !k3 ? (K3 = X4.current) == null || K3.call(X4) : !m3 && k3 && ((ee = Re2.current) == null || ee.call(Re2));
       }, [m3, t]);
       let Je2 = (0, import_react5.useMemo)(() => P2 ? Object.keys(P2) : [], [P2]), Se2 = (0, import_react5.useMemo)(() => {
         if (typeof e != "string") return "";
@@ -52000,8 +52000,8 @@ var init_chunk_BO2N2NFS = __esm({
       }, [b3]), Q3 = (0, import_react5.useCallback)((x3) => {
         if (!T3) return;
         x3.preventDefault();
-        let q3 = x3.clientX - w3.x, X3 = x3.clientY - w3.y;
-        g3({ x: M3.x + q3, y: M3.y + X3 });
+        let q3 = x3.clientX - w3.x, X4 = x3.clientY - w3.y;
+        g3({ x: M3.x + q3, y: M3.y + X4 });
       }, [T3, w3, M3]), U3 = (0, import_react5.useCallback)((x3) => {
         v3(false);
         let q3 = x3.currentTarget;
@@ -52056,11 +52056,12 @@ var init_chunk_BO2N2NFS = __esm({
 // src/agent_manager/api/static/widget/config/parseConfig.ts
 var DEFAULT_CONFIG = {
   title: "Assistant",
-  color: "#2563eb",
+  color: "#18181b",
   greeting: "",
   position: "bottom-right",
   avatar: "",
-  mode: "floating"
+  mode: "floating",
+  user: ""
 };
 var HEX_COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 function normalizeEndpoint(value) {
@@ -52084,7 +52085,8 @@ function parseConfig(element7, scriptOrigin) {
     greeting: element7.getAttribute("greeting") || DEFAULT_CONFIG.greeting,
     position: safePosition(element7.getAttribute("position")),
     avatar: element7.getAttribute("avatar") || DEFAULT_CONFIG.avatar,
-    mode: safeMode(element7.getAttribute("mode"))
+    mode: safeMode(element7.getAttribute("mode")),
+    user: element7.getAttribute("user") || DEFAULT_CONFIG.user
   };
 }
 function applyConfigAttributes(element7, config) {
@@ -52100,40 +52102,66 @@ var import_client = __toESM(require_client(), 1);
 
 // src/agent_manager/api/static/widget/api/AgentChatClient.ts
 var AgentChatHttpError = class extends Error {
-  constructor(status) {
-    super(`HTTP ${status}`);
+  constructor(status, errorType, message) {
+    super(message || `HTTP ${status}`);
     this.status = status;
+    this.errorType = errorType;
     this.name = "AgentChatHttpError";
   }
 };
+async function handleHttpError(response) {
+  let errorType;
+  let message;
+  try {
+    const body = await response.json();
+    if (typeof body.detail === "object" && body.detail !== null) {
+      errorType = body.detail.error_type;
+      message = body.detail.message;
+    } else if (typeof body.detail === "string") {
+      message = body.detail;
+    }
+  } catch {
+  }
+  throw new AgentChatHttpError(response.status, errorType, message);
+}
 var AgentChatClient = class {
-  constructor(endpoint) {
+  /** `userId` identifies the caller on every request. It is not a credential —
+   * see `get_caller_id` on the server for how a deployment makes it one. */
+  constructor(endpoint, userId) {
     this.endpoint = endpoint;
+    this.headers = { "Content-Type": "application/json", "X-Agent-Chat-User": userId };
+  }
+  async request(path2, init) {
+    const response = await fetch(`${this.endpoint}${path2}`, { ...init, headers: this.headers });
+    if (!response.ok) {
+      await handleHttpError(response);
+    }
+    return response;
   }
   async createConversation() {
-    const response = await fetch(`${this.endpoint}/conversations`, { method: "POST" });
-    if (!response.ok) {
-      throw new AgentChatHttpError(response.status);
-    }
+    const response = await this.request("/conversations", { method: "POST", body: "{}" });
     const data = await response.json();
     return String(data.conversation_id);
   }
+  async listConversations() {
+    const response = await this.request("/conversations");
+    const data = await response.json();
+    if (!Array.isArray(data)) return [];
+    return data.map((thread) => ({
+      conversation_id: String(thread.conversation_id),
+      title: thread.title ?? null,
+      last_message_at: thread.last_message_at ?? null
+    }));
+  }
   async getMessages(conversationId) {
-    const response = await fetch(`${this.endpoint}/conversations/${conversationId}/messages`);
-    if (!response.ok) {
-      throw new AgentChatHttpError(response.status);
-    }
+    const response = await this.request(`/conversations/${conversationId}/messages`);
     return await response.json();
   }
   async sendMessage(conversationId, message) {
-    const response = await fetch(`${this.endpoint}/conversations/${conversationId}/messages`, {
+    const response = await this.request(`/conversations/${conversationId}/messages`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message })
     });
-    if (!response.ok) {
-      throw new AgentChatHttpError(response.status);
-    }
     const data = await response.json();
     return {
       answer: String(data.answer || ""),
@@ -52141,15 +52169,21 @@ var AgentChatClient = class {
       used_tools: Array.isArray(data.used_tools) ? data.used_tools : void 0
     };
   }
+  async getUsage(conversationId) {
+    const response = await this.request(`/conversations/${conversationId}/usage`);
+    const data = await response.json();
+    return {
+      used_tokens: Number(data.used_tokens) || 0,
+      max_tokens: data.max_tokens == null ? null : Number(data.max_tokens),
+      percent: Number(data.percent) || 0,
+      severity: data.severity ?? "normal"
+    };
+  }
   async *streamMessage(conversationId, message) {
-    const response = await fetch(`${this.endpoint}/conversations/${conversationId}/messages/stream`, {
+    const response = await this.request(`/conversations/${conversationId}/messages/stream`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message })
     });
-    if (!response.ok) {
-      throw new AgentChatHttpError(response.status);
-    }
     if (!response.body) {
       throw new Error("Streaming response has no body");
     }
@@ -52182,23 +52216,6 @@ function parseSseFrame(frame) {
   const data = dataLines.join("\n");
   if (!data || data === "[DONE]") return null;
   return JSON.parse(data);
-}
-
-// src/agent_manager/api/static/widget/react/AgentChatApp.tsx
-var import_react9 = __toESM(require_react(), 1);
-
-// src/agent_manager/api/static/widget/storage/conversationStorage.ts
-function conversationStorageKey(endpoint) {
-  return `agent-chat:${endpoint}`;
-}
-function getStoredConversationId(endpoint, storage = localStorage) {
-  return storage.getItem(conversationStorageKey(endpoint));
-}
-function setStoredConversationId(endpoint, conversationId, storage = localStorage) {
-  storage.setItem(conversationStorageKey(endpoint), conversationId);
-}
-function removeStoredConversationId(endpoint, storage = localStorage) {
-  storage.removeItem(conversationStorageKey(endpoint));
 }
 
 // node_modules/lucide-react/dist/esm/createLucideIcon.mjs
@@ -52305,27 +52322,61 @@ var createLucideIcon = (iconName, iconNode) => {
   return Component;
 };
 
-// node_modules/lucide-react/dist/esm/icons/circle-check-big.mjs
+// node_modules/lucide-react/dist/esm/icons/bot.mjs
 var __iconNode = [
+  ["path", { d: "M12 8V4H8", key: "hb8ula" }],
+  ["rect", { width: "16", height: "12", x: "4", y: "8", rx: "2", key: "enze0r" }],
+  ["path", { d: "M2 14h2", key: "vft8re" }],
+  ["path", { d: "M20 14h2", key: "4cs60a" }],
+  ["path", { d: "M15 13v2", key: "1xurst" }],
+  ["path", { d: "M9 13v2", key: "rq6x2g" }]
+];
+var Bot = createLucideIcon("bot", __iconNode);
+
+// node_modules/lucide-react/dist/esm/icons/check.mjs
+var __iconNode2 = [["path", { d: "M20 6 9 17l-5-5", key: "1gmf2c" }]];
+var Check = createLucideIcon("check", __iconNode2);
+
+// node_modules/lucide-react/dist/esm/icons/chevron-down.mjs
+var __iconNode3 = [["path", { d: "m6 9 6 6 6-6", key: "qrunsl" }]];
+var ChevronDown = createLucideIcon("chevron-down", __iconNode3);
+
+// node_modules/lucide-react/dist/esm/icons/circle-check-big.mjs
+var __iconNode4 = [
   ["path", { d: "M21.801 10A10 10 0 1 1 17 3.335", key: "yps3ct" }],
   ["path", { d: "m9 11 3 3L22 4", key: "1pflzl" }]
 ];
-var CircleCheckBig = createLucideIcon("circle-check-big", __iconNode);
+var CircleCheckBig = createLucideIcon("circle-check-big", __iconNode4);
 
 // node_modules/lucide-react/dist/esm/icons/circle-x.mjs
-var __iconNode2 = [
+var __iconNode5 = [
   ["circle", { cx: "12", cy: "12", r: "10", key: "1mglay" }],
   ["path", { d: "m15 9-6 6", key: "1uzhvr" }],
   ["path", { d: "m9 9 6 6", key: "z0biqf" }]
 ];
-var CircleX = createLucideIcon("circle-x", __iconNode2);
+var CircleX = createLucideIcon("circle-x", __iconNode5);
 
 // node_modules/lucide-react/dist/esm/icons/circle.mjs
-var __iconNode3 = [["circle", { cx: "12", cy: "12", r: "10", key: "1mglay" }]];
-var Circle = createLucideIcon("circle", __iconNode3);
+var __iconNode6 = [["circle", { cx: "12", cy: "12", r: "10", key: "1mglay" }]];
+var Circle = createLucideIcon("circle", __iconNode6);
+
+// node_modules/lucide-react/dist/esm/icons/copy.mjs
+var __iconNode7 = [
+  ["rect", { width: "14", height: "14", x: "8", y: "8", rx: "2", ry: "2", key: "17jyea" }],
+  ["path", { d: "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2", key: "zix9uf" }]
+];
+var Copy = createLucideIcon("copy", __iconNode7);
+
+// node_modules/lucide-react/dist/esm/icons/history.mjs
+var __iconNode8 = [
+  ["path", { d: "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8", key: "1357e3" }],
+  ["path", { d: "M3 3v5h5", key: "1xhq8a" }],
+  ["path", { d: "M12 7v5l4 2", key: "1fdv2h" }]
+];
+var History = createLucideIcon("history", __iconNode8);
 
 // node_modules/lucide-react/dist/esm/icons/send.mjs
-var __iconNode4 = [
+var __iconNode9 = [
   [
     "path",
     {
@@ -52335,10 +52386,23 @@ var __iconNode4 = [
   ],
   ["path", { d: "m21.854 2.147-10.94 10.939", key: "12cjpa" }]
 ];
-var Send = createLucideIcon("send", __iconNode4);
+var Send = createLucideIcon("send", __iconNode9);
+
+// node_modules/lucide-react/dist/esm/icons/square-pen.mjs
+var __iconNode10 = [
+  ["path", { d: "M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7", key: "1m0v6g" }],
+  [
+    "path",
+    {
+      d: "M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z",
+      key: "ohrbg2"
+    }
+  ]
+];
+var SquarePen = createLucideIcon("square-pen", __iconNode10);
 
 // node_modules/lucide-react/dist/esm/icons/wrench.mjs
-var __iconNode5 = [
+var __iconNode11 = [
   [
     "path",
     {
@@ -52347,7 +52411,50 @@ var __iconNode5 = [
     }
   ]
 ];
-var Wrench = createLucideIcon("wrench", __iconNode5);
+var Wrench = createLucideIcon("wrench", __iconNode11);
+
+// node_modules/lucide-react/dist/esm/icons/x.mjs
+var __iconNode12 = [
+  ["path", { d: "M18 6 6 18", key: "1bl5f8" }],
+  ["path", { d: "m6 6 12 12", key: "d8bk6v" }]
+];
+var X = createLucideIcon("x", __iconNode12);
+
+// src/agent_manager/api/static/widget/react/AgentChatApp.tsx
+var import_react10 = __toESM(require_react(), 1);
+
+// src/agent_manager/api/static/widget/id.ts
+function randomId() {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = bytes[6] & 15 | 64;
+  bytes[8] = bytes[8] & 63 | 128;
+  const hex = Array.from(bytes, (b3) => b3.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+// src/agent_manager/api/static/widget/storage/conversationStorage.ts
+function conversationStorageKey(endpoint, userId) {
+  return `agent-chat:${endpoint}:${userId}`;
+}
+function getStoredConversationId(endpoint, userId, storage = localStorage) {
+  return storage.getItem(conversationStorageKey(endpoint, userId));
+}
+function setStoredConversationId(endpoint, userId, conversationId, storage = localStorage) {
+  storage.setItem(conversationStorageKey(endpoint, userId), conversationId);
+}
+function removeStoredConversationId(endpoint, userId, storage = localStorage) {
+  storage.removeItem(conversationStorageKey(endpoint, userId));
+}
+function getOrCreateUserId(endpoint, storage = localStorage) {
+  const key = `agent-chat:user:${endpoint}`;
+  let id = storage.getItem(key);
+  if (!id) {
+    id = randomId();
+    storage.setItem(key, id);
+  }
+  return id;
+}
 
 // src/agent_manager/api/static/widget/react/shadcnAiElements.tsx
 var import_react8 = __toESM(require_react(), 1);
@@ -52845,6 +52952,7 @@ function PromptInput({
     if (!text10) return;
     input.value = "";
     input.style.height = "auto";
+    input.style.overflowY = "hidden";
     onSubmit({ text: text10 });
   }
   function onFormSubmit(event) {
@@ -52866,7 +52974,7 @@ function PromptInputTextarea({
       onSubmit();
     }
   }
-  return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+  return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { className: "input-wrap", children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
     "textarea",
     {
       ...props,
@@ -52876,13 +52984,14 @@ function PromptInputTextarea({
         props.onInput?.(event);
         const input = event.currentTarget;
         input.style.height = "auto";
-        input.style.height = `${Math.min(input.scrollHeight, 120)}px`;
+        input.style.height = `${Math.min(input.scrollHeight, 140)}px`;
+        input.style.overflowY = input.scrollHeight > 140 ? "auto" : "hidden";
       },
       onKeyDown,
       ref: inputRef,
       rows: props.rows ?? 1
     }
-  );
+  ) });
 }
 function PromptInputFooter({ children: children2 }) {
   return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { className: "prompt-footer", children: children2 });
@@ -52920,143 +53029,305 @@ function statusLabel(state) {
   return "Running";
 }
 
+// src/agent_manager/api/static/widget/react/streamReducer.ts
+var TOOL_STATUS = {
+  tool_started: "started",
+  tool_succeeded: "succeeded",
+  tool_failed: "failed"
+};
+function reduceStreamEvent(entry, event) {
+  switch (event.type) {
+    case "answer_delta":
+      return { ...entry, text: entry.text + (event.content ?? "") };
+    case "route":
+      return { ...entry, route: event.route ?? entry.route };
+    case "tool_started":
+    case "tool_succeeded":
+    case "tool_failed":
+      return { ...entry, tools: upsertTool(entry.tools ?? [], toToolRecord(event)) };
+    case "final":
+      return {
+        ...entry,
+        text: event.content ?? entry.text,
+        route: event.route ?? entry.route,
+        tools: event.used_tools ?? entry.tools
+      };
+    case "error":
+      throw new Error(event.error || "stream failed");
+    default:
+      return entry;
+  }
+}
+function toToolRecord(event) {
+  return {
+    name: event.tool_name ?? "tool",
+    provider: event.provider ?? "runtime",
+    status: TOOL_STATUS[event.type] ?? "started",
+    server_id: event.server_id,
+    error: event.error
+  };
+}
+function upsertTool(tools, next2) {
+  const index2 = tools.findIndex((tool) => tool.name === next2.name && tool.provider === next2.provider);
+  if (index2 === -1) return [...tools, next2];
+  return tools.map((tool, position4) => position4 === index2 ? { ...tool, ...next2 } : tool);
+}
+
+// src/agent_manager/api/static/widget/react/useConversation.ts
+var import_react9 = __toESM(require_react(), 1);
+var isUnusableConversation = (error) => error instanceof AgentChatHttpError && (error.status === 404 || error.status === 403);
+function useConversation(client, endpoint, userId, onReplaced) {
+  const startConversation = (0, import_react9.useCallback)(async () => {
+    const created = await client.createConversation();
+    setStoredConversationId(endpoint, userId, created);
+    return created;
+  }, [client, endpoint, userId]);
+  const peekId = (0, import_react9.useCallback)(() => getStoredConversationId(endpoint, userId), [endpoint, userId]);
+  const ensureId = (0, import_react9.useCallback)(
+    async () => getStoredConversationId(endpoint, userId) ?? startConversation(),
+    [endpoint, userId, startConversation]
+  );
+  const replace2 = (0, import_react9.useCallback)(
+    async (staleId) => {
+      removeStoredConversationId(endpoint, userId);
+      const fresh = await startConversation();
+      onReplaced?.(staleId, fresh);
+      return fresh;
+    },
+    [endpoint, userId, startConversation, onReplaced]
+  );
+  const send = (0, import_react9.useCallback)(
+    async (conversationId, text10) => {
+      try {
+        return await client.sendMessage(conversationId, text10);
+      } catch (error) {
+        if (!isUnusableConversation(error)) throw error;
+        return client.sendMessage(await replace2(conversationId), text10);
+      }
+    },
+    [client, replace2]
+  );
+  const stream = (0, import_react9.useCallback)(
+    async function* (conversationId, text10) {
+      try {
+        yield* client.streamMessage(conversationId, text10);
+      } catch (error) {
+        if (!isUnusableConversation(error)) throw error;
+        yield* client.streamMessage(await replace2(conversationId), text10);
+      }
+    },
+    [client, replace2]
+  );
+  const loadHistory = (0, import_react9.useCallback)(
+    async (conversationId) => {
+      try {
+        return await client.getMessages(conversationId);
+      } catch (error) {
+        if (isUnusableConversation(error) && peekId() === conversationId) {
+          removeStoredConversationId(endpoint, userId);
+        }
+        return [];
+      }
+    },
+    [client, endpoint, userId, peekId]
+  );
+  const loadUsage = (0, import_react9.useCallback)(
+    async (conversationId) => {
+      try {
+        return await client.getUsage(conversationId);
+      } catch {
+        return null;
+      }
+    },
+    [client]
+  );
+  const listThreads = (0, import_react9.useCallback)(() => client.listConversations().catch(() => []), [client]);
+  const switchTo = (0, import_react9.useCallback)(
+    (conversationId) => setStoredConversationId(endpoint, userId, conversationId),
+    [endpoint, userId]
+  );
+  const startNew = (0, import_react9.useCallback)(
+    () => removeStoredConversationId(endpoint, userId),
+    [endpoint, userId]
+  );
+  return (0, import_react9.useMemo)(
+    () => ({
+      peekId,
+      ensureId,
+      send,
+      stream,
+      loadHistory,
+      loadUsage,
+      listThreads,
+      switchTo,
+      startNew
+    }),
+    [peekId, ensureId, send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew]
+  );
+}
+
 // src/agent_manager/api/static/widget/react/AgentChatApp.tsx
 var import_jsx_runtime4 = __toESM(require_jsx_runtime(), 1);
-var nextMessageCounter = 0;
-function nextMessageId(role) {
-  nextMessageCounter += 1;
-  return `${role}-${Date.now()}-${nextMessageCounter}`;
-}
-function AgentChatApp({ client, config, onAnswer, panelId, titleId }) {
+var DEFAULT_GREETING = "How can I help you today?";
+var GENERIC_ERROR = "Something went wrong. Please try again.";
+var COPIED_RESET_MS = 2e3;
+var newId = randomId;
+var toEntry = (message) => ({
+  id: newId(),
+  role: message.role === "user" ? "user" : "ai",
+  text: message.content
+});
+function AgentChatApp({
+  client,
+  config,
+  userId,
+  onAnswer,
+  panelId,
+  titleId
+}) {
   const inline = config.mode === "inline";
-  const [open, setOpen] = (0, import_react9.useState)(inline);
-  const [loaded, setLoaded] = (0, import_react9.useState)(false);
-  const [sending, setSending] = (0, import_react9.useState)(false);
-  const [entries, setEntries] = (0, import_react9.useState)([]);
-  const launcherRef = (0, import_react9.useRef)(null);
-  const inputRef = (0, import_react9.useRef)(null);
-  const loadHistory = (0, import_react9.useCallback)(async () => {
+  const [open, setOpen] = (0, import_react10.useState)(inline);
+  const [loaded, setLoaded] = (0, import_react10.useState)(false);
+  const [sending, setSending] = (0, import_react10.useState)(false);
+  const [budgetExceeded, setBudgetExceeded] = (0, import_react10.useState)(false);
+  const [entriesById, setEntriesById] = (0, import_react10.useState)({});
+  const [usageById, setUsageById] = (0, import_react10.useState)({});
+  const [activeId, setActiveId] = (0, import_react10.useState)("");
+  const entries = entriesById[activeId] ?? [];
+  const usage = usageById[activeId] ?? null;
+  const [threads, setThreads] = (0, import_react10.useState)([]);
+  const [threadsOpen, setThreadsOpen] = (0, import_react10.useState)(false);
+  const launcherRef = (0, import_react10.useRef)(null);
+  const inputRef = (0, import_react10.useRef)(null);
+  const onReplaced = (0, import_react10.useCallback)((staleId, freshId) => {
+    setEntriesById(({ [staleId]: moved = [], ...rest }) => ({ ...rest, [freshId]: moved }));
+    setActiveId((current) => current === staleId ? freshId : current);
+  }, []);
+  const conversation = useConversation(client, config.endpoint, userId, onReplaced);
+  const refreshUsage = (0, import_react10.useCallback)(
+    async (cid) => {
+      const next2 = await conversation.loadUsage(cid);
+      setUsageById((prev) => ({ ...prev, [cid]: next2 }));
+    },
+    [conversation]
+  );
+  const putEntries = (0, import_react10.useCallback)(
+    (cid, update) => setEntriesById((prev) => ({ ...prev, [cid]: update(prev[cid] ?? []) })),
+    []
+  );
+  const loadThread = (0, import_react10.useCallback)(
+    async (cid) => {
+      const history = await conversation.loadHistory(cid);
+      putEntries(cid, () => history.map(toEntry));
+    },
+    [conversation, putEntries]
+  );
+  const loadHistory = (0, import_react10.useCallback)(async () => {
     if (loaded) return;
     setLoaded(true);
-    const existing = localStorage.getItem(conversationStorageKey(config.endpoint));
-    if (!existing) {
-      if (config.greeting) setEntries((prev) => [...prev, { id: nextMessageId("ai"), role: "ai", text: config.greeting }]);
-      return;
-    }
-    try {
-      const history = await client.getMessages(existing);
-      setEntries(
-        history.map((message) => ({
-          id: nextMessageId(message.role === "user" ? "user" : "ai"),
-          role: message.role === "user" ? "user" : "ai",
-          text: message.content
-        }))
-      );
-    } catch (error) {
-      if (error instanceof AgentChatHttpError && error.status === 404) {
-        removeStoredConversationId(config.endpoint);
-      }
-    }
-  }, [client, config.endpoint, config.greeting, loaded]);
-  (0, import_react9.useEffect)(() => {
-    if (inline) {
-      void loadHistory();
-    }
+    const cid = conversation.peekId();
+    if (!cid) return;
+    setActiveId(cid);
+    await loadThread(cid);
+    await refreshUsage(cid);
+  }, [conversation, loaded, loadThread, refreshUsage]);
+  (0, import_react10.useEffect)(() => {
+    if (inline) void loadHistory();
   }, [inline, loadHistory]);
-  (0, import_react9.useEffect)(() => {
+  (0, import_react10.useEffect)(() => {
     if (open) inputRef.current?.focus({ preventScroll: true });
   }, [open, loaded, sending]);
-  const openChat = (0, import_react9.useCallback)(async () => {
+  const openChat = (0, import_react10.useCallback)(async () => {
     if (inline) return;
     setOpen(true);
     await loadHistory();
   }, [inline, loadHistory]);
-  const closeChat = (0, import_react9.useCallback)(() => {
+  const closeChat = (0, import_react10.useCallback)(() => {
     if (inline) return;
     setOpen(false);
     launcherRef.current?.focus({ preventScroll: true });
   }, [inline]);
-  const conversationId = (0, import_react9.useCallback)(async () => {
-    let id = getStoredConversationId(config.endpoint);
-    if (!id) {
-      id = await client.createConversation();
-      setStoredConversationId(config.endpoint, id);
-    }
-    return id;
-  }, [client, config.endpoint]);
-  const sendToAgent = (0, import_react9.useCallback)(
-    async (text10) => {
-      const id = await conversationId();
+  const openThreads = (0, import_react10.useCallback)(async () => {
+    setThreads(await conversation.listThreads());
+    setThreadsOpen(true);
+  }, [conversation]);
+  const openThread = (0, import_react10.useCallback)(
+    async (conversationId) => {
+      conversation.switchTo(conversationId);
+      setThreadsOpen(false);
+      setActiveId(conversationId);
+      if (!(conversationId in entriesById)) await loadThread(conversationId);
+      await refreshUsage(conversationId);
+      inputRef.current?.focus({ preventScroll: true });
+    },
+    [conversation, entriesById, loadThread, refreshUsage]
+  );
+  const startNewThread = (0, import_react10.useCallback)(() => {
+    conversation.startNew();
+    setThreadsOpen(false);
+    setActiveId("");
+    inputRef.current?.focus({ preventScroll: true });
+  }, [conversation]);
+  const replaceEntry = (0, import_react10.useCallback)(
+    (cid, id, entry) => putEntries(cid, (prev) => prev.map((current) => current.id === id ? entry : current)),
+    [putEntries]
+  );
+  const sendWithoutStreaming = (0, import_react10.useCallback)(
+    async (cid, text10, entryId) => {
       try {
-        return await client.sendMessage(id, text10);
+        const answer = await conversation.send(cid, text10);
+        replaceEntry(cid, entryId, {
+          id: entryId,
+          role: "ai",
+          text: answer.answer,
+          route: answer.visited,
+          tools: answer.used_tools
+        });
+        onAnswer({ visited: answer.visited ?? [], used_tools: answer.used_tools ?? [] });
       } catch (error) {
-        if (!(error instanceof AgentChatHttpError) || error.status !== 404) throw error;
-        removeStoredConversationId(config.endpoint);
-        const freshId = await client.createConversation();
-        setStoredConversationId(config.endpoint, freshId);
-        return await client.sendMessage(freshId, text10);
+        const is4xx = error instanceof AgentChatHttpError && error.status >= 400 && error.status < 500;
+        if (error instanceof AgentChatHttpError && error.errorType === "context_limit_exceeded") {
+          setBudgetExceeded(true);
+        }
+        const errorMessage = is4xx ? error.message : GENERIC_ERROR;
+        replaceEntry(cid, entryId, { id: entryId, role: "ai", text: errorMessage, error: true });
       }
     },
-    [client, config.endpoint, conversationId]
+    [conversation, onAnswer, replaceEntry]
   );
-  const streamFromAgent = (0, import_react9.useCallback)(
-    async function* (text10) {
-      const id = await conversationId();
-      try {
-        yield* client.streamMessage(id, text10);
-      } catch (error) {
-        if (!(error instanceof AgentChatHttpError) || error.status !== 404) throw error;
-        removeStoredConversationId(config.endpoint);
-        const freshId = await client.createConversation();
-        setStoredConversationId(config.endpoint, freshId);
-        yield* client.streamMessage(freshId, text10);
-      }
-    },
-    [client, config.endpoint, conversationId]
-  );
-  const patchEntry = (0, import_react9.useCallback)((id, update) => {
-    setEntries((prev) => prev.map((entry) => entry.id === id ? update(entry) : entry));
-  }, []);
-  const submit = (0, import_react9.useCallback)(
+  const submit = (0, import_react10.useCallback)(
     async (text10) => {
-      const assistantId = nextMessageId("ai");
-      setEntries((prev) => [
-        ...prev,
-        { id: nextMessageId("user"), role: "user", text: text10 },
-        { id: assistantId, role: "ai", text: "", typing: true }
-      ]);
+      const cid = await conversation.ensureId();
+      setActiveId(cid);
+      const pending = { id: newId(), role: "ai", text: "", typing: true };
+      putEntries(cid, (prev) => [...prev, { id: newId(), role: "user", text: text10 }, pending]);
       setSending(true);
       try {
-        let finalDetail = { visited: [], used_tools: [] };
-        for await (const event of streamFromAgent(text10)) {
-          finalDetail = applyStreamEvent(assistantId, event, patchEntry, finalDetail);
+        let entry = pending;
+        for await (const event of conversation.stream(cid, text10)) {
+          entry = reduceStreamEvent(entry, event);
+          replaceEntry(cid, pending.id, entry);
         }
-        patchEntry(assistantId, (entry) => ({ ...entry, typing: false }));
-        onAnswer(finalDetail);
+        replaceEntry(cid, pending.id, { ...entry, typing: false });
+        onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
       } catch (error) {
-        try {
-          const data = await sendToAgent(text10);
-          patchEntry(assistantId, () => ({
-            id: assistantId,
-            role: "ai",
-            text: data.answer,
-            route: data.visited,
-            tools: data.used_tools
-          }));
-          onAnswer({ visited: data.visited ?? [], used_tools: data.used_tools ?? [] });
-        } catch {
-          patchEntry(assistantId, () => ({
-            id: assistantId,
-            role: "ai",
-            text: error instanceof Error && error.message ? `Something went wrong. Please try again.` : "Something went wrong. Please try again."
-          }));
+        const is4xx = error instanceof AgentChatHttpError && error.status >= 400 && error.status < 500;
+        if (error instanceof AgentChatHttpError && error.errorType === "context_limit_exceeded") {
+          setBudgetExceeded(true);
+        }
+        if (is4xx) {
+          replaceEntry(cid, pending.id, { id: pending.id, role: "ai", text: error.message, error: true });
+        } else {
+          await sendWithoutStreaming(cid, text10, pending.id);
         }
       } finally {
         setSending(false);
+        void refreshUsage(cid);
       }
     },
-    [onAnswer, patchEntry, sendToAgent, streamFromAgent]
+    [conversation, onAnswer, putEntries, refreshUsage, replaceEntry, sendWithoutStreaming]
   );
+  const toggle = () => void (open ? closeChat() : openChat());
   return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
     "div",
     {
@@ -53071,25 +53342,7 @@ function AgentChatApp({ client, config, onAnswer, panelId, titleId }) {
       onKeyPress: (event) => event.stopPropagation(),
       onKeyUp: (event) => event.stopPropagation(),
       children: [
-        !inline ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
-          "button",
-          {
-            "aria-controls": panelId,
-            "aria-expanded": open,
-            "aria-label": "Open chat",
-            className: "launcher",
-            onClick: () => void (open ? closeChat() : openChat()),
-            onKeyDown: (event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                void openChat();
-              }
-            },
-            ref: launcherRef,
-            type: "button",
-            children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(ChatIcon, {})
-          }
-        ) : null,
+        !inline ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Launcher, { open, panelId, buttonRef: launcherRef, onToggle: toggle }) : null,
         /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
           "section",
           {
@@ -53100,46 +53353,65 @@ function AgentChatApp({ client, config, onAnswer, panelId, titleId }) {
             children: [
               /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("header", { className: "header", children: [
                 /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
-                  "span",
+                  "button",
                   {
-                    className: "dot",
-                    style: config.avatar ? { backgroundImage: `url("${config.avatar.replace(/"/g, "%22")}")` } : void 0
+                    "aria-label": "Conversations",
+                    className: "header-btn",
+                    onClick: () => void openThreads(),
+                    type: "button",
+                    children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(History, { "aria-hidden": true })
                   }
                 ),
+                /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "dot", style: avatarStyle(config.avatar) }),
                 /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "title", id: titleId, children: config.title }),
-                !inline ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("button", { "aria-label": "Close chat", className: "close", onClick: closeChat, type: "button", children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(CloseIcon, {}) }) : null
+                /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+                  "button",
+                  {
+                    "aria-label": "New chat",
+                    className: "header-btn",
+                    onClick: startNewThread,
+                    type: "button",
+                    children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(SquarePen, { "aria-hidden": true })
+                  }
+                ),
+                !inline ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("button", { "aria-label": "Close chat", className: "close", onClick: closeChat, type: "button", children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(X, { "aria-hidden": true }) }) : null
               ] }),
               /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "body", children: [
-                /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Conversation, { children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(ConversationContent, { children: entries.map((entry, index2) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
-                  Message,
+                /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+                  ThreadDrawer,
                   {
-                    from: entry.role === "user" ? "user" : "assistant",
-                    typing: entry.typing,
-                    children: entry.typing ? "..." : /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(import_jsx_runtime4.Fragment, { children: [
-                      entry.role === "ai" ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(ToolMessage, { route: entry.route, tools: entry.tools }) : null,
-                      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageContent, { children: entry.role === "ai" ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageResponse, { children: entry.text }) : entry.text })
-                    ] })
-                  },
-                  entry.id
-                )) }) }),
+                    open: threadsOpen,
+                    threads,
+                    activeId: getStoredConversationId(config.endpoint, userId),
+                    onSelect: openThread,
+                    onNew: startNewThread,
+                    onClose: () => setThreadsOpen(false)
+                  }
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Conversation, { children: /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(ConversationContent, { children: [
+                  entries.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Welcome, { title: config.greeting || DEFAULT_GREETING }) : null,
+                  entries.map((entry) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(ChatMessage, { entry }, entry.id))
+                ] }) }),
                 /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(PromptInput, { onSubmit: (message) => void submit(message.text), children: [
                   /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
                     PromptInputTextarea,
                     {
                       "aria-label": "Message",
-                      disabled: false,
+                      disabled: sending || budgetExceeded,
                       inputRef,
-                      onSubmit: () => {
-                        inputRef.current?.form?.requestSubmit();
-                      },
-                      placeholder: "Message..."
+                      onSubmit: () => inputRef.current?.form?.requestSubmit(),
+                      placeholder: budgetExceeded ? "Context limit reached." : "Message..."
                     }
                   ),
                   /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(PromptInputFooter, { children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "prompt-hint", children: "Enter to send \xB7 Shift+Enter for a new line" }),
-                    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(PromptInputSubmit, { disabled: sending })
+                    /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "footer-start", children: [
+                      usage ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(BudgetMeter, { usage }) : null,
+                      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "prompt-hint", children: "Enter to send \xB7 Shift+Enter for a new line" })
+                    ] }),
+                    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(PromptInputSubmit, { disabled: sending || budgetExceeded })
                   ] })
-                ] })
+                ] }),
+                /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { className: "powered", children: "Powered by Extra" })
               ] })
             ]
           }
@@ -53148,93 +53420,202 @@ function AgentChatApp({ client, config, onAnswer, panelId, titleId }) {
     }
   );
 }
-function applyStreamEvent(assistantId, event, patchEntry, currentDetail) {
-  if (event.type === "answer_delta") {
-    patchEntry(assistantId, (entry) => ({
-      ...entry,
-      text: entry.text + (event.content ?? ""),
-      typing: false
-    }));
-    return currentDetail;
-  }
-  if (event.type === "route") {
-    const route = event.route ?? currentDetail.visited;
-    patchEntry(assistantId, (entry) => ({ ...entry, route, typing: false }));
-    return { ...currentDetail, visited: route };
-  }
-  if (event.type === "tool_started" || event.type === "tool_succeeded" || event.type === "tool_failed") {
-    const tool = streamToolRecord(event);
-    patchEntry(assistantId, (entry) => ({
-      ...entry,
-      tools: upsertTool(entry.tools ?? [], tool),
-      typing: false
-    }));
-    return { ...currentDetail, used_tools: upsertTool(currentDetail.used_tools, tool) };
-  }
-  if (event.type === "final") {
-    const visited = event.route ?? currentDetail.visited;
-    const usedTools = event.used_tools ?? currentDetail.used_tools;
-    patchEntry(assistantId, (entry) => ({
-      ...entry,
-      text: event.content ?? entry.text,
-      route: visited,
-      tools: usedTools,
-      typing: false
-    }));
-    return { visited, used_tools: usedTools };
-  }
-  if (event.type === "error") {
-    throw new Error(event.error || "stream failed");
-  }
-  return currentDetail;
+function Launcher({
+  open,
+  panelId,
+  buttonRef,
+  onToggle
+}) {
+  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
+    "button",
+    {
+      "aria-controls": panelId,
+      "aria-expanded": open,
+      "aria-label": open ? "Close Assistant" : "Open Assistant",
+      className: `launcher${open ? " open" : ""}`,
+      onClick: onToggle,
+      onKeyDown: (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onToggle();
+        }
+      },
+      ref: buttonRef,
+      type: "button",
+      children: [
+        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Bot, { className: "icon-bot", "aria-hidden": true }),
+        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(ChevronDown, { className: "icon-chevron", "aria-hidden": true })
+      ]
+    }
+  );
 }
-function streamToolRecord(event) {
-  return {
-    name: event.tool_name ?? "tool",
-    provider: event.provider ?? "runtime",
-    status: event.type === "tool_started" ? "started" : event.type === "tool_succeeded" ? "succeeded" : "failed",
-    server_id: event.server_id,
-    error: event.error
-  };
+function ChatMessage({ entry }) {
+  const from = entry.role === "user" ? "user" : "assistant";
+  if (entry.error) {
+    return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Message, { from, children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { className: "msg-error", role: "alert", children: entry.text }) });
+  }
+  if (entry.role === "user") {
+    return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Message, { from: "user", children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageContent, { children: entry.text }) });
+  }
+  const thinking = Boolean(entry.typing) && !entry.text.trim();
+  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(Message, { from: "assistant", typing: thinking, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(AgentActivity, { route: entry.route, tools: entry.tools }),
+    thinking ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(ThinkingDots, {}) : /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(import_jsx_runtime4.Fragment, { children: [
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageContent, { children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageResponse, { children: entry.text }) }),
+      entry.text.trim() ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageActions, { text: entry.text }) : null
+    ] })
+  ] });
 }
-function upsertTool(tools, next2) {
-  const index2 = tools.findIndex((tool) => tool.name === next2.name && tool.provider === next2.provider);
-  if (index2 === -1) return [...tools, next2];
-  const copy = tools.slice();
-  copy[index2] = { ...copy[index2], ...next2 };
-  return copy;
+function ThinkingDots() {
+  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { className: "thinking", "aria-hidden": true, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "thinking-dot" }),
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "thinking-dot" }),
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "thinking-dot" })
+  ] });
 }
-function ToolMessage({ route, tools = [] }) {
+function MessageActions({ text: text10 }) {
+  return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { className: "msg-actions", children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(CopyButton, { text: text10 }) });
+}
+function CopyButton({ text: text10 }) {
+  const [copied, setCopied] = (0, import_react10.useState)(false);
+  const copy = (0, import_react10.useCallback)(() => {
+    void navigator.clipboard?.writeText(text10).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), COPIED_RESET_MS);
+    }).catch(() => {
+    });
+  }, [text10]);
+  const Icon2 = copied ? Check : Copy;
+  return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("button", { "aria-label": copied ? "Copied" : "Copy", className: "msg-action", onClick: copy, type: "button", children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Icon2, { "aria-hidden": true }) });
+}
+function AgentActivity({ route, tools = [] }) {
   if (!route?.length && tools.length === 0) return null;
   return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "tool-list", children: [
     route?.length ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { className: "route", "aria-label": "Agent route", children: route.join(" -> ") }) : null,
     tools.map((tool, index2) => /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(Tool, { defaultOpen: tool.status === "failed", children: [
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(ToolHeader, { state: toolState(tool.status), title: tool.provider ? `${tool.name} \xB7 ${tool.provider}` : tool.name }),
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+        ToolHeader,
+        {
+          state: toToolState(tool.status),
+          title: tool.name
+        }
+      ),
       tool.error ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(ToolContent, { children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(ToolOutput, { errorText: tool.error }) }) : null
     ] }, `${tool.name}-${index2}`))
   ] });
 }
-function toolState(status) {
+function Welcome({ title }) {
+  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "welcome", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "welcome-avatar", children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Bot, { "aria-hidden": true }) }),
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { className: "welcome-title", children: title })
+  ] });
+}
+function ThreadDrawer({
+  open,
+  threads,
+  activeId,
+  onSelect,
+  onNew,
+  onClose
+}) {
+  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: `thread-drawer${open ? " open" : ""}`, inert: !open, children: [
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "thread-drawer-head", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { children: "Chats" }),
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("button", { "aria-label": "Close conversations", className: "header-btn", onClick: onClose, type: "button", children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(X, { "aria-hidden": true }) })
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("button", { className: "thread-new", onClick: onNew, type: "button", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(SquarePen, { "aria-hidden": true }),
+      "New chat"
+    ] }),
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "thread-list", children: [
+      threads.map((thread) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+        "button",
+        {
+          className: `thread-item${thread.conversation_id === activeId ? " active" : ""}`,
+          "aria-current": thread.conversation_id === activeId,
+          onClick: () => onSelect(thread.conversation_id),
+          type: "button",
+          children: thread.title || "New chat"
+        },
+        thread.conversation_id
+      )),
+      threads.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { className: "thread-empty", children: "No conversations yet" }) : null
+    ] })
+  ] });
+}
+var RING_SIZE = 18;
+var RING_STROKE = 2.5;
+var RING_RADIUS = (RING_SIZE - RING_STROKE) / 2;
+var RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+function BudgetMeter({ usage }) {
+  const { used_tokens: used, max_tokens: max, percent, severity } = usage;
+  if (!max) return null;
+  const center = RING_SIZE / 2;
+  const ring = { cx: center, cy: center, r: RING_RADIUS, fill: "none", strokeWidth: RING_STROKE };
+  const rounded = Math.round(percent);
+  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
+    "span",
+    {
+      className: `budget-meter ${severity}`,
+      role: "img",
+      "aria-label": `Token budget ${rounded}% used`,
+      tabIndex: 0,
+      children: [
+        /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
+          "svg",
+          {
+            className: "budget-ring",
+            width: RING_SIZE,
+            height: RING_SIZE,
+            viewBox: `0 0 ${RING_SIZE} ${RING_SIZE}`,
+            "aria-hidden": true,
+            children: [
+              /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("circle", { className: "budget-ring-track", ...ring }),
+              /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+                "circle",
+                {
+                  className: "budget-ring-value",
+                  ...ring,
+                  strokeLinecap: "round",
+                  strokeDasharray: RING_CIRCUMFERENCE,
+                  strokeDashoffset: RING_CIRCUMFERENCE * (1 - percent / 100)
+                }
+              )
+            ]
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { className: "budget-percent", children: [
+          rounded,
+          "%"
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { className: "budget-popover", role: "tooltip", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { className: "budget-popover-head", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { children: "Token budget" }),
+            /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { className: "budget-popover-count", children: [
+              formatTokens(Math.min(used, max)),
+              " of ",
+              formatTokens(max)
+            ] })
+          ] }),
+          /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "budget-bar", children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "budget-bar-fill", style: { width: `${percent}%` } }) })
+        ] })
+      ]
+    }
+  );
+}
+function formatTokens(tokens) {
+  if (tokens >= 1e6) return `${(tokens / 1e6).toFixed(1).replace(/\.0$/, "")}M`;
+  if (tokens >= 1e3) return `${(tokens / 1e3).toFixed(1).replace(/\.0$/, "")}k`;
+  return `${tokens}`;
+}
+function avatarStyle(avatar) {
+  if (!avatar) return void 0;
+  return { backgroundImage: `url("${avatar.replace(/"/g, "%22")}")` };
+}
+function toToolState(status) {
   if (status === "failed") return "output-error";
   if (status === "succeeded") return "output-available";
   return "input-available";
-}
-function ChatIcon() {
-  return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("svg", { "aria-hidden": "true", fill: "currentColor", viewBox: "0 0 24 24", children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("path", { d: "M12 3C6.5 3 2 6.8 2 11.5c0 2.3 1.1 4.4 2.9 5.9L4 21l4.3-1.5c1.1.3 2.4.5 3.7.5 5.5 0 10-3.8 10-8.5S17.5 3 12 3z" }) });
-}
-function CloseIcon() {
-  return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
-    "svg",
-    {
-      "aria-hidden": "true",
-      fill: "none",
-      stroke: "currentColor",
-      strokeLinecap: "round",
-      strokeWidth: "2.2",
-      viewBox: "0 0 24 24",
-      children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("path", { d: "M6 6l12 12M18 6L6 18" })
-    }
-  );
 }
 
 // src/agent_manager/api/static/widget/styles/styles.ts
@@ -53246,39 +53627,98 @@ function styles(config) {
     .react-mount,
     .agent-chat-react { display: contents; }
     .launcher {
-      position: fixed; bottom: 20px; ${side}: 20px; width: 56px; height: 56px;
+      position: fixed; bottom: 16px; ${side}: 16px; width: 44px; height: 44px;
       border: 0; border-radius: 50%; background: ${config.color}; color: #fff; cursor: pointer;
       display: flex; align-items: center; justify-content: center;
-      box-shadow: 0 10px 28px rgba(0,0,0,.2), 0 0 0 1px rgba(0,0,0,.04);
-      z-index: 2147483000; transition: transform .15s; }
-    .launcher:hover { transform: scale(1.06); }
-    .launcher svg { width: 26px; height: 26px; }
+      box-shadow: 0 10px 15px -3px rgba(0,0,0,.1), 0 4px 6px -4px rgba(0,0,0,.1);
+      z-index: 2147483000; transition: transform .15s ease-out; }
+    .launcher:hover { transform: scale(1.05); }
+    .launcher:active { transform: scale(.96); }
+    .launcher svg { position: absolute; width: 24px; height: 24px;
+      transition: scale .2s cubic-bezier(.2,0,0,1), opacity .2s cubic-bezier(.2,0,0,1),
+      filter .2s cubic-bezier(.2,0,0,1); }
+    .launcher .icon-bot { scale: 1; opacity: 1; filter: blur(0); }
+    .launcher .icon-chevron { scale: .25; opacity: 0; filter: blur(4px); }
+    .launcher.open .icon-bot { scale: .25; opacity: 0; filter: blur(4px); }
+    .launcher.open .icon-chevron { scale: 1; opacity: 1; filter: blur(0); }
     .panel {
-      position: fixed; bottom: 88px; ${side}: 20px; width: 380px; height: 560px;
-      max-height: calc(100vh - 120px); background: #fff; border-radius: 20px; overflow: hidden;
-      border: 1px solid #e4e4e7;
+      position: fixed; bottom: 76px; ${side}: 16px; width: 440px; height: 680px;
+      max-width: calc(100vw - 2rem); max-height: calc(100vh - 92px);
+      background: #fff; border-radius: 40px; overflow: hidden;
+      border: 1px solid rgba(228,228,231,.6);
       display: flex; flex-direction: column;
-      box-shadow: 0 20px 60px rgba(0,0,0,.14), 0 2px 8px rgba(0,0,0,.06);
-      opacity: 0; transform: translateY(12px) scale(.98); pointer-events: none;
-      transition: opacity .18s ease, transform .18s ease; z-index: 2147483000; }
-    .panel.open { opacity: 1; transform: none; pointer-events: auto; }
+      box-shadow: 0 20px 25px -5px rgba(0,0,0,.1), 0 8px 10px -6px rgba(0,0,0,.1);
+      transform-origin: bottom ${side};
+      opacity: 0; transform: translateY(8px) scale(.95); pointer-events: none;
+      transition: opacity .2s cubic-bezier(.32,.72,0,1), transform .2s cubic-bezier(.32,.72,0,1);
+      z-index: 2147483000; }
+    .panel.open { opacity: 1; transform: none; pointer-events: auto;
+      transition-duration: .3s; }
+    .panel.open .composer {
+      animation: aui-footer-in .3s .1s cubic-bezier(.32,.72,0,1) backwards; }
+    @keyframes aui-footer-in {
+      from { opacity: 0; transform: translateY(8px); } }
     .panel.inline { position: static; opacity: 1; transform: none; pointer-events: auto;
       box-shadow: 0 4px 18px rgba(0,0,0,.12); }
-    .header { background: #fff; color: #18181b; padding: 14px 18px; font-weight: 600;
-      font-size: 14px; display: flex; align-items: center; gap: 10px;
+    .header { background: #fff; color: #18181b; padding: 12px 12px 12px 14px; font-weight: 600;
+      font-size: 14px; display: flex; align-items: center; gap: 6px;
       border-bottom: 1px solid #f0f0f1; }
     .header .dot { width: 22px; height: 22px; border-radius: 50%; flex: 0 0 auto;
       background: ${config.color}; background-size: cover; background-position: center; }
     .header .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .header-btn { background: transparent; border: 0; color: #71717a; cursor: pointer;
+      padding: 0; width: 30px; height: 30px; border-radius: 8px; flex: 0 0 auto;
+      display: flex; align-items: center; justify-content: center;
+      transition: background .12s, color .12s; }
+    .header-btn:hover { background: #f4f4f5; color: #18181b; }
+    .header-btn svg { width: 17px; height: 17px; }
     .close { background: transparent; border: 0; color: #71717a; cursor: pointer;
       padding: 0; width: 30px; height: 30px; border-radius: 50%;
       display: flex; align-items: center; justify-content: center; transition: background .12s; }
     .close:hover { background: #f4f4f5; color: #18181b; }
     .close svg { width: 16px; height: 16px; }
-    .body { flex: 1; min-height: 0; display: flex; flex-direction: column; background: #fff; }
-    .messages { flex: 1; min-height: 0; overflow-y: auto; }
+    .body { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; background: #fff; }
+    .thread-drawer { position: absolute; inset: 0; z-index: 3; background: #fff;
+      display: flex; flex-direction: column; transform: translateX(-100%);
+      opacity: 0; pointer-events: none;
+      transition: transform .25s cubic-bezier(.32,.72,0,1), opacity .25s ease; }
+    .thread-drawer.open { transform: none; opacity: 1; pointer-events: auto; }
+    .thread-drawer-head { display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 12px 10px 18px; font-weight: 600; font-size: 14px; color: #18181b;
+      border-bottom: 1px solid #f0f0f1; }
+    .thread-new { display: flex; align-items: center; gap: 8px; margin: 12px 14px 4px;
+      padding: 10px 14px; border: 1px solid #e4e4e7; border-radius: 12px; background: #fff;
+      color: #18181b; font-size: 14px; font-weight: 500; cursor: pointer; font-family: inherit;
+      transition: background .12s; }
+    .thread-new:hover { background: #f4f4f5; }
+    .thread-new svg { width: 16px; height: 16px; flex: 0 0 auto; }
+    .thread-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 10px 14px;
+      display: flex; flex-direction: column; gap: 2px;
+      scrollbar-width: thin; scrollbar-color: #d4d4d8 transparent; }
+    .thread-item { text-align: left; border: 0; background: transparent; cursor: pointer;
+      padding: 10px 12px; border-radius: 10px; font-size: 13.5px; color: #3f3f46;
+      font-family: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      transition: background .12s; }
+    .thread-item:hover { background: #f4f4f5; }
+    .thread-item.active { background: #f4f4f5; color: #18181b; font-weight: 600; }
+    .thread-empty { color: #a1a1aa; font-size: 13px; text-align: center; padding: 24px 12px; margin: 0; }
+    .messages { flex: 1; min-height: 0; overflow-y: auto;
+      scrollbar-width: thin; scrollbar-color: #d4d4d8 transparent; }
+    .messages::-webkit-scrollbar { width: 10px; }
+    .messages::-webkit-scrollbar-track { background: transparent; }
+    .messages::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 999px;
+      border: 3px solid transparent; background-clip: content-box; }
+    .messages::-webkit-scrollbar-thumb:hover { background: #a1a1aa; background-clip: content-box; }
     .conversation-content { min-height: 100%; padding: 16px 18px;
       display: flex; flex-direction: column; gap: 14px; }
+    .welcome { flex: 1; display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 16px; text-align: center; padding: 32px 24px;
+      animation: aui-footer-in .3s .05s cubic-bezier(.32,.72,0,1) backwards; }
+    .welcome-avatar { width: 48px; height: 48px; border-radius: 50%; flex: 0 0 auto;
+      background: ${config.color}; color: #fff;
+      display: flex; align-items: center; justify-content: center; }
+    .welcome-avatar svg { width: 26px; height: 26px; }
+    .welcome-title { margin: 0; font-size: 17px; font-weight: 600; color: #18181b; line-height: 1.4; }
     .msg { font-size: 14.5px; line-height: 1.55; word-wrap: break-word; white-space: pre-wrap; }
     .msg.ai { color: #18181b; max-width: 100%; }
     .msg.ai.typing { color: #a1a1aa; letter-spacing: 1px; }
@@ -53290,6 +53730,15 @@ function styles(config) {
     .msg code { background: #f4f4f5; border-radius: 4px; padding: 1px 5px; font-size: 13px; }
     .msg pre { background: #f4f4f5; border-radius: 10px; padding: 10px 12px; overflow-x: auto; margin: 0; }
     .msg pre code { background: none; padding: 0; white-space: pre-wrap; }
+    .msg-actions { display: flex; gap: 4px; margin-top: 6px;
+      opacity: 0; transition: opacity .15s ease; }
+    .msg.ai:hover .msg-actions, .msg-actions:focus-within { opacity: 1; }
+    .msg-action { display: inline-flex; align-items: center; justify-content: center;
+      width: 26px; height: 26px; border: 0; border-radius: 7px; background: transparent;
+      color: #71717a; cursor: pointer; transition: background .12s, color .12s; }
+    .msg-action:hover { background: #f4f4f5; color: #18181b; }
+    .msg-action svg { width: 15px; height: 15px; animation: aui-icon-in .15s ease; }
+    @keyframes aui-icon-in { from { opacity: 0; transform: scale(.75); } }
     .tool-list { margin-bottom: 10px; display: flex; flex-direction: column; gap: 8px; }
     .agent-meta { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; color: #71717a;
       font-size: 12px; line-height: 1.3; }
@@ -53308,12 +53757,34 @@ function styles(config) {
     .tool-badge.output-error { color: #991b1b; background: #fee2e2; }
     .tool-content { border-top: 1px solid #e4e4e7; padding: 8px 10px; }
     .tool-error { color: #991b1b; font-size: 12px; white-space: pre-wrap; }
+    .msg-error { margin-top: 2px; border: 1px solid #fecaca; background: #fef2f2;
+      color: #b91c1c; border-radius: 8px; padding: 10px 12px; font-size: 13.5px;
+      line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical; overflow: hidden; }
+    .thinking { display: inline-flex; gap: 4px; color: #a1a1aa; }
+    .thinking-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor;
+      animation: aui-dot 1.4s ease-in-out infinite; }
+    .thinking-dot:nth-child(2) { animation-delay: .2s; }
+    .thinking-dot:nth-child(3) { animation-delay: .4s; }
+    @keyframes aui-dot {
+      0%, 100% { transform: scale(.8); opacity: .5; }
+      50% { transform: scale(1.2); opacity: 1; }
+    }
     .composer { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 8px;
       padding: 12px 14px; border-top: 1px solid #f0f0f1; }
-    .input { flex: 1; resize: none; max-height: 120px; border: 1px solid #e4e4e7;
-      border-radius: 20px; padding: 10px 16px; font-size: 14.5px; color: #18181b;
-      font-family: inherit; background: #fff; outline: none; }
-    .input:focus { border-color: ${config.color}; }
+    .input-wrap { min-width: 0; display: flex; border-radius: 20px; background: #fff;
+      overflow: hidden; box-shadow: inset 0 0 0 1px #e4e4e7; transition: box-shadow .15s ease; }
+    .input-wrap:focus-within { box-shadow: inset 0 0 0 1px ${config.color},
+      0 0 0 3px color-mix(in srgb, ${config.color} 14%, transparent); }
+    .input { flex: 1; min-width: 0; resize: none; max-height: 140px; overflow-y: hidden;
+      border: 0; padding: 12px 16px; font-size: 15px; color: #18181b;
+      font-family: inherit; background: transparent; outline: none;
+      scrollbar-width: thin; scrollbar-color: #d4d4d8 transparent; }
+    .input::-webkit-scrollbar { width: 10px; }
+    .input::-webkit-scrollbar-track { background: transparent; margin: 8px 0; }
+    .input::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 999px;
+      border: 3px solid transparent; background-clip: content-box; }
+    .input::-webkit-scrollbar-thumb:hover { background: #a1a1aa; background-clip: content-box; }
     .input::placeholder { color: #a1a1aa; }
     .send { flex: 0 0 auto; width: 34px; height: 34px; border-radius: 50%; border: 0;
       background: ${config.color}; color: #fff; cursor: pointer;
@@ -53324,14 +53795,52 @@ function styles(config) {
     .prompt-footer { grid-column: 1 / -1; display: flex; align-items: center;
       justify-content: space-between; gap: 10px; color: #a1a1aa; font-size: 11.5px; }
     .prompt-hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .footer-start { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .budget-meter { position: relative; display: inline-flex; align-items: center; gap: 5px;
+      flex: 0 0 auto; color: #71717a; font-size: 11.5px; cursor: default; outline: none; }
+    .budget-ring { transform: rotate(-90deg); }
+    .budget-ring-track { stroke: #e4e4e7; }
+    .budget-ring-value { stroke: #3f3f46;
+      transition: stroke-dashoffset .3s ease, stroke .3s ease; }
+    .budget-percent { font-variant-numeric: tabular-nums; }
+    .budget-meter.warning .budget-ring-value { stroke: #f59e0b; }
+    .budget-meter.warning .budget-percent { color: #b45309; }
+    .budget-meter.critical .budget-ring-value { stroke: #ef4444; }
+    .budget-meter.critical .budget-percent { color: #b91c1c; }
+    .budget-popover { position: absolute; bottom: calc(100% + 8px); left: 0; width: 200px;
+      background: #fff; color: #18181b; border: 1px solid #e4e4e7; border-radius: 10px;
+      padding: 10px 12px; box-shadow: 0 10px 25px rgba(0,0,0,.12);
+      opacity: 0; transform: translateY(4px); pointer-events: none;
+      transition: opacity .15s ease, transform .15s ease; z-index: 5; }
+    .budget-meter:hover .budget-popover, .budget-meter:focus-visible .budget-popover {
+      opacity: 1; transform: none; }
+    .budget-popover-head { display: flex; align-items: baseline; justify-content: space-between;
+      gap: 12px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+    .budget-popover-count { color: #71717a; font-weight: 400; font-variant-numeric: tabular-nums; }
+    .budget-bar { display: block; margin-top: 8px; height: 4px; background: #f4f4f5;
+      border-radius: 999px; overflow: hidden; }
+    .budget-bar-fill { display: block; height: 100%; background: #3f3f46;
+      border-radius: 999px; transition: width .3s ease; }
+    .budget-meter.warning .budget-bar-fill { background: #f59e0b; }
+    .budget-meter.critical .budget-bar-fill { background: #ef4444; }
+    .powered { text-align: center; padding: 0 14px 10px; color: #a1a1aa;
+      font-size: 11px; letter-spacing: .01em; }
     @media (prefers-reduced-motion: reduce) {
       .launcher,
+      .launcher svg,
       .close,
       .send,
       .panel {
         transition: none;
       }
       .launcher:hover { transform: none; }
+      .panel.open .composer { animation: none; }
+      .welcome { animation: none; }
+      .msg-action svg { animation: none; }
+      .budget-ring-value, .budget-bar-fill, .budget-popover { transition: none; }
+      .thread-drawer { transition: none; }
+      .thinking-dot { animation: none; }
+
     }
     @media (max-width: 480px) {
       .panel:not(.inline) { width: 100vw; height: 100dvh; max-height: 100dvh;
@@ -53354,7 +53863,7 @@ var AgentChatElement = class extends HTMLElement {
     this.titleId = `${this.widgetId}-title`;
   }
   static get observedAttributes() {
-    return ["endpoint", "title", "color", "greeting", "position", "avatar", "mode"];
+    return ["endpoint", "title", "color", "greeting", "position", "avatar", "mode", "user"];
   }
   connectedCallback() {
     if (this.connected) return;
@@ -53376,7 +53885,8 @@ var AgentChatElement = class extends HTMLElement {
   }
   configure() {
     this.config = parseConfig(this, this.scriptOrigin);
-    this.client = new AgentChatClient(this.config.endpoint);
+    this.userId = this.config.user || getOrCreateUserId(this.config.endpoint);
+    this.client = new AgentChatClient(this.config.endpoint, this.userId);
   }
   render() {
     const root7 = this.shadowRoot || this.attachShadow({ mode: "open" });
@@ -53396,6 +53906,7 @@ var AgentChatElement = class extends HTMLElement {
         {
           client: this.client,
           config: this.config,
+          userId: this.userId,
           onAnswer: (detail) => this.emitAnswer(detail),
           panelId: this.panelId,
           titleId: this.titleId
@@ -53619,6 +54130,30 @@ lucide-react/dist/esm/createLucideIcon.mjs:
    * See the LICENSE file in the root directory of this source tree.
    *)
 
+lucide-react/dist/esm/icons/bot.mjs:
+  (**
+   * @license lucide-react v1.22.0 - ISC
+   *
+   * This source code is licensed under the ISC license.
+   * See the LICENSE file in the root directory of this source tree.
+   *)
+
+lucide-react/dist/esm/icons/check.mjs:
+  (**
+   * @license lucide-react v1.22.0 - ISC
+   *
+   * This source code is licensed under the ISC license.
+   * See the LICENSE file in the root directory of this source tree.
+   *)
+
+lucide-react/dist/esm/icons/chevron-down.mjs:
+  (**
+   * @license lucide-react v1.22.0 - ISC
+   *
+   * This source code is licensed under the ISC license.
+   * See the LICENSE file in the root directory of this source tree.
+   *)
+
 lucide-react/dist/esm/icons/circle-check-big.mjs:
   (**
    * @license lucide-react v1.22.0 - ISC
@@ -53643,6 +54178,22 @@ lucide-react/dist/esm/icons/circle.mjs:
    * See the LICENSE file in the root directory of this source tree.
    *)
 
+lucide-react/dist/esm/icons/copy.mjs:
+  (**
+   * @license lucide-react v1.22.0 - ISC
+   *
+   * This source code is licensed under the ISC license.
+   * See the LICENSE file in the root directory of this source tree.
+   *)
+
+lucide-react/dist/esm/icons/history.mjs:
+  (**
+   * @license lucide-react v1.22.0 - ISC
+   *
+   * This source code is licensed under the ISC license.
+   * See the LICENSE file in the root directory of this source tree.
+   *)
+
 lucide-react/dist/esm/icons/send.mjs:
   (**
    * @license lucide-react v1.22.0 - ISC
@@ -53651,7 +54202,23 @@ lucide-react/dist/esm/icons/send.mjs:
    * See the LICENSE file in the root directory of this source tree.
    *)
 
+lucide-react/dist/esm/icons/square-pen.mjs:
+  (**
+   * @license lucide-react v1.22.0 - ISC
+   *
+   * This source code is licensed under the ISC license.
+   * See the LICENSE file in the root directory of this source tree.
+   *)
+
 lucide-react/dist/esm/icons/wrench.mjs:
+  (**
+   * @license lucide-react v1.22.0 - ISC
+   *
+   * This source code is licensed under the ISC license.
+   * See the LICENSE file in the root directory of this source tree.
+   *)
+
+lucide-react/dist/esm/icons/x.mjs:
   (**
    * @license lucide-react v1.22.0 - ISC
    *

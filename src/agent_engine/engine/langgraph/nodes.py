@@ -14,6 +14,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
+from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool, StructuredTool
 from langgraph.errors import GraphInterrupt
 from pydantic import BaseModel
@@ -53,8 +54,7 @@ from agent_engine.runtime.tool_models import ToolProviderName, ToolUsageRecord
 
 logger = logging.getLogger(__name__)
 
-# Appended to every orchestrator system prompt.
-# Enforces the core design contract: agents are the source of truth, not the LLM.
+
 _ORCHESTRATOR_CONTRACT = """
 ## Instructions
 - You MUST use the available agent tools to answer requests. Never answer from general knowledge.
@@ -102,8 +102,6 @@ class DenyTool:
     message: str
 
 
-# A tagged result instead of ``str | None``: the caller branches on the type,
-# never on a magic ``None`` that secretly means "proceed".
 ToolGate = ExecuteTool | DenyTool
 
 
@@ -236,7 +234,6 @@ class AgentNode:
         gate = await self._gate_tool_call(call)
         if isinstance(gate, DenyTool):
             return gate.message
-        # gate is ExecuteTool — the gate is open; fall through to run the tool.
 
         cached = await self._cached_result(call, used_tools)
         if cached is not None:
@@ -350,7 +347,8 @@ class AgentNode:
         """
         error = str(exc)[:200]
         used_tools.append(self._usage(call, "failed", error=error))
-        self._log_call(logging.WARNING, "tool call failed", call, ms=latency_ms)
+        self._log_call(logging.WARNING, "tool call failed", call, ms=latency_ms, error=error)
+
         await self._hook_manager.run_on_tool_error(
             current_run_context.get(),
             self._call_context(call, "failed", latency_ms, error=error),
@@ -518,14 +516,16 @@ class OrchestratorNode:
         self,
         spec: OrchestratorSpec,
         node_path: str,
-        model: Any,
+        model: BaseChatModel,
         children: list[ChildEntry],
         filters: list[RouteFilter],
         base_dir: Path,
+        fallback_model: BaseChatModel | None = None,
     ) -> None:
         self._spec = spec
         self._node_path = node_path
         self._model = model
+        self._fallback_model = fallback_model
         self._children = children
         self._filters = filters
         self._base_dir = base_dir
@@ -533,6 +533,8 @@ class OrchestratorNode:
     async def __call__(self, state: GraphState) -> dict[str, object]:
         candidates = self._filter_children(state)
         base_prompt = load_file(self._base_dir, self._spec.prompts.system) or self._spec.description
+        orchestrator_content = load_file(self._base_dir, self._spec.prompts.orchestrator)
+        base_prompt = f"{base_prompt}\n\n{orchestrator_content}"
         system_prompt = f"{base_prompt}\n{_ORCHESTRATOR_CONTRACT}"
         return await self._run(system_prompt, candidates, state)
 
@@ -612,6 +614,13 @@ class OrchestratorNode:
         # Build tools here so they share the live `visited` / `used_tools` lists.
         tools = [self._make_tool(e, state, visited, used_tools) for e in candidates]
         bound_model = self._model.bind_tools(tools) if tools else self._model
+        if self._fallback_model is not None:
+            bound_fallback = (
+                self._fallback_model.bind_tools(tools) if tools else self._fallback_model
+            )
+            bound_model = bound_model.with_fallbacks(
+                [bound_fallback], exceptions_to_handle=(Exception,)
+            )
         tool_by_name = {t.name: t for t in tools}
 
         user_msg: str = state.get("message", "")

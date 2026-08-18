@@ -75,6 +75,7 @@ class ConversationMessageRow(SQLModel, table=True):
     latency_ms: int | None = Field(default=None, sa_column=Column(Integer))
     status: str = Field(default="succeeded", max_length=64)
     error_type: str | None = Field(default=None, max_length=256)
+    feedback: str | None = Field(default=None, max_length=16)
     metadata_json: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
     created_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
 

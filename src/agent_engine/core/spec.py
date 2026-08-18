@@ -7,13 +7,18 @@ from agent_engine.core.execution import ExecutionPolicy
 
 
 @dataclass(frozen=True)
-class ModelConfig:
+class BaseModelConfig:
     provider: str
     name: str
     temperature: float | None = None
     region: str | None = None
     max_tokens: int | None = None
     top_p: float | None = None
+
+
+@dataclass(frozen=True)
+class ModelConfig(BaseModelConfig):
+    fallback: BaseModelConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -163,3 +168,4 @@ class SystemSpec:
     hooks: HooksConfig = field(default_factory=HooksConfig)
     plugins: PluginsConfig = field(default_factory=PluginsConfig)
     execution: ExecutionPolicy = field(default_factory=ExecutionPolicy)
+    tools: tuple[ToolSpec, ...] = field(default_factory=tuple)

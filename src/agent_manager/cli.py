@@ -12,6 +12,16 @@ import click
 from dotenv import load_dotenv
 
 
+def _playground_url(host: str, port: int) -> str:
+    if host in {"0.0.0.0", "::"}:
+        display_host = "localhost"
+    elif ":" in host and not host.startswith("["):
+        display_host = f"[{host}]"
+    else:
+        display_host = host
+    return f"http://{display_host}:{port}/playground"
+
+
 @click.command()
 @click.option("--config", required=True, help="Path to agents.yml")
 @click.option("--host", default=None, help="Host to bind to (overrides settings)")
@@ -35,7 +45,10 @@ def main(config: str, host: str | None, port: int | None, env: str | None, migra
         upgrade_database()
 
     app = create_app(config, settings)
-    uvicorn.run(app, host=host or settings.host, port=port or settings.port)
+    bind_host = host or settings.host
+    bind_port = port or settings.port
+    click.echo(f"Playground: {_playground_url(bind_host, bind_port)}")
+    uvicorn.run(app, host=bind_host, port=bind_port)
 
 
 if __name__ == "__main__":

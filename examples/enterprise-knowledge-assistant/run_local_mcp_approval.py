@@ -1,4 +1,4 @@
-"""Interactive real-LLM session approval proof using the local knowledge MCP."""
+"""Interactive real-LLM auto-mode proof using the local knowledge MCP."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ from agent_manager.infrastructure.persistence.memory_repository import MemoryRep
 EXAMPLE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = EXAMPLE_DIR / "local_mcp_agents.yaml"
 SERVER_ID = "local_knowledge_mcp"
-SYSTEM_NAMESPACE = "Enterprise Knowledge Assistant Local MCP Approval"
+SYSTEM_NAMESPACE = "Enterprise Knowledge Assistant Local MCP Auto Mode"
 USER_ID = "local-demo-user"
 DEFAULT_MCP_URL = "http://127.0.0.1:8765/mcp"
 EXPECTED_TOOLS = {
@@ -186,7 +186,7 @@ class ApprovalDemo:
             raise RuntimeError(f"Local MCP did not expose required tools: {', '.join(missing)}")
 
     async def invoke(self, user_message: str) -> RunResult:
-        messages_before = await self._conversations.history(self.session_id)
+        messages_before = await self._conversations.history(self.session_id, caller_id=USER_ID)
         print(
             f"[SESSION HISTORY] session_id={self.session_id} "
             f"messages_before_run={len(messages_before)}"
@@ -197,7 +197,7 @@ class ApprovalDemo:
         turn = await self._conversations.prepare_turn(
             self.session_id,
             user_message,
-            user_id=USER_ID,
+            caller_id=USER_ID,
         )
         print(f"[SESSION MESSAGE APPENDED] session_id={self.session_id} role=user")
         print(

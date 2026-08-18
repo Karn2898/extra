@@ -100,9 +100,9 @@ model:
 
 For Bedrock, `region` can be omitted if `AWS_REGION` or `AWS_DEFAULT_REGION` is set. Credentials follow the standard AWS chain — profile, environment variables, or an IAM role.
 
-For Gemini, set `GEMINI_API_KEY` in your environment (`export GEMINI_API_KEY="..."`) and install the provider extra with `pip install "agent-engine[gemini]"`. Choose any Gemini model your key can access via `name`. Secrets must never be stored in YAML.
+For Gemini, set `GEMINI_API_KEY` in your environment (`export GEMINI_API_KEY="..."`). Choose any Gemini model your key can access via `name`. Secrets must never be stored in YAML.
 
-For OpenAI, set `OPENAI_API_KEY` in your environment (`export OPENAI_API_KEY="..."`) and install the provider extra with `pip install "agent-engine[openai]"`. Choose any OpenAI model your key can access via `name`. See the [OpenAI API docs](https://platform.openai.com/docs/api-reference) for model names. Secrets must never be stored in YAML.
+For OpenAI, set `OPENAI_API_KEY` in your environment (`export OPENAI_API_KEY="..."`). Choose any OpenAI model your key can access via `name`. See the [OpenAI API docs](https://platform.openai.com/docs/api-reference) for model names. Secrets must never be stored in YAML.
 
 <Warning>
   A node-level `model` is a **full replacement**, not a merge with `defaults.model`. If you override the model on an agent, specify every field — `provider`, `name`, and any others you need. Partial overrides won't inherit missing fields from `defaults`.
@@ -111,6 +111,23 @@ For OpenAI, set `OPENAI_API_KEY` in your environment (`export OPENAI_API_KEY="..
 <Warning>
   Never put API keys in YAML. Extra reads provider credentials from environment variables at runtime.
 </Warning>
+
+### Fallback models
+
+To make agents resilient to LLM provider outages, rate limits, or transient network errors, you can configure a fallback backup model directly under any model configuration block:
+
+```yaml
+model:
+  provider: anthropic
+  name: claude-sonnet-4-6
+  temperature: 0.3
+  fallback:
+    provider: openai
+    name: gpt-4.1-mini
+    temperature: 0.2
+```
+
+Nested fallbacks (a fallback model configured under another fallback model) are not allowed and will fail spec validation.
 
 ---
 
@@ -357,6 +374,7 @@ agents:
 | `tools` | No | Tool ids this agent is allowed to call. |
 | `mcps` | No | MCP server ids this agent has access to. |
 | `protected` | No | `true` to gate this node behind [access control](#access-control). |
+| `auto` | No | `true` skips human approval for this agent's tool calls (default `false`, every call requires approval). [Human-in-the-Loop](/docs/human-in-the-loop). |
 
 An agent only ever sees the tools, MCP servers, and resolvers it explicitly lists — nothing is shared by default.
 
