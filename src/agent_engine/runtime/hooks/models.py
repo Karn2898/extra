@@ -59,7 +59,9 @@ class AuthContext:
 
     user_id: str | None = None
     organization_id: str | None = None
-    inbound_access_token: str | None = None
+    #: `repr=False` keeps this out of logs and tracebacks — the same
+    #: protection `Principal.access_token` already has on the manager side.
+    inbound_access_token: str | None = field(default=None, repr=False)
     scopes: tuple[str, ...] = ()
     roles: tuple[str, ...] = ()
     metadata: dict[str, object] = field(default_factory=dict)
