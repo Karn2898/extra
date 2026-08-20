@@ -48,6 +48,9 @@ class Principal:
     roles: tuple[str, ...] = ()
     organization_id: str | None = None
     claims: Mapping[str, Any] = field(default_factory=dict)
+    #: What this caller proved themselves with, so tools can act as them. Host
+    #: tokens only; `repr=False` keeps it out of logs and tracebacks.
+    access_token: str | None = field(default=None, repr=False)
 
     @property
     def is_anonymous(self) -> bool:

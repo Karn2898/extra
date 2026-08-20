@@ -155,6 +155,17 @@ research_hooks = "plugins.hooks.research_hooks:ResearchHooksHook"
 
 The YAML never contains an import path, a config block, or a secret — it only says *which* hook runs *where*. `agentctl generate` creates and maintains the `plugins.toml` entry for you.
 
+**`agents.yaml`** — hooks load by import path, so your package has to be importable:
+
+```yaml
+plugins:
+  import_roots: ["."]   # resolved relative to this file
+```
+
+<Warning>
+  Without this, loading fails with `No module named 'plugins'`. Tools are unaffected — they load by file path. See [Making plugins importable](/docs/plugins#making-plugins-importable).
+</Warning>
+
 ### Field reference
 
 <ParamField path="plugin" type="string">

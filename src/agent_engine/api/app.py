@@ -33,7 +33,7 @@ from agent_engine.engine.langgraph.engine import LangGraphEngine
 from agent_engine.engine.types import PendingApproval
 from agent_engine.logging_config import configure_logging, log, request_id_var
 from agent_engine.parsers.yaml.parser import YAMLParser
-from agent_engine.runtime.hooks import RunContext
+from agent_engine.runtime.hooks import AuthContext, RunContext
 
 logger = logging.getLogger(__name__)
 
@@ -64,15 +64,34 @@ def _preview(text: str, limit: int = 120) -> str:
     return collapsed[:limit] + ("…" if len(collapsed) > limit else "")
 
 
-def _run_context(x_session_id: str | None, *, run_id: str) -> RunContext:
-    """Build a RunContext carrying a run id and the caller's session id.
+def _run_context(
+    x_session_id: str | None, *, run_id: str, authorization: str | None = None
+) -> RunContext:
+    """Build a RunContext carrying a run id, the caller's session id, and the
+    credential the caller sent.
 
     The run id is the resumable identifier returned to the client (also the
     LangGraph checkpoint thread id). The session id flows into tracing metadata
     (the Langfuse session); it is untrusted, so sanitize and cap it.
+
+    ``Authorization`` is forwarded verbatim and never verified: a forged
+    credential just fails at the system that owns it, so this grants nothing.
+    Asserted facts (user id, role) are not accepted — derive those in a
+    resolver, or run behind `agent_manager`, which verifies signatures.
     """
     session_id = _RID_OK.sub("", x_session_id)[:64] if x_session_id else ""
-    return RunContext(run_id=run_id, conversation_id=session_id or None)
+    return RunContext(
+        run_id=run_id,
+        conversation_id=session_id or None,
+        auth_context=_auth_context(authorization),
+    )
+
+
+def _auth_context(authorization: str | None) -> AuthContext | None:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return None
+    token = authorization[len("bearer ") :].strip()
+    return AuthContext(inbound_access_token=token) if token else None
 
 
 def _pending_model(pa: PendingApproval | None) -> PendingApprovalModel | None:
@@ -227,6 +246,7 @@ def create_app(
         response: Response,
         x_request_id: str | None = Header(default=None),
         x_session_id: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
     ) -> InvokeResponse:
         assert _engine is not None
         rid = _begin_request(x_request_id)
@@ -243,7 +263,8 @@ def create_app(
         )
         try:
             result = await _engine.run(
-                body.message, context=_run_context(x_session_id, run_id=run_id)
+                body.message,
+                context=_run_context(x_session_id, run_id=run_id, authorization=authorization),
             )
         except Exception as exc:
             log(logger, logging.ERROR, "request end", status="error", error=str(exc))
@@ -273,10 +294,11 @@ def create_app(
         body: InvokeRequest,
         x_request_id: str | None = Header(default=None),
         x_session_id: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
     ) -> StreamingResponse:
         assert _engine is not None
         rid = _begin_request(x_request_id)
-        context = _run_context(x_session_id, run_id=uuid4().hex)
+        context = _run_context(x_session_id, run_id=uuid4().hex, authorization=authorization)
         started = time.perf_counter()
         log(
             logger,
@@ -333,8 +355,10 @@ def create_app(
         decision: ApprovalDecision,
         user_id: str | None,
         session_id: str | None,
+        authorization: str | None,
     ) -> InvokeResponse:
         engine = _hitl_engine()
+        auth = _auth_context(authorization)
         try:
             result = await engine.resume(
                 run_id,
@@ -342,6 +366,7 @@ def create_app(
                 decision,
                 caller_user_id=user_id,
                 caller_session_id=_run_context(session_id, run_id=run_id).conversation_id,
+                access_token=auth.inbound_access_token if auth else None,
             )
         except ApprovalError as exc:
             raise _map_approval_error(exc) from exc
@@ -367,13 +392,16 @@ def create_app(
         approval_id: str,
         body: ApprovalDecisionBody,
         x_session_id: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
     ) -> InvokeResponse:
         # The single free-text → typed decision boundary for the API.
         try:
             decision = parse_decision(body.decision)
         except InvalidDecision as exc:
             raise _map_approval_error(exc) from exc
-        return await _decide(run_id, approval_id, decision, body.user_id, x_session_id)
+        return await _decide(
+            run_id, approval_id, decision, body.user_id, x_session_id, authorization
+        )
 
     @app.post("/runs/{run_id}/approvals/{approval_id}/approve", response_model=InvokeResponse)
     async def approve(
@@ -381,6 +409,7 @@ def create_app(
         approval_id: str,
         body: ApprovalDecisionRequest = _DEFAULT_APPROVAL_REQUEST_BODY,
         x_session_id: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
     ) -> InvokeResponse:
         return await _decide(
             run_id,
@@ -388,6 +417,7 @@ def create_app(
             ApprovalDecision.ALLOW_ONCE,
             body.user_id,
             x_session_id,
+            authorization,
         )
 
     @app.post("/runs/{run_id}/approvals/{approval_id}/reject", response_model=InvokeResponse)
@@ -396,6 +426,7 @@ def create_app(
         approval_id: str,
         body: ApprovalDecisionRequest = _DEFAULT_APPROVAL_REQUEST_BODY,
         x_session_id: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
     ) -> InvokeResponse:
         return await _decide(
             run_id,
@@ -403,6 +434,7 @@ def create_app(
             ApprovalDecision.DENY,
             body.user_id,
             x_session_id,
+            authorization,
         )
 
     return app

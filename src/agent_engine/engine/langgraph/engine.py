@@ -68,6 +68,7 @@ from agent_engine.runs.in_memory import InMemoryRunRepository
 from agent_engine.runs.repository import RunRepository
 from agent_engine.runtime.execution import ExecutionLimiter, current_execution
 from agent_engine.runtime.hooks import (
+    AuthContext,
     EngineContext,
     HookManager,
     RunContext,
@@ -593,6 +594,7 @@ class LangGraphEngine(Engine):
         *,
         caller_user_id: str | None = None,
         caller_session_id: str | None = None,
+        access_token: str | None = None,
     ) -> RunResult:
         """Apply a human decision to a pending tool call and resume the same run.
 
@@ -611,6 +613,7 @@ class LangGraphEngine(Engine):
             approval_id=approval_id,
             caller_user_id=caller_user_id,
             caller_session_id=caller_session_id,
+            access_token=access_token,
         )
         approved = kind != ApprovalDecision.DENY
         log(
@@ -659,6 +662,7 @@ class LangGraphEngine(Engine):
         *,
         caller_user_id: str | None = None,
         caller_session_id: str | None = None,
+        access_token: str | None = None,
     ) -> AsyncIterator[RunStreamEvent]:
         """Resume one approval through the same owned stream used by new runs."""
         app, lifecycle = self._require_built("streaming an approval resume")
@@ -669,6 +673,7 @@ class LangGraphEngine(Engine):
             approval_id=approval_id,
             caller_user_id=caller_user_id,
             caller_session_id=caller_session_id,
+            access_token=access_token,
         )
         approved = kind != ApprovalDecision.DENY
 
@@ -709,6 +714,7 @@ class LangGraphEngine(Engine):
         approval_id: str,
         caller_user_id: str | None,
         caller_session_id: str | None,
+        access_token: str | None = None,
     ) -> RunContext:
         """Claim and activate one resume without an interruptible ownership gap.
 
@@ -731,6 +737,13 @@ class LangGraphEngine(Engine):
                 user_id=approval.authorized_user_id,
                 organization_id=approval.organization_id,
                 metadata={"approval_id": approval.approval_id},
+                # The approver's credential as of now, not one captured when the
+                # run started and possibly expired while it waited for a human.
+                auth_context=AuthContext(
+                    user_id=approval.authorized_user_id,
+                    organization_id=approval.organization_id,
+                    inbound_access_token=access_token,
+                ),
             )
             await lifecycle.activate_resume(ctx)
             return ctx
