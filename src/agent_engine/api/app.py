@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from agent_engine.approvals.decision import ApprovalDecision, parse_decision
 from agent_engine.approvals.errors import (
+    ApprovalAlreadyProcessed,
     ApprovalError,
     InvalidDecision,
     approval_http_status,
@@ -335,14 +336,35 @@ def create_app(
         session_id: str | None,
     ) -> InvokeResponse:
         engine = _hitl_engine()
+        caller_session_id = _run_context(session_id, run_id=run_id).conversation_id
         try:
             result = await engine.resume(
                 run_id,
                 approval_id,
                 decision,
                 caller_user_id=user_id,
-                caller_session_id=_run_context(session_id, run_id=run_id).conversation_id,
+                caller_session_id=caller_session_id,
             )
+        except ApprovalAlreadyProcessed as exc:
+            # A retried decision (e.g. after a client-side timeout on a request
+            # that actually succeeded) should recover the original result rather
+            # than fail — mirrors what agent_manager's resume flow already does.
+            try:
+                recovered = await engine.get_processed_result(
+                    run_id,
+                    approval_id,
+                    caller_user_id=user_id,
+                    caller_session_id=caller_session_id,
+                )
+            except ApprovalError as recovery_exc:
+                # get_processed_result re-authorizes the caller itself; a caller
+                # who wasn't authorized to decide the original approval can't
+                # recover its result either — map that error on its own terms
+                # rather than reporting the original ApprovalAlreadyProcessed.
+                raise _map_approval_error(recovery_exc) from recovery_exc
+            if recovered is None:
+                raise _map_approval_error(exc) from exc
+            result = recovered
         except ApprovalError as exc:
             raise _map_approval_error(exc) from exc
         except Exception:
