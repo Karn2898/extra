@@ -41,6 +41,7 @@ def _text(value: Any) -> str | None:
 
 
 def _identifier(value: Any) -> str | None:
+    """Return a usable textual identity claim; booleans are never identities."""
     if isinstance(value, bool):
         return None
     if isinstance(value, int):

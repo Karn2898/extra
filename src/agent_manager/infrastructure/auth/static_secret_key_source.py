@@ -6,15 +6,15 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from agent_manager.infrastructure.auth.key_source import (
-    HMAC_SHA256,
-    MIN_SECRET_LENGTH,
-    KeySource,
-)
+from agent_manager.infrastructure.auth.key_source import HMAC_SHA256, KeySource
+
+MIN_SECRET_LENGTH = 32
 
 
 @dataclass(frozen=True)
 class StaticSecretKeySource(KeySource):
+    """One shared HMAC secret."""
+
     secret: str
     algorithms: tuple[str, ...] = (HMAC_SHA256,)
 

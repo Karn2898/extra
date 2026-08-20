@@ -32,6 +32,7 @@ class IdentityResolver:
         return self._host.resolve(token)
 
     def names_a_host_user(self, token: str) -> bool:
+        """Whether unverified token data claims a host user; ``resolve`` decides."""
         try:
             return not _is_anonymous_pass(token)
         except TokenError:
@@ -39,6 +40,7 @@ class IdentityResolver:
 
 
 def _is_anonymous_pass(token: str) -> bool:
+    """Route on unverified ``kid`` only; signature verification follows."""
     try:
         return jwt.get_unverified_header(token).get("kid") == ANONYMOUS_KEY_ID
     except jwt.PyJWTError as exc:

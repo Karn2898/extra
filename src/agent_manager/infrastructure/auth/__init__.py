@@ -9,12 +9,11 @@ from agent_manager.infrastructure.auth.host_identity_source import HostIdentityS
 from agent_manager.infrastructure.auth.identity_resolver import IdentityResolver
 from agent_manager.infrastructure.auth.identity_source import IdentitySource
 from agent_manager.infrastructure.auth.issued_token import IssuedToken
-from agent_manager.infrastructure.auth.key_source import (
-    HMAC_SHA256,
+from agent_manager.infrastructure.auth.key_source import HMAC_SHA256, KeySource
+from agent_manager.infrastructure.auth.static_secret_key_source import (
     MIN_SECRET_LENGTH,
-    KeySource,
+    StaticSecretKeySource,
 )
-from agent_manager.infrastructure.auth.static_secret_key_source import StaticSecretKeySource
 from agent_manager.infrastructure.auth.token_error import TokenError
 from agent_manager.infrastructure.auth.token_issuer import encode_token
 from agent_manager.infrastructure.auth.token_policy import TokenPolicy

@@ -25,6 +25,7 @@ class TokenVerifier:
             claims: dict[str, Any] = jwt.decode(
                 token,
                 key,
+                # The allowlist is what rejects `alg: none` and algorithm confusion.
                 algorithms=list(self._key_source.algorithms),
                 leeway=policy.leeway_seconds,
                 issuer=policy.issuer,
@@ -49,6 +50,7 @@ class TokenVerifier:
         return required
 
     def _reject_overlong_lifetime(self, claims: Mapping[str, Any]) -> None:
+        """A long-lived token is a long-lived impersonation window."""
         max_ttl = self._policy.max_ttl_seconds
         if max_ttl is None:
             return

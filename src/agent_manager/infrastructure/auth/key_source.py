@@ -1,4 +1,4 @@
-"""Contract for selecting a token verification key."""
+"""Where a token's verifying key comes from."""
 
 from __future__ import annotations
 
@@ -7,10 +7,11 @@ from collections.abc import Mapping
 from typing import Any
 
 HMAC_SHA256 = "HS256"
-MIN_SECRET_LENGTH = 32
 
 
 class KeySource(ABC):
+    """Select a verification key from the unverified header, which is only a hint."""
+
     algorithms: tuple[str, ...]
 
     @abstractmethod
