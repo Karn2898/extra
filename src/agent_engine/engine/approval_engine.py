@@ -2,18 +2,16 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from typing import Protocol, runtime_checkable
 
 from agent_engine.approvals.decision import ApprovalDecision
 from agent_engine.engine.types import PendingApproval, RunResult
 
 
-class ApprovalEngine(ABC):
-    @abstractmethod
-    async def get_pending_approval(self, run_id: str) -> PendingApproval | None:
-        raise NotImplementedError
+@runtime_checkable
+class ApprovalEngine(Protocol):
+    async def get_pending_approval(self, run_id: str) -> PendingApproval | None: ...
 
-    @abstractmethod
     async def get_processed_result(
         self,
         run_id: str,
@@ -21,10 +19,8 @@ class ApprovalEngine(ABC):
         *,
         caller_user_id: str | None = None,
         caller_session_id: str | None = None,
-    ) -> RunResult | None:
-        raise NotImplementedError
+    ) -> RunResult | None: ...
 
-    @abstractmethod
     async def resume(
         self,
         run_id: str,
@@ -33,5 +29,4 @@ class ApprovalEngine(ABC):
         *,
         caller_user_id: str | None = None,
         caller_session_id: str | None = None,
-    ) -> RunResult:
-        raise NotImplementedError
+    ) -> RunResult: ...

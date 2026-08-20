@@ -51,7 +51,7 @@ class RenameFailingRepository(MemoryRepository):
         raise RuntimeError("title storage unavailable")
 
 
-class CancellableThenSuccessfulEngine(RecordingEngine, RunStatusEngine):
+class CancellableThenSuccessfulEngine(RecordingEngine):
     def __init__(self) -> None:
         super().__init__()
         self.cancelled = asyncio.Event()
@@ -87,6 +87,12 @@ class CancellableThenSuccessfulEngine(RecordingEngine, RunStatusEngine):
         finally:
             self.statuses[context.run_id] = "cancelled"
             self.cancelled.set()
+
+
+def test_run_status_capability_remains_structural() -> None:
+    engine = CancellableThenSuccessfulEngine()
+
+    assert isinstance(engine, RunStatusEngine)
 
 
 def _service(window: int = 10) -> tuple[ConversationService, RecordingEngine]:

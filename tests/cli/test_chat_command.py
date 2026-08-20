@@ -14,7 +14,6 @@ import pytest
 from click.testing import CliRunner
 
 from agent_engine.approvals.decision import ApprovalDecision
-from agent_engine.engine.approval_engine import ApprovalEngine
 from agent_engine.engine.engine import Engine
 from agent_engine.engine.types import ChatMessage, PendingApproval, RunResult
 from agent_engine.runtime.hooks.models import RunContext
@@ -93,7 +92,7 @@ def pending_approval(
     )
 
 
-class ApprovalFakeEngine(FakeEngine, ApprovalEngine):
+class ApprovalFakeEngine(FakeEngine):
     def __init__(self, results: list[RunResult], *, stream_pending: PendingApproval | None = None):
         super().__init__()
         self.results = iter(results)

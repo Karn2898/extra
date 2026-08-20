@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
+from typing import Protocol, runtime_checkable
 
 from agent_engine.approvals.decision import ApprovalDecision
 from agent_engine.runtime.streaming import RunStreamEvent
 
 
-class ApprovalStreamingEngine(ABC):
-    @abstractmethod
+@runtime_checkable
+class ApprovalStreamingEngine(Protocol):
     def resume_stream(
         self,
         run_id: str,
@@ -19,5 +19,4 @@ class ApprovalStreamingEngine(ABC):
         *,
         caller_user_id: str | None = None,
         caller_session_id: str | None = None,
-    ) -> AsyncIterator[RunStreamEvent]:
-        raise NotImplementedError
+    ) -> AsyncIterator[RunStreamEvent]: ...

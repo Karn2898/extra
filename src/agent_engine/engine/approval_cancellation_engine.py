@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from typing import Protocol, runtime_checkable
 
 
-class ApprovalCancellationEngine(ABC):
-    @abstractmethod
+@runtime_checkable
+class ApprovalCancellationEngine(Protocol):
     async def cancel_pending_approval(
         self,
         run_id: str,
@@ -14,5 +14,4 @@ class ApprovalCancellationEngine(ABC):
         *,
         caller_user_id: str | None = None,
         caller_session_id: str | None = None,
-    ) -> None:
-        raise NotImplementedError
+    ) -> None: ...

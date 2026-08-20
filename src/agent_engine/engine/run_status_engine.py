@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from typing import Protocol, runtime_checkable
 
 
-class RunStatusEngine(ABC):
-    @abstractmethod
-    async def get_run_status(self, run_id: str) -> str:
-        raise NotImplementedError
+@runtime_checkable
+class RunStatusEngine(Protocol):
+    async def get_run_status(self, run_id: str) -> str: ...

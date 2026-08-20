@@ -29,9 +29,6 @@ from agent_engine.approvals.session_approval_store import SessionApprovalStore
 from agent_engine.approvals.tool_execution_manager import ToolExecutionManager
 from agent_engine.core.execution import ExecutionPolicy
 from agent_engine.core.spec import AgentSpec, SystemSpec
-from agent_engine.engine.approval_cancellation_engine import ApprovalCancellationEngine
-from agent_engine.engine.approval_engine import ApprovalEngine
-from agent_engine.engine.approval_streaming_engine import ApprovalStreamingEngine
 from agent_engine.engine.engine import Engine
 from agent_engine.engine.langgraph.approval_provider import InterruptApprovalProvider
 from agent_engine.engine.langgraph.checkpointing import (
@@ -49,7 +46,6 @@ from agent_engine.engine.langgraph.graph.traversal import (
     walk,
 )
 from agent_engine.engine.langgraph.tools.mcp_connector import MCPConnector
-from agent_engine.engine.run_status_engine import RunStatusEngine
 from agent_engine.engine.types import ChatMessage, PendingApproval, RunResult
 from agent_engine.loaders.import_roots import register_import_roots
 from agent_engine.loaders.resolver_loader import ResolverLoader
@@ -194,13 +190,7 @@ def _pending_approval_event(system_name: str, result: RunResult) -> RunStreamEve
     )
 
 
-class LangGraphEngine(
-    Engine,
-    ApprovalEngine,
-    ApprovalCancellationEngine,
-    ApprovalStreamingEngine,
-    RunStatusEngine,
-):
+class LangGraphEngine(Engine):
     def __init__(
         self,
         base_dir: Path,
