@@ -31,6 +31,7 @@ class ToolExecutionManager:
     async def begin_execution(
         self, execution_id: str, *, tool_call_id: str, run_id: str, tool_name: str
     ) -> bool:
+        """Return whether this attempt owns the key and may execute."""
         if self._executions is None:
             return True
         _, created = await self._executions.start(
