@@ -25,7 +25,7 @@ from agent_engine.engine.engine import Engine
 from agent_engine.engine.run_status_engine import RunStatusEngine
 from agent_engine.engine.types import RunResult
 from agent_engine.runs.repository import RunRepository
-from agent_engine.runtime.hooks import RunContext
+from agent_engine.runtime.hooks import AuthContext, RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
 from agent_engine.runtime.tool_models import ToolUsageRecord
 from agent_manager.application.context import build_history
@@ -50,6 +50,22 @@ from agent_manager.domain import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _run_context(turn: PreparedConversationTurn) -> RunContext:
+    """The per-run context one turn executes under, carrying the caller's own
+    host credential so tools act as this user rather than share a privileged key."""
+    return RunContext(
+        run_id=turn.run_id,
+        conversation_id=turn.session_id,
+        user_id=turn.user_id,
+        auth_context=AuthContext(
+            user_id=turn.user_id,
+            organization_id=turn.principal.organization_id,
+            roles=turn.principal.roles,
+            inbound_access_token=turn.principal.access_token,
+        ),
+    )
 
 
 class ConversationService:
@@ -139,11 +155,7 @@ class ConversationService:
             result = await self._engine.run(
                 turn.message,
                 history=turn.history,
-                context=RunContext(
-                    run_id=turn.run_id,
-                    conversation_id=turn.session_id,
-                    user_id=turn.user_id,
-                ),
+                context=_run_context(turn),
             )
         except asyncio.CancelledError:
             await self.cancel_turn(turn)
@@ -247,6 +259,7 @@ class ConversationService:
             user_id=user_id,
             message=text,
             history=build_history(prior_context.messages, self._window),
+            principal=principal,
         )
 
     async def complete_turn(
@@ -287,6 +300,7 @@ class ConversationService:
                 decision,
                 caller_user_id=session.user_id,
                 caller_session_id=session.session_id,
+                access_token=principal.access_token,
             )
         except ApprovalAlreadyProcessed:
             recovered = await engine.get_processed_result(
@@ -350,6 +364,7 @@ class ConversationService:
                 decision,
                 caller_user_id=session.user_id,
                 caller_session_id=session.session_id,
+                access_token=principal.access_token,
             )
             try:
                 async for event in engine_stream:
@@ -422,11 +437,7 @@ class ConversationService:
         engine_stream = self._engine.stream(
             turn.message,
             history=turn.history,
-            context=RunContext(
-                run_id=turn.run_id,
-                conversation_id=turn.session_id,
-                user_id=turn.user_id,
-            ),
+            context=_run_context(turn),
         )
         try:
             async for event in engine_stream:

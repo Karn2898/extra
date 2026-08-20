@@ -14,7 +14,11 @@ from agent_engine.engine.langgraph.execution.execution_context import (
 from agent_engine.engine.langgraph.execution.model_context import ModelContext
 from agent_engine.engine.langgraph.execution.model_loop import as_text, emit_route, run_tool_loop
 from agent_engine.engine.langgraph.execution.node_executor import NodeExecutor
-from agent_engine.engine.langgraph.prompting import load_file, render_prompt
+from agent_engine.engine.langgraph.prompting import (
+    load_file,
+    render_prompt,
+    resolve_prompt_context,
+)
 from agent_engine.engine.langgraph.tools.tool_invoker import ToolInvoker
 from agent_engine.loaders.resolver_loader import ResolverLoader
 from agent_engine.runtime.execution_limiter import current_invocation
@@ -48,17 +52,11 @@ class AgentNode(NodeExecutor):
     async def execute(self, state: GraphState) -> GraphState:
         token = current_invocation.set(uuid.uuid4().hex)
         try:
-            ctx = self._resolve_context()
+            ctx = resolve_prompt_context(self._resolver_loader, self._spec)
             system_prompt = self._build_prompt(ctx)
             return await self._run(system_prompt, state)
         finally:
             current_invocation.reset(token)
-
-    def _resolve_context(self) -> dict[str, str]:
-        ctx: dict[str, str] = {}
-        for resolver in self._spec.resolvers:
-            ctx[resolver.id] = str(self._resolver_loader.resolve(self._spec.id, resolver.id, ctx))
-        return ctx
 
     def _build_prompt(self, ctx: dict[str, str]) -> str:
         template = load_file(self._base_dir, self._spec.prompts.system) or self._spec.description

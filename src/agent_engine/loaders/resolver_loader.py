@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -11,14 +12,15 @@ class ResolverLoaderError(RuntimeError):
 
 
 class ResolverLoader:
-    """Loads per-agent resolver classes from plugins/resolvers/{agent_id}.py.
+    """Loads per-node resolver classes from plugins/resolvers/{node_id}.py.
 
     Each file must contain a class named Resolver. The class is instantiated
-    once per agent_id and cached — shared resources (DB connections, clients)
-    are initialized in __init__ and reused across resolver calls.
+    once per node_id and cached — shared resources (DB connections, clients)
+    are initialized in __init__ and reused across resolver calls. Resolved
+    values are never cached; every run resolves again.
 
     If plugins/resolvers/shared.py exists, it is loaded first and registered in
-    sys.modules as "shared" so agent files can inherit from SharedResolver via
+    sys.modules as "shared" so node files can inherit from SharedResolver via
     `from shared import SharedResolver`.
 
     Resolver methods are named after resolver IDs and accept a single ctx dict.
@@ -29,31 +31,25 @@ class ResolverLoader:
         self._instances: dict[str, Any] = {}
         self._shared_loaded = False
 
-    def resolve(
-        self,
-        agent_id: str,
-        resolver_id: str,
-        context: dict[str, Any],
-    ) -> Any:
-        """Run one named resolver method against the request-scoped context."""
-        instance = self._get_or_create(agent_id)
+    def load(self, node_id: str, resolver_id: str) -> Callable[[dict[str, Any]], Any]:
+        instance = self._get_or_create(node_id)
         method = getattr(instance, resolver_id, None)
         if method is None or not callable(method):
             cls_name = type(instance).__name__
             raise ResolverLoaderError(
-                f"Resolver class '{cls_name}' for agent '{agent_id}' has no method '{resolver_id}'"
+                f"Resolver class '{cls_name}' for node '{node_id}' has no method '{resolver_id}'"
             )
-        return method(context)
+        return method
 
-    def _get_or_create(self, agent_id: str) -> Any:
-        if agent_id not in self._instances:
-            self._instances[agent_id] = self._instantiate(agent_id)
-        return self._instances[agent_id]
+    def _get_or_create(self, node_id: str) -> Any:
+        if node_id not in self._instances:
+            self._instances[node_id] = self._instantiate(node_id)
+        return self._instances[node_id]
 
-    def _instantiate(self, agent_id: str) -> Any:
+    def _instantiate(self, node_id: str) -> Any:
         resolvers_dir = self._base_dir / "plugins" / "resolvers"
         self._ensure_shared_module(resolvers_dir)
-        path = resolvers_dir / f"{agent_id}.py"
+        path = resolvers_dir / f"{node_id}.py"
         if not path.is_file():
             raise ResolverLoaderError(
                 f"Resolver plugin not found: {path}\nRun `agentctl generate` to create the stub."
@@ -66,13 +62,13 @@ class ResolverLoader:
             return cls()
         except Exception as exc:
             raise ResolverLoaderError(
-                f"Failed to instantiate Resolver for agent '{agent_id}': {exc}"
+                f"Failed to instantiate Resolver for node '{node_id}': {exc}"
             ) from exc
 
     def _ensure_shared_module(self, resolvers_dir: Path) -> None:
         """Load shared.py once and register it as sys.modules['shared'].
 
-        This lets agent resolver files do `from shared import SharedResolver`
+        This lets node resolver files do `from shared import SharedResolver`
         without needing shared.py on the Python path.
         """
         if self._shared_loaded:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 from agent_manager.domain.identity import Principal
 from agent_manager.infrastructure.auth.claim_mapping import ClaimMapping
 from agent_manager.infrastructure.auth.identity_source import IdentitySource
@@ -14,4 +16,6 @@ class HostIdentitySource(IdentitySource):
         self._claims = claims or ClaimMapping()
 
     def resolve(self, token: str) -> Principal:
-        return self._claims.to_principal(self._verifier.verify(token))
+        principal = self._claims.to_principal(self._verifier.verify(token))
+        # Carried only once the signature checked out.
+        return dataclasses.replace(principal, access_token=token)

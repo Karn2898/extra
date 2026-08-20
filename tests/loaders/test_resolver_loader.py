@@ -26,19 +26,19 @@ class Resolver:
     )
 
 
-def test_resolve_reuses_one_cached_instance_per_agent(tmp_path: Path) -> None:
+def test_load_reuses_one_cached_instance_per_node(tmp_path: Path) -> None:
     _write_resolver(tmp_path)
     loader = ResolverLoader(tmp_path)
 
-    first = loader.resolve("researcher", "topic", {"topic": "runtime"})
-    second = loader.resolve("researcher", "topic", {"topic": "security"})
+    first = loader.load("researcher", "topic")({"topic": "runtime"})
+    second = loader.load("researcher", "topic")({"topic": "security"})
 
     assert (first, second) == ("runtime:1", "security:2")
 
 
-def test_resolve_rejects_an_unknown_resolver_id(tmp_path: Path) -> None:
+def test_load_rejects_an_unknown_resolver_id(tmp_path: Path) -> None:
     _write_resolver(tmp_path)
     loader = ResolverLoader(tmp_path)
 
     with pytest.raises(ResolverLoaderError, match="has no method 'missing'"):
-        loader.resolve("researcher", "missing", {})
+        loader.load("researcher", "missing")

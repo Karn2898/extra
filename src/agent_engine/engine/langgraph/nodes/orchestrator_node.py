@@ -23,11 +23,16 @@ from agent_engine.engine.langgraph.execution.model_loop import as_text, emit_rou
 from agent_engine.engine.langgraph.execution.node_executor import NodeExecutor
 from agent_engine.engine.langgraph.filters import RouteFilter
 from agent_engine.engine.langgraph.nodes.child_entry import ChildEntry
-from agent_engine.engine.langgraph.prompting import load_file
+from agent_engine.engine.langgraph.prompting import (
+    load_file,
+    render_prompt,
+    resolve_prompt_context,
+)
 from agent_engine.engine.langgraph.tools.executed_tools_tool import (
     EXECUTED_TOOLS_TOOL_NAME,
     build_executed_tools_tool,
 )
+from agent_engine.loaders.resolver_loader import ResolverLoader
 from agent_engine.runtime.execution_limiter import (
     ExecutionLimitExceeded,
     blocked_message,
@@ -92,6 +97,7 @@ class OrchestratorNode(NodeExecutor):
         model: BaseChatModel,
         children: list[ChildEntry],
         filters: list[RouteFilter],
+        resolver_loader: ResolverLoader,
         base_dir: Path,
         usage_context: ToolUsageContextProvider,
         usage_tracker: ToolUsageTracker,
@@ -103,6 +109,7 @@ class OrchestratorNode(NodeExecutor):
         self._fallback_model = fallback_model
         self._children = children
         self._filters = filters
+        self._resolver_loader = resolver_loader
         self._base_dir = base_dir
         self._usage = usage_tracker
         self._usage_context = usage_context
@@ -112,15 +119,22 @@ class OrchestratorNode(NodeExecutor):
         token = current_invocation.set(uuid.uuid4().hex)
         try:
             candidates = self._filter_children(state)
-            base_prompt = (
-                load_file(self._base_dir, self._spec.prompts.system) or self._spec.description
-            )
-            orchestrator_content = load_file(self._base_dir, self._spec.prompts.orchestrator)
-            base_prompt = f"{base_prompt}\n\n{orchestrator_content}"
-            system_prompt = f"{base_prompt}\n{_ORCHESTRATOR_CONTRACT}"
+            ctx = resolve_prompt_context(self._resolver_loader, self._spec)
+            system_prompt = f"{self._build_prompt(ctx)}\n{_ORCHESTRATOR_CONTRACT}"
             return await self._run(system_prompt, candidates, state)
         finally:
             current_invocation.reset(token)
+
+    def _build_prompt(self, ctx: dict[str, str]) -> str:
+        """Load both prompt templates and interpolate resolver values.
+
+        Rendered as one template so a variable resolves identically wherever it
+        appears; the engine's own contract is appended afterwards and is never
+        subject to interpolation.
+        """
+        base = load_file(self._base_dir, self._spec.prompts.system) or self._spec.description
+        orchestrator = load_file(self._base_dir, self._spec.prompts.orchestrator)
+        return render_prompt(f"{base}\n\n{orchestrator}", ctx)
 
     def _filter_children(self, state: GraphState) -> list[ChildEntry]:
         """Apply every RouteFilter to narrow down which child tools are available."""

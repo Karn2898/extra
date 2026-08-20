@@ -410,8 +410,9 @@ For the MVP:
 - hide local-vs-MCP origin by presenting both as LangChain tools, while tracking
   the origin in the tool-usage records (✅ implemented);
 - bind discovered MCP tools into LangGraph/LangChain tool-calling (✅ implemented);
-- pass trusted request context through `ctx` into tool calls (⏳ planned —
-  resolvers receive `ctx`, tools do not yet);
+- reach the run's context from a tool via `current_run_context` (✅ implemented —
+  a context variable rather than a `ctx` parameter, so tool signatures stay
+  exactly what the model sees);
 - redact secrets from traces (⏳ planned, task 0011);
 - keep prompt wording out of the enforcement path.
 

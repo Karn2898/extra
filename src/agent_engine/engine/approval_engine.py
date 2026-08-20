@@ -29,4 +29,5 @@ class ApprovalEngine(Protocol):
         *,
         caller_user_id: str | None = None,
         caller_session_id: str | None = None,
+        access_token: str | None = None,
     ) -> RunResult: ...

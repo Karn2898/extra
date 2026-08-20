@@ -159,6 +159,7 @@ class GraphBuilder:
             model=model,
             children=children,
             filters=self._filters,
+            resolver_loader=self._resolver_loader,
             base_dir=self._base_dir,
             usage_context=self._usage_context,
             usage_tracker=self._usage_tracker,

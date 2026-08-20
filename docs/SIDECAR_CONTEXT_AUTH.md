@@ -27,7 +27,41 @@ Content-Type: application/json
 
 For each request, the runtime builds `ctx` from headers and request data. Plugin
 methods receive `ctx`; client code decides how to interpret tokens, user ids,
-tenant ids, roles, and permissions.
+tenant ids, roles, and permissions. Tools are not passed `ctx` as an argument —
+that would put it in the schema the model sees — and read it from
+`agent_engine.runtime.hooks.current_run_context` instead.
+
+---
+
+## Credentials Are Accepted, Facts Are Derived
+
+`Authorization` reaches `ctx.auth_context.inbound_access_token` and is forwarded
+to plugin code without being verified here. That is deliberate, and the split it
+rests on is the one rule to keep in mind:
+
+- **A credential is self-securing.** Forge it and the system that owns it answers
+  401. Nothing can reach through this engine that it could not already reach
+  directly, so taking one from the caller costs nothing.
+- **A fact is not.** `{"role": "admin"}` works the moment anything trusts it.
+
+So a credential may be accepted from the caller; a user id, a role, or a tenant
+must be *derived* — a resolver calls the owning system with the credential and
+uses what comes back. Nothing else about the caller is accepted over the wire,
+which is why `/invoke` takes no context object: there is nothing safe to put in
+one that a resolver cannot obtain for itself.
+
+Where identity must be **proven** rather than passed along — conversation
+ownership, protected nodes — run behind `agent_manager`, which verifies
+signatures before building the context. The engine alone is a conduit; the
+manager is an authority. Both produce the same `RunContext`.
+
+The engine guarantees one property, and there is a test pinning it:
+`inbound_access_token` never enters graph state, so it cannot reach a prompt,
+the model, or a response.
+
+The other half is the plugin author's to keep: a tool that finds no credential
+must **fail**, never fall back to a shared key. That fallback is precisely what
+lets every caller act as an administrator, and no engine can prevent it for you.
 
 ---
 
@@ -43,11 +77,11 @@ Each resolver has a **scope** (`shared` or `agent`) and a return type:
 ```yaml
 resolvers:
   current_date:
-    scope: shared        # generated on BaseResolver, inherited by all agents
+    scope: shared        # generated on BaseResolver, inherited by all nodes
   user_name:
     scope: shared
   experience_level:
-    scope: agent         # generated only on the declaring agent's subclass
+    scope: agent         # generated only on the declaring node's subclass
 
 agents:
   learning_planner_agent:
@@ -127,7 +161,8 @@ automatically.
 
 ### Runtime resolution
 
-1. The runtime loads the agent's resolver class from TOML.
+1. The runtime loads the node's resolver class from TOML (agents and
+   orchestrators alike).
 2. The class is instantiated once with configured dependencies.
 3. Methods are called by resolver id; shared methods resolve via Python
    inheritance.

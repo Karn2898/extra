@@ -156,8 +156,9 @@ class ApprovalFakeEngine(FakeEngine):
         *,
         caller_user_id: str | None = None,
         caller_session_id: str | None = None,
+        access_token: str | None = None,
     ) -> RunResult:
-        del caller_session_id
+        del caller_session_id, access_token
         assert isinstance(decision, ApprovalDecision)
         self.resume_calls.append((run_id, approval_id, decision, caller_user_id))
         return next(self.results)

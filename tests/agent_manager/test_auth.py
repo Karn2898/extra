@@ -196,6 +196,33 @@ def test_a_visitor_pass_round_trips_but_a_host_token_does_not_become_one() -> No
     assert host_user.external_id == "alice"
 
 
+def test_a_verified_host_token_is_carried_so_tools_can_act_as_that_user() -> None:
+    token = _encode()
+
+    principal = HostIdentitySource(_verifier()).resolve(token)
+
+    assert principal.access_token == token
+
+
+def test_a_visitor_pass_is_never_carried_as_a_host_credential() -> None:
+    """A pass we minted proves nothing to the host."""
+    resolver = build_identity_resolver(
+        _settings(extra_auth_mode=AuthMode.MINT, extra_auth_secret=SECRET)
+    )
+
+    visitor = resolver.resolve(resolver.anonymous.issue().token)
+
+    assert visitor.access_token is None
+
+
+def test_a_carried_token_stays_out_of_the_principal_repr() -> None:
+    """`repr` reaches logs and tracebacks by accident; the credential must not."""
+    principal = HostIdentitySource(_verifier()).resolve(_encode())
+
+    assert principal.access_token is not None
+    assert principal.access_token not in repr(principal)
+
+
 def test_mint_mode_accepts_the_token_our_own_docs_tell_hosts_to_produce() -> None:
     """Pins docs/identity.mdx against the code. The documented snippet signs
     `sub` with `expiresIn`; Node's jsonwebtoken adds `iat` itself. Drop the

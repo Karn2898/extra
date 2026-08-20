@@ -52,6 +52,7 @@ class _ApprovalRecordingEngine(RecordingEngine):
             tuple[str, str, ApprovalDecision | str, str | None, str | None]
         ] = []
         self.cancel_calls: list[tuple[str, str, str | None, str | None]] = []
+        self.resume_tokens: list[str | None] = []
         self.completed_results: dict[str, RunResult] = {}
 
     def _pending_result(self, context: RunContext | None) -> RunResult:
@@ -128,8 +129,10 @@ class _ApprovalRecordingEngine(RecordingEngine):
         *,
         caller_user_id: str | None = None,
         caller_session_id: str | None = None,
+        access_token: str | None = None,
     ) -> RunResult:
         self.resume_calls.append((run_id, approval_id, decision, caller_user_id, caller_session_id))
+        self.resume_tokens.append(access_token)
         answer = "The tool request was denied." if decision == ApprovalDecision.DENY else "sent"
         result = RunResult(
             system_name="stub",
@@ -149,8 +152,10 @@ class _ApprovalRecordingEngine(RecordingEngine):
         *,
         caller_user_id: str | None = None,
         caller_session_id: str | None = None,
+        access_token: str | None = None,
     ) -> AsyncIterator[RunStreamEvent]:
         self.resume_calls.append((run_id, approval_id, decision, caller_user_id, caller_session_id))
+        self.resume_tokens.append(access_token)
         answer = "The tool request was denied." if decision == ApprovalDecision.DENY else "sent"
         yield RunStreamEvent(type="resume_started", run_id=run_id)
         yield RunStreamEvent(
@@ -702,6 +707,9 @@ def test_conversation_approval_actions_resume_and_persist(
         ("assistant", expected_answer),
     ]
     assert client.get("/conversations/session-1/usage", headers=headers).json()["used_tokens"] == 7
+    # The approver's credential as of the decision — a run may have waited hours
+    # for a human, by which point the one it started with is long expired.
+    assert engine.resume_tokens == [headers["Authorization"].removeprefix("Bearer ")]
 
 
 def test_conversation_approval_stream_resumes_same_run_and_persists() -> None:
@@ -750,8 +758,9 @@ async def test_closing_approval_stream_cancels_same_run_without_partial_assistan
             *,
             caller_user_id: str | None = None,
             caller_session_id: str | None = None,
+            access_token: str | None = None,
         ) -> AsyncIterator[RunStreamEvent]:
-            del approval_id, decision, caller_user_id, caller_session_id
+            del approval_id, decision, caller_user_id, caller_session_id, access_token
             await runs.transition_if_allowed(run_id, RunStatus.RESUMING)
             await runs.transition_if_allowed(run_id, RunStatus.RUNNING)
             try:
@@ -1069,8 +1078,9 @@ def test_conversation_approval_sanitizes_engine_failure(
             *,
             caller_user_id: str | None = None,
             caller_session_id: str | None = None,
+            access_token: str | None = None,
         ) -> RunResult:
-            del run_id, approval_id, decision, caller_user_id, caller_session_id
+            del run_id, approval_id, decision, caller_user_id, caller_session_id, access_token
             raise RuntimeError("private approval failure")
 
     engine = FailingApprovalEngine()
@@ -1104,8 +1114,9 @@ def test_conversation_approval_sanitizes_typed_approval_failure() -> None:
             *,
             caller_user_id: str | None = None,
             caller_session_id: str | None = None,
+            access_token: str | None = None,
         ) -> RunResult:
-            del run_id, decision, caller_user_id, caller_session_id
+            del run_id, decision, caller_user_id, caller_session_id, access_token
             raise ApprovalNotFound(f"private-{approval_id}")
 
     engine = MissingApprovalEngine()
@@ -1138,6 +1149,7 @@ def test_conversation_approval_retry_recovers_result_without_duplicate_message()
             *,
             caller_user_id: str | None = None,
             caller_session_id: str | None = None,
+            access_token: str | None = None,
         ) -> RunResult:
             if run_id in self.completed_results:
                 raise ApprovalAlreadyProcessed(approval_id, "approved")
@@ -1147,6 +1159,7 @@ def test_conversation_approval_retry_recovers_result_without_duplicate_message()
                 decision,
                 caller_user_id=caller_user_id,
                 caller_session_id=caller_session_id,
+                access_token=access_token,
             )
 
     class FailFirstAssistantWrite(MemoryRepository):
