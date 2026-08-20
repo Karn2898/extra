@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any, TypeAlias
 
-from pydantic import BaseModel
+from pydantic import BaseModel, WithJsonSchema
+
+from agent_engine.approvals.models import RunStatus
+
+_RUN_STATUS_FIELD: TypeAlias = Annotated[
+    RunStatus,
+    WithJsonSchema({"title": "Status", "type": "string"}),
+]
 
 
 class InvokeRequest(BaseModel):
@@ -39,7 +46,7 @@ class InvokeResponse(BaseModel):
     visited: list[str]
     used_tools: list[ToolRecord]
     run_id: str
-    status: str = "completed"
+    status: _RUN_STATUS_FIELD = RunStatus.COMPLETED
     pending_approval: PendingApprovalModel | None = None
 
 
@@ -53,5 +60,5 @@ class ApprovalDecisionBody(ApprovalDecisionRequest):
 
 class RunStatusResponse(BaseModel):
     run_id: str
-    status: str
+    status: _RUN_STATUS_FIELD
     pending_approval: PendingApprovalModel | None = None

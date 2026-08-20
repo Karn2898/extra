@@ -14,6 +14,7 @@ import pytest
 from click.testing import CliRunner
 
 from agent_engine.approvals.decision import ApprovalDecision
+from agent_engine.approvals.models import RunStatus
 from agent_engine.engine.engine import Engine
 from agent_engine.engine.types import ChatMessage, PendingApproval, RunResult
 from agent_engine.runtime.hooks.models import RunContext
@@ -383,7 +384,7 @@ async def test_local_chat_prompts_for_approval_and_resumes_allow_once() -> None:
                 system_name="fake",
                 visited=["researcher"],
                 answer="",
-                status="pending_approval",
+                status=RunStatus.PENDING_APPROVAL,
                 pending_approval=pending,
             ),
             RunResult(system_name="fake", visited=["researcher"], answer="architecture"),
@@ -413,7 +414,7 @@ async def test_local_chat_reprompts_invalid_approval_then_allows_session() -> No
                 system_name="fake",
                 visited=[],
                 answer="",
-                status="pending_approval",
+                status=RunStatus.PENDING_APPROVAL,
                 pending_approval=pending,
             ),
             RunResult(system_name="fake", visited=[], answer="done"),
@@ -440,7 +441,7 @@ async def test_local_chat_stops_when_approval_input_ends() -> None:
                 system_name="fake",
                 visited=[],
                 answer="",
-                status="pending_approval",
+                status=RunStatus.PENDING_APPROVAL,
                 pending_approval=pending,
             ),
         ]
@@ -467,7 +468,7 @@ async def test_local_chat_exit_words_stop_from_approval_prompt(word: str) -> Non
                 system_name="fake",
                 visited=[],
                 answer="",
-                status="pending_approval",
+                status=RunStatus.PENDING_APPROVAL,
                 pending_approval=pending,
             ),
         ]
@@ -492,14 +493,14 @@ async def test_local_chat_handles_multiple_approvals_in_one_run() -> None:
                 system_name="fake",
                 visited=[],
                 answer="",
-                status="pending_approval",
+                status=RunStatus.PENDING_APPROVAL,
                 pending_approval=first,
             ),
             RunResult(
                 system_name="fake",
                 visited=[],
                 answer="",
-                status="pending_approval",
+                status=RunStatus.PENDING_APPROVAL,
                 pending_approval=second,
             ),
             RunResult(system_name="fake", visited=[], answer="complete"),

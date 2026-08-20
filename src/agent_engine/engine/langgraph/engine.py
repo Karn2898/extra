@@ -478,16 +478,16 @@ class LangGraphEngine(Engine):
             used_tools=await self._used_tools(ctx),
             input_tokens=token_usage[0],
             output_tokens=token_usage[1],
-            status="pending_approval",
+            status=RunStatus.PENDING_APPROVAL,
             pending_approval=_pending_approval(approval),
         )
 
-    async def get_run_status(self, run_id: str) -> str:
+    async def get_run_status(self, run_id: str) -> RunStatus:
         """Return the current status of a run (raises RunNotFound if unknown)."""
         run = await self._run_repository.get(run_id)
         if run is None:
             raise RunNotFound(run_id)
-        return run.status.value
+        return run.status
 
     async def get_pending_approval(self, run_id: str) -> PendingApproval | None:
         """Return the run's outstanding approval, or None if there is none."""
@@ -532,7 +532,7 @@ class LangGraphEngine(Engine):
                 used_tools=await self._used_tools(ctx),
                 input_tokens=token_usage[0],
                 output_tokens=token_usage[1],
-                status="pending_approval",
+                status=RunStatus.PENDING_APPROVAL,
                 pending_approval=approval,
             )
         return await self._completed_result(ctx, values, token_usage=token_usage)

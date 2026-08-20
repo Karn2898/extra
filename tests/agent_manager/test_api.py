@@ -67,7 +67,7 @@ class _ApprovalRecordingEngine(RecordingEngine):
             system_name="stub",
             visited=["writer"],
             answer="",
-            status="pending_approval",
+            status=RunStatus.PENDING_APPROVAL,
             pending_approval=self.pending,
         )
 

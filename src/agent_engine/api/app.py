@@ -274,7 +274,9 @@ def create_app(
         except ApprovalError as exc:
             raise _map_approval_error(exc) from exc
         return RunStatusResponse(
-            run_id=run_id, status=status, pending_approval=_pending_model(pending)
+            run_id=run_id,
+            status=status,
+            pending_approval=_pending_model(pending),
         )
 
     async def _decide(
