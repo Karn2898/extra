@@ -44,11 +44,7 @@ def _model_factory_kwargs(
     factory: ModelFactory,
     model: BaseModelConfig,
 ) -> dict[str, object]:
-    optional = {
-        "region": model.region,
-        "max_tokens": model.max_tokens,
-        "top_p": model.top_p,
-    }
+    optional = {key: getattr(model, key) for key in _MODEL_FACTORY_OPTIONAL_KWARGS}
     present: dict[str, object] = {
         key: value for key, value in optional.items() if value is not None
     }
