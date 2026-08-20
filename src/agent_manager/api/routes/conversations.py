@@ -7,12 +7,16 @@ import logging
 from collections.abc import AsyncGenerator, AsyncIterator
 from typing import cast
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from agent_engine.runtime.streaming import RunStreamEvent
 from agent_manager.api.deps import Caller, Service
-from agent_manager.api.errors import INTERNAL_ERROR_MESSAGE, as_http_error
+from agent_manager.api.errors import (
+    INTERNAL_ERROR_MESSAGE,
+    as_http_error,
+    as_internal_http_error,
+)
 from agent_manager.api.presenters import run_response, to_stream_event
 from agent_manager.api.schemas import (
     ConversationSummary,
@@ -98,19 +102,13 @@ async def send_message(
     service: Service,
     caller: Caller,
 ) -> SendMessageResponse:
-    try:
-        with as_http_error():
-            result = await service.send(
-                conversation_id,
-                body.message,
-                caller,
-                edit_message_id=body.edit_message_id,
-            )
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("conversation request failed")
-        raise HTTPException(status_code=500, detail=INTERNAL_ERROR_MESSAGE) from None
+    with as_internal_http_error(logger, "conversation request failed"), as_http_error():
+        result = await service.send(
+            conversation_id,
+            body.message,
+            caller,
+            edit_message_id=body.edit_message_id,
+        )
     return run_response(result)
 
 
@@ -150,6 +148,7 @@ async def stream_message(
             exhausted = True
         except Exception:
             await service.fail_turn(turn)
+            # The run is already terminal; `finally` must not try to cancel it.
             exhausted = True
             logger.exception("conversation stream failed")
             payload = {"type": "error", "error": INTERNAL_ERROR_MESSAGE}
