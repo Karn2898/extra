@@ -4,12 +4,22 @@ import importlib.util
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from agent_engine.engine.langgraph.nodes.child_entry import ChildEntry
+from typing import Any, Protocol, TypeVar
 
 logger = logging.getLogger(__name__)
+
+
+class Filterable(Protocol):
+    """The minimal view a RouteFilter needs of a routing candidate."""
+
+    @property
+    def id(self) -> str: ...
+
+    @property
+    def protected(self) -> bool: ...
+
+
+T = TypeVar("T", bound=Filterable)
 
 
 class RouteFilter(ABC):
@@ -21,7 +31,7 @@ class RouteFilter(ABC):
     """
 
     @abstractmethod
-    def filter(self, ctx: dict[str, Any], candidates: list[ChildEntry]) -> list[ChildEntry]:
+    def filter(self, ctx: dict[str, Any], candidates: list[T]) -> list[T]:
         raise NotImplementedError
 
 
@@ -31,7 +41,7 @@ class AccessFilter(RouteFilter):
     def __init__(self, base_dir: Path) -> None:
         self._resolver = _load_access_resolver(base_dir)
 
-    def filter(self, ctx: dict[str, Any], candidates: list[ChildEntry]) -> list[ChildEntry]:
+    def filter(self, ctx: dict[str, Any], candidates: list[T]) -> list[T]:
         return [c for c in candidates if not c.protected or self._can_access(ctx, c.id)]
 
     def _can_access(self, ctx: dict[str, Any], node_id: str) -> bool:

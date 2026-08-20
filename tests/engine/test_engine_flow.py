@@ -15,6 +15,7 @@ That single rule drives both orchestrators (children-as-tools) and agents
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -334,6 +335,24 @@ def _candidate(node_id: str, protected: bool) -> ChildEntry:
         protected=protected,
         node=_UnusedNode(),
     )
+
+
+@dataclass(frozen=True)
+class _FilterCandidate:
+    id: str
+    protected: bool
+
+
+def test_access_filter_accepts_candidates_without_runtime_node_dependency(tmp_path: Path) -> None:
+    write_access(tmp_path, allow=False)
+    route_filter = AccessFilter(tmp_path)
+
+    kept = route_filter.filter(
+        {},
+        [_FilterCandidate("public", False), _FilterCandidate("protected", True)],
+    )
+
+    assert kept == [_FilterCandidate("public", False)]
 
 
 def test_access_filter_drops_denied_protected(tmp_path: Path) -> None:
