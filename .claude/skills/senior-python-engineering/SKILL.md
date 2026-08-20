@@ -49,8 +49,8 @@ future agents can safely modify without fear.
   in adapters at the edges; core logic stays pure and testable.
 - **Dependency injection over hidden globals.** Pass collaborators in; no
   module-level mutable singletons, and never mutable global request state.
-- **Adapters via Protocols/interfaces.** External integrations (LLM, MCP, DB,
-  plugins) sit behind `typing.Protocol`/ABCs so they can be faked in tests.
+- **Adapters via explicit interfaces.** External integrations (LLM, MCP, DB,
+  plugins) sit behind ABCs so implementations are navigable and can be faked in tests.
 - **Clear async boundaries.** Don't mix blocking I/O into async paths; keep
   async at the edges and be consistent within a module.
 - **Typed, actionable errors.** Define specific exception types; messages name
@@ -67,7 +67,7 @@ future agents can safely modify without fear.
 2. **Model the data.** Decide Pydantic (boundary/validated) vs. dataclass
    (internal/domain); make domain models immutable where possible.
 3. **Define the interface first.** Sketch the public function/class signatures
-   and any `Protocol` for external dependencies.
+   and any ABC for external dependencies.
 4. **Implement the core pure logic**, keeping I/O behind injected adapters.
 5. **Wire dependencies explicitly** (constructor/params), not via globals.
 6. **Type and lint:** run `make format` then `make lint` (ruff + mypy).
@@ -90,7 +90,7 @@ future agents can safely modify without fear.
 - [ ] Domain models separated from transport/API models.
 - [ ] Side effects isolated at adapters; core logic is pure.
 - [ ] Dependencies injected; no hidden/mutable globals; no global request state.
-- [ ] External integrations sit behind Protocols/ABCs.
+- [ ] External integrations sit behind explicit ABCs.
 - [ ] Errors are typed and actionable.
 - [ ] No premature abstraction or clever code.
 - [ ] `make check` passes.
