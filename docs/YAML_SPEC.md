@@ -276,8 +276,12 @@ different times and have different trust boundaries.
 
 Resolvers are declared as ids in YAML. Each resolver has a **scope**:
 
-- `shared` — generated once on `SharedResolver`; inherited by all agents.
-- `agent` (default) — generated only on the declaring agent's resolver subclass.
+- `shared` — generated once on `SharedResolver`; inherited by all nodes.
+- `agent` (default) — generated only on the declaring node's resolver subclass.
+
+Orchestrators take resolvers too: both of an orchestrator's prompt files are
+rendered against the same resolved values, so a router's own instructions can
+depend on the request rather than being fixed text.
 
 ```yaml
 resolvers:
@@ -287,10 +291,11 @@ resolvers:
     scope: agent
 ```
 
-Resolvers are generated one file per agent under `plugins/resolvers/`: each
-agent file defines a `Resolver` class, and shared methods live on a
-`SharedResolver` in `plugins/resolvers/shared.py` that agent classes inherit.
-The runtime loads the agent's `Resolver` by file path and instantiates it once.
+Resolvers are generated one file per node under `plugins/resolvers/`: each
+node file defines a `Resolver` class, and shared methods live on a
+`SharedResolver` in `plugins/resolvers/shared.py` that node classes inherit.
+The runtime loads the node's `Resolver` by file path and instantiates it once.
+The instance is reused; the values it returns are resolved again on every run.
 
 The importable refs are catalogued in the single plugin manifest
 `plugins/plugins.toml` (see [RUNTIME_HOOKS.md](RUNTIME_HOOKS.md) →

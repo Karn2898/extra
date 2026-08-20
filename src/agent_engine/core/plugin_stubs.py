@@ -27,7 +27,7 @@ from enum import Enum
 from pathlib import Path
 
 from agent_engine.core.errors import ValidationError
-from agent_engine.core.spec import AgentSpec, GraphNode, SystemSpec
+from agent_engine.core.spec import AgentSpec, GraphNode, NodeSpec, SystemSpec
 
 _GENERATE_HINT = "run `agentctl generate` to create the stub"
 
@@ -60,9 +60,9 @@ class _Scanner:
     def walk(self, node: GraphNode) -> None:
         if node.node.protected:
             self.has_protected = True
+        self._check_resolvers(node.node)
         if isinstance(node.node, AgentSpec):
             self._check_tools(node.node)
-            self._check_resolvers(node.node)
             self._check_mcp_auth(node.node)
         self._check_prompts(node)
         for child in node.children:
@@ -90,26 +90,26 @@ class _Scanner:
 
     # -- resolvers -------------------------------------------------------
 
-    def _check_resolvers(self, agent: AgentSpec) -> None:
-        if not agent.resolvers:
+    def _check_resolvers(self, node: NodeSpec) -> None:
+        if not node.resolvers:
             return
-        agent_rel = Path("plugins") / "resolvers" / f"{agent.id}.py"
-        agent_path = self._base_dir / agent_rel
-        if not agent_path.is_file():
+        node_rel = Path("plugins") / "resolvers" / f"{node.id}.py"
+        node_path = self._base_dir / node_rel
+        if not node_path.is_file():
             self._error(
-                f"{agent.id}.resolvers",
-                f"Resolver plugin not found: {agent_rel} — {_GENERATE_HINT}",
+                f"{node.id}.resolvers",
+                f"Resolver plugin not found: {node_rel} — {_GENERATE_HINT}",
             )
             return
         shared_path = self._base_dir / "plugins" / "resolvers" / "shared.py"
-        for resolver in agent.resolvers:
-            verdict = _stub_verdict(agent_path, resolver.id, class_name="Resolver")
+        for resolver in node.resolvers:
+            verdict = _stub_verdict(node_path, resolver.id, class_name="Resolver")
             if verdict is _Verdict.NO_FUNCTION:
                 # Fall back to the conventional shared base class.
                 verdict = _stub_verdict(shared_path, resolver.id, class_name="SharedResolver")
             if verdict is _Verdict.STUB:
                 self._error(
-                    f"{agent.id}.resolvers.{resolver.id}",
+                    f"{node.id}.resolvers.{resolver.id}",
                     f"Resolver '{resolver.id}' is declared but not implemented (generated stub)",
                 )
 

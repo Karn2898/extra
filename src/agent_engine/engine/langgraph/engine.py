@@ -1013,6 +1013,7 @@ class LangGraphEngine(Engine):
         parent_path: str | None,
     ) -> OrchestratorNode:
         assert isinstance(node.node, OrchestratorSpec)
+        assert self._resolver_loader is not None
         spec = node.node
         path = node_id(node, parent_path)
         model = self._build_model(spec.model)
@@ -1042,6 +1043,7 @@ class LangGraphEngine(Engine):
             model=model,
             children=children,
             filters=self._filters,
+            resolver_loader=self._resolver_loader,
             base_dir=self._base_dir,
             usage_context=self._tool_usage_context,
             usage_tracker=self._tool_usage_tracker,

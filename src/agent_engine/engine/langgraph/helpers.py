@@ -8,7 +8,8 @@ from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from agent_engine.core.spec import AgentSpec, GraphNode, OrchestratorSpec
+from agent_engine.core.spec import AgentSpec, GraphNode, NodeSpec, OrchestratorSpec
+from agent_engine.loaders.resolver_loader import ResolverLoader
 from agent_engine.runtime.execution import ExecutionLimitExceeded, current_execution, log_limit
 from agent_engine.runtime.hooks import current_run_context
 from agent_engine.runtime.state import GraphState
@@ -109,6 +110,20 @@ def render_prompt(template: str, ctx: dict[str, str]) -> str:
         return ctx.get(match.group(1).strip(), match.group(0))
 
     return re.sub(r"\{\{\s*(\w+)\s*\}\}", replace, template)
+
+
+def resolve_prompt_context(loader: ResolverLoader, spec: NodeSpec) -> dict[str, str]:
+    """Run a node's declared resolvers and return the accumulated key→value map.
+
+    Resolvers are invoked in declaration order; each receives the values
+    produced by previous ones so they can build on one another. Resolution
+    happens per run and is never cached — a resolver may answer differently
+    for each caller.
+    """
+    ctx: dict[str, str] = {}
+    for resolver in spec.resolvers:
+        ctx[resolver.id] = str(loader.load(spec.id, resolver.id)(ctx))
+    return ctx
 
 
 def load_file(base_dir: Path, rel_path: str | None) -> str:

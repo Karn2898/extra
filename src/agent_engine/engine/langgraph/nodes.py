@@ -35,6 +35,7 @@ from agent_engine.engine.langgraph.helpers import (
     execution_context_refresher,
     load_file,
     render_prompt,
+    resolve_prompt_context,
     run_tool_loop,
 )
 from agent_engine.engine.langgraph.tool_invoker import ToolInvoker
@@ -135,22 +136,11 @@ class AgentNode:
     async def __call__(self, state: GraphState) -> GraphState:
         token = current_invocation.set(uuid.uuid4().hex)
         try:
-            ctx = self._resolve_context()
+            ctx = resolve_prompt_context(self._resolver_loader, self._spec)
             system_prompt = self._build_prompt(ctx)
             return await self._run(system_prompt, state)
         finally:
             current_invocation.reset(token)
-
-    def _resolve_context(self) -> dict[str, str]:
-        """Run every declared resolver and return the accumulated key→value map.
-
-        Resolvers are invoked in declaration order; each receives the values
-        produced by previous resolvers so they can build on one another.
-        """
-        ctx: dict[str, str] = {}
-        for r in self._spec.resolvers:
-            ctx[r.id] = str(self._resolver_loader.load(self._spec.id, r.id)(ctx))
-        return ctx
 
     def _build_prompt(self, ctx: dict[str, str]) -> str:
         """Load the system-prompt template and interpolate resolver values."""
@@ -210,6 +200,7 @@ class OrchestratorNode:
         model: BaseChatModel,
         children: list[ChildEntry],
         filters: list[RouteFilter],
+        resolver_loader: ResolverLoader,
         base_dir: Path,
         usage_context: ToolUsageContextProvider,
         usage_tracker: ToolUsageTracker,
@@ -221,6 +212,7 @@ class OrchestratorNode:
         self._fallback_model = fallback_model
         self._children = children
         self._filters = filters
+        self._resolver_loader = resolver_loader
         self._base_dir = base_dir
         self._usage = usage_tracker
         self._usage_context = usage_context
@@ -230,15 +222,22 @@ class OrchestratorNode:
         token = current_invocation.set(uuid.uuid4().hex)
         try:
             candidates = self._filter_children(state)
-            base_prompt = (
-                load_file(self._base_dir, self._spec.prompts.system) or self._spec.description
-            )
-            orchestrator_content = load_file(self._base_dir, self._spec.prompts.orchestrator)
-            base_prompt = f"{base_prompt}\n\n{orchestrator_content}"
-            system_prompt = f"{base_prompt}\n{_ORCHESTRATOR_CONTRACT}"
+            ctx = resolve_prompt_context(self._resolver_loader, self._spec)
+            system_prompt = f"{self._build_prompt(ctx)}\n{_ORCHESTRATOR_CONTRACT}"
             return await self._run(system_prompt, candidates, state)
         finally:
             current_invocation.reset(token)
+
+    def _build_prompt(self, ctx: dict[str, str]) -> str:
+        """Load both prompt templates and interpolate resolver values.
+
+        Rendered as one template so a variable resolves identically wherever it
+        appears; the engine's own contract is appended afterwards and is never
+        subject to interpolation.
+        """
+        base = load_file(self._base_dir, self._spec.prompts.system) or self._spec.description
+        orchestrator = load_file(self._base_dir, self._spec.prompts.orchestrator)
+        return render_prompt(f"{base}\n\n{orchestrator}", ctx)
 
     def _filter_children(self, state: GraphState) -> list[ChildEntry]:
         """Apply every RouteFilter to narrow down which child tools are available."""
