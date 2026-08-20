@@ -20,6 +20,7 @@ from agent_engine.engine.langgraph.executed_tools_tool import (
     build_executed_tools_tool,
 )
 from agent_engine.engine.langgraph.nodes import OrchestratorNode
+from agent_engine.loaders.resolver_loader import ResolverLoader
 from agent_engine.runtime.hooks import RunContext, current_run_context
 from agent_engine.tool_usage.context import ToolUsageContextProvider
 from agent_engine.tool_usage.in_memory import InMemoryToolUsageRepository
@@ -185,6 +186,7 @@ async def test_an_orchestrator_with_no_reachable_children_is_bound_no_tools(
         model=cast(Any, model),
         children=[],
         filters=[],
+        resolver_loader=ResolverLoader(tmp_path),
         base_dir=tmp_path,
         usage_context=ToolUsageContextProvider(InMemoryToolUsageRepository()),
         usage_tracker=ToolUsageTracker(InMemoryToolUsageRepository()),

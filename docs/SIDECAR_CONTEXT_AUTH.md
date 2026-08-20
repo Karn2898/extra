@@ -77,11 +77,11 @@ Each resolver has a **scope** (`shared` or `agent`) and a return type:
 ```yaml
 resolvers:
   current_date:
-    scope: shared        # generated on BaseResolver, inherited by all agents
+    scope: shared        # generated on BaseResolver, inherited by all nodes
   user_name:
     scope: shared
   experience_level:
-    scope: agent         # generated only on the declaring agent's subclass
+    scope: agent         # generated only on the declaring node's subclass
 
 agents:
   learning_planner_agent:
@@ -161,7 +161,8 @@ automatically.
 
 ### Runtime resolution
 
-1. The runtime loads the agent's resolver class from TOML.
+1. The runtime loads the node's resolver class from TOML (agents and
+   orchestrators alike).
 2. The class is instantiated once with configured dependencies.
 3. Methods are called by resolver id; shared methods resolve via Python
    inheritance.
