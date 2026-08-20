@@ -355,8 +355,10 @@ def create_app(
         decision: ApprovalDecision,
         user_id: str | None,
         session_id: str | None,
+        authorization: str | None,
     ) -> InvokeResponse:
         engine = _hitl_engine()
+        auth = _auth_context(authorization)
         try:
             result = await engine.resume(
                 run_id,
@@ -364,6 +366,7 @@ def create_app(
                 decision,
                 caller_user_id=user_id,
                 caller_session_id=_run_context(session_id, run_id=run_id).conversation_id,
+                access_token=auth.inbound_access_token if auth else None,
             )
         except ApprovalError as exc:
             raise _map_approval_error(exc) from exc
@@ -389,13 +392,16 @@ def create_app(
         approval_id: str,
         body: ApprovalDecisionBody,
         x_session_id: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
     ) -> InvokeResponse:
         # The single free-text → typed decision boundary for the API.
         try:
             decision = parse_decision(body.decision)
         except InvalidDecision as exc:
             raise _map_approval_error(exc) from exc
-        return await _decide(run_id, approval_id, decision, body.user_id, x_session_id)
+        return await _decide(
+            run_id, approval_id, decision, body.user_id, x_session_id, authorization
+        )
 
     @app.post("/runs/{run_id}/approvals/{approval_id}/approve", response_model=InvokeResponse)
     async def approve(
@@ -403,6 +409,7 @@ def create_app(
         approval_id: str,
         body: ApprovalDecisionRequest = _DEFAULT_APPROVAL_REQUEST_BODY,
         x_session_id: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
     ) -> InvokeResponse:
         return await _decide(
             run_id,
@@ -410,6 +417,7 @@ def create_app(
             ApprovalDecision.ALLOW_ONCE,
             body.user_id,
             x_session_id,
+            authorization,
         )
 
     @app.post("/runs/{run_id}/approvals/{approval_id}/reject", response_model=InvokeResponse)
@@ -418,6 +426,7 @@ def create_app(
         approval_id: str,
         body: ApprovalDecisionRequest = _DEFAULT_APPROVAL_REQUEST_BODY,
         x_session_id: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
     ) -> InvokeResponse:
         return await _decide(
             run_id,
@@ -425,6 +434,7 @@ def create_app(
             ApprovalDecision.DENY,
             body.user_id,
             x_session_id,
+            authorization,
         )
 
     return app

@@ -50,9 +50,11 @@ T = TypeVar("T")
 class AuthContext:
     """Identity and authorization facts resolved by the embedding application.
 
-    The platform never populates ``inbound_access_token`` itself — the host app
-    passes it in. Hooks may use it (e.g. to exchange it for an MCP-scoped token)
-    but must never log it.
+    ``inbound_access_token`` is never verified or interpreted by the platform —
+    only forwarded from whatever the caller sent (an HTTP ``Authorization``
+    header, or a value the embedding application chose to pass directly).
+    Hooks may use it (e.g. to exchange it for an MCP-scoped token) but must
+    never log it.
     """
 
     user_id: str | None = None
