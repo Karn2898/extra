@@ -17,13 +17,12 @@ from agent_engine.runtime.execution_limiter import (
     current_execution,
     log_limit,
 )
-from agent_engine.runtime.state import GraphState
 from agent_engine.runtime.streaming import current_streams
 
 logger = logging.getLogger(__name__)
 
 
-async def invoke_model(model: Any, messages: list[Any], state: GraphState) -> Any:
+async def invoke_model(model: Any, messages: list[Any]) -> Any:
     sinks = current_streams.get()
     answer_stream = sinks.answer
     if answer_stream is None:
@@ -50,7 +49,6 @@ async def invoke_model(model: Any, messages: list[Any], state: GraphState) -> An
 async def run_tool_loop(
     model: Any,
     context: ModelContext,
-    state: GraphState,
     node_path: str,
     invoke_tool: Callable[[dict[str, Any]], Awaitable[str]],
     *,
@@ -59,7 +57,7 @@ async def run_tool_loop(
     """Drive model → tools → model until the model stops calling tools."""
     limiter = current_execution.get()
     await _refresh(context, refresh_execution_context)
-    response = await invoke_model(model, context.messages, state)
+    response = await invoke_model(model, context.messages)
     while getattr(response, "tool_calls", None):
         if limiter is not None:
             try:
@@ -90,7 +88,7 @@ async def run_tool_loop(
                 )
             )
         await _refresh(context, refresh_execution_context)
-        response = await invoke_model(model, context.messages, state)
+        response = await invoke_model(model, context.messages)
     return response
 
 
@@ -102,8 +100,7 @@ async def _refresh(
         context.set_execution_context(await refresh_execution_context())
 
 
-def emit_route(state: GraphState, route: tuple[str, ...]) -> None:
-    del state
+def emit_route(route: tuple[str, ...]) -> None:
     sink = current_streams.get().route
     if sink is not None:
         sink(route)

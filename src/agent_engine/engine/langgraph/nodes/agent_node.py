@@ -71,11 +71,10 @@ class AgentNode(NodeExecutor):
         logger.debug("[%s] → user: %s", self._node_path, user_msg)
 
         visited: list[str] = [*state.get("visited", []), self._node_path]
-        emit_route(state, tuple(visited))
+        emit_route(tuple(visited))
         response = await run_tool_loop(
             self._bound_model,
             context,
-            state,
             self._node_path,
             self._tool_invoker.invoke,
             refresh_execution_context=self._refresh_execution_context,

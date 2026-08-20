@@ -249,7 +249,7 @@ class OrchestratorNode(NodeExecutor):
         )
         logger.debug("[%s] → user: %s", self._node_path, user_msg)
 
-        emit_route(state, tuple(visited))
+        emit_route(tuple(visited))
 
         async def invoke_tool(tc: dict[str, Any]) -> str:
             tool = tool_by_name.get(tc["name"])
@@ -270,7 +270,6 @@ class OrchestratorNode(NodeExecutor):
         response = await run_tool_loop(
             bound_model,
             context,
-            state,
             self._node_path,
             invoke_tool,
             refresh_execution_context=self._refresh_execution_context,
