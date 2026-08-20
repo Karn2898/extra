@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from typing import cast
 
@@ -290,6 +291,32 @@ async def test_send_uses_stable_session_and_unique_run_id() -> None:
     assert contexts[0].run_id is not None
     assert contexts[1].run_id is not None
     assert contexts[0].run_id != contexts[1].run_id
+
+
+async def test_a_turn_carries_the_callers_own_credential_to_plugin_code() -> None:
+    service, engine = _service()
+    caller = dataclasses.replace(ALICE, access_token="host-token-abc", roles=("editor",))
+    cid = await service.create(caller, session_id="sess-1")
+
+    await service.send(cid, "hi", caller)
+
+    context = engine.contexts[-1]
+    assert context is not None and context.auth_context is not None
+    auth = context.auth_context
+    assert auth.inbound_access_token == "host-token-abc"
+    assert auth.roles == ("editor",)
+
+
+async def test_a_visitor_turn_carries_no_credential() -> None:
+    """Plugin code gets nothing to act with, and must fail rather than fall back."""
+    service, engine = _service()
+    cid = await service.create(VISITOR, session_id="sess-v")
+
+    await service.send(cid, "hi", VISITOR)
+
+    context = engine.contexts[-1]
+    assert context is not None and context.auth_context is not None
+    assert context.auth_context.inbound_access_token is None
 
 
 async def test_turn_refuses_a_caller_who_does_not_own_the_conversation() -> None:
