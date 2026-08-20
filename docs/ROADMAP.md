@@ -37,7 +37,7 @@ table above:
 | Capability | Status | Where |
 | ---------- | ------ | ----- |
 | Runtime hooks (auth/policy/audit/context-enrichment, incl. `transform_tool_result`) | ✅ done | `agent_engine/runtime/hooks/`, [RUNTIME_HOOKS.md](RUNTIME_HOOKS.md) |
-| Per-run execution-limit guardrails | ✅ done | `agent_engine/core/execution.py`, `agent_engine/runtime/execution.py`, [EXECUTION_LIMITS.md](EXECUTION_LIMITS.md) |
+| Per-run execution-limit guardrails | ✅ done | `agent_engine/core/execution.py`, `agent_engine/runtime/execution_limiter.py`, [EXECUTION_LIMITS.md](EXECUTION_LIMITS.md) |
 | Amazon Bedrock model provider (in addition to Anthropic) | ✅ done | `agent_engine/models/factory.py` |
 | Conversation persistence (SQLite default, sessions, users) | ✅ done | `agent_manager/` |
 | Embeddable JS/React chat widget | ✅ done | `agent_manager/api/static/widget/` |
@@ -72,14 +72,16 @@ node paths. Tests cover compilation and node path generation.
 
 **Phase 4 — Runtime engine (✅ done).** `RuntimeEngine` (via `Engine`) is
 created once from a `LoadedSpec`. `ExecutionContext` is created per request.
-LangGraph-based routing recurses through orchestrators to leaf agents. Agents
-call LLMs with tools bound. Tests cover routing with mock LLM factories.
+`engine/langgraph/graph/graph_builder.py` assembles nodes and compiles the
+LangGraph once at startup; execution, node, and tool mechanics live in their
+respective `execution/`, `nodes/`, and `tools/` subpackages. LangGraph-based
+routing recurses through orchestrators to leaf agents. Agents call LLMs with
+tools bound. Tests cover routing with mock LLM factories.
 
 **Phase 5 — Prompt rendering (🔶 partial).** Prompt file loading and simple
-`{{ variable }}` substitution work inside `langgraph_builder.py`. Resolver
-values are injected per request. **Remaining:** a dedicated `prompts/` module
-with a parsed-template cache, strict missing-variable errors, and a formal
-renderer interface.
+`{{ variable }}` substitution live in `engine/langgraph/prompting.py`. Resolver
+values are injected per request. **Remaining:** a parsed-template cache, strict
+missing-variable errors, and a formal renderer interface.
 
 **Phase 6 — Plugin context/access (🔶 partial).** Resolver plugins are fully
 implemented: TOML-configured per-agent resolver classes, dynamic loading,
