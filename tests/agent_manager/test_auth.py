@@ -22,6 +22,7 @@ from agent_manager.infrastructure.auth import (
     TokenVerifier,
     encode_token,
 )
+from agent_manager.infrastructure.auth.key_source import KeySource
 
 SECRET = "a-signing-secret-of-more-than-32-characters"
 OTHER_SECRET = "an-attacker-secret-of-sufficient-length"
@@ -88,7 +89,7 @@ def test_a_token_from_another_issuer_is_rejected() -> None:
 def test_verification_takes_its_algorithms_from_the_key_source() -> None:
     """The seam that keeps RS256/ES256 a new `KeySource` and nothing else."""
 
-    class Hmac512KeySource:
+    class Hmac512KeySource(KeySource):
         algorithms = ("HS512",)
 
         def key_for(self, header: Mapping[str, Any]) -> str:

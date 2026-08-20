@@ -14,8 +14,16 @@ from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 
+from agent_engine.api.schemas import (
+    ApprovalDecisionBody,
+    ApprovalDecisionRequest,
+    InvokeRequest,
+    InvokeResponse,
+    PendingApprovalModel,
+    RunStatusResponse,
+    ToolRecord,
+)
 from agent_engine.approvals.decision import ApprovalDecision, parse_decision
 from agent_engine.approvals.errors import (
     ApprovalError,
@@ -23,10 +31,10 @@ from agent_engine.approvals.errors import (
     approval_http_status,
     approval_public_message,
 )
-from agent_engine.approvals.session_store import (
+from agent_engine.approvals.in_memory_session_approval_repository import (
     InMemorySessionApprovalRepository,
-    SessionApprovalRepository,
 )
+from agent_engine.approvals.session_approval_repository import SessionApprovalRepository
 from agent_engine.core.validator import SystemSpecValidator
 from agent_engine.engine.engine import Engine
 from agent_engine.engine.langgraph.engine import LangGraphEngine
@@ -98,19 +106,6 @@ def _map_approval_error(exc: ApprovalError) -> HTTPException:
     )
 
 
-class InvokeRequest(BaseModel):
-    message: str
-
-
-class ToolRecord(BaseModel):
-    name: str
-    provider: str
-    status: str
-    agent_id: str | None = None
-    server_id: str | None = None
-    error: str | None = None
-
-
 def _client_tool_record(t: Any) -> ToolRecord:
     fields = dataclasses.asdict(t)
     if fields.get("error"):
@@ -118,55 +113,10 @@ def _client_tool_record(t: Any) -> ToolRecord:
     return ToolRecord(**fields)
 
 
-class PendingApprovalModel(BaseModel):
-    """Sanitized pending-approval payload returned to the client/UI."""
-
-    run_id: str
-
-    approval_id: str
-    agent_id: str
-    tool_name: str
-    description: str
-    provider: str
-    server_id: str | None = None
-    arguments: dict[str, Any] = {}
-
-
-class InvokeResponse(BaseModel):
-    system_name: str
-    answer: str
-    visited: list[str]
-    used_tools: list[ToolRecord]
-    run_id: str
-    status: str = "completed"
-    pending_approval: PendingApprovalModel | None = None
-
-
-class ApprovalDecisionRequest(BaseModel):
-    """Decide a pending tool call. ``user_id`` must match the run's authorized
-    approver when one was recorded."""
-
-    user_id: str | None = None
-
-
-class ApprovalDecisionBody(ApprovalDecisionRequest):
-    """A free-text decision from a UI/CLI, parsed to a typed decision at this
-    boundary. Accepts values like ``allow``, ``allow for this session``, or
-    ``deny``; an unrecognized value yields a 400."""
-
-    decision: str
-
-
 # Every field on ApprovalDecisionRequest is optional, so an absent body should
 # be treated the same as an empty one. A shared, read-only singleton default
 # (rather than a call in the signature) satisfies ruff's B008 check.
 _DEFAULT_APPROVAL_REQUEST_BODY = ApprovalDecisionRequest()
-
-
-class RunStatusResponse(BaseModel):
-    run_id: str
-    status: str
-    pending_approval: PendingApprovalModel | None = None
 
 
 SessionApprovalRepositoryFactory = Callable[

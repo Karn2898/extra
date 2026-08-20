@@ -5,10 +5,10 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from agent_engine.approvals.approval_provider import ApprovalProvider, ApprovalRequest
 from agent_engine.approvals.coordinator import ApprovalCoordinator
 from agent_engine.approvals.decision import ApprovalDecision
 from agent_engine.approvals.invocation import SessionApprovalScope, ToolInvocation
-from agent_engine.approvals.provider import ApprovalRequest
 from agent_engine.engine.types import PendingApproval
 from agent_manager.domain import Role
 
@@ -21,7 +21,7 @@ ObservableSessionApprovalRepository = runpy.run_path(str(EXAMPLE / "session_appr
 ]
 
 
-class ScriptedApprovalProvider:
+class ScriptedApprovalProvider(ApprovalProvider):
     def __init__(self, decisions: list[ApprovalDecision], events: list[str]) -> None:
         self._decisions = iter(decisions)
         self.events = events

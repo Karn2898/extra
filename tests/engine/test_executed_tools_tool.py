@@ -15,13 +15,13 @@ from typing import Any, cast
 import pytest
 
 from agent_engine.core.spec import ModelConfig, OrchestratorPromptSet, OrchestratorSpec
-from agent_engine.engine.langgraph.executed_tools_tool import (
+from agent_engine.engine.langgraph.nodes.orchestrator_node import OrchestratorNode
+from agent_engine.engine.langgraph.tools.executed_tools_tool import (
     EXECUTED_TOOLS_TOOL_NAME,
     build_executed_tools_tool,
 )
-from agent_engine.engine.langgraph.nodes import OrchestratorNode
 from agent_engine.runtime.hooks import RunContext, current_run_context
-from agent_engine.tool_usage.context import ToolUsageContextProvider
+from agent_engine.tool_usage.context_provider import ToolUsageContextProvider
 from agent_engine.tool_usage.in_memory import InMemoryToolUsageRepository
 from agent_engine.tool_usage.models import (
     ToolCallIdentity,
@@ -190,7 +190,7 @@ async def test_an_orchestrator_with_no_reachable_children_is_bound_no_tools(
         usage_tracker=ToolUsageTracker(InMemoryToolUsageRepository()),
     )
 
-    await node({"message": "hi", "visited": []})
+    await node.execute({"message": "hi", "visited": []})
 
     assert bound == []
 

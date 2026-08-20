@@ -62,7 +62,8 @@ async def repository(
     yield sqlite_repository
 
 
-async def test_implements_the_repository_protocol(repository: ToolUsageRepository) -> None:
+async def test_implements_the_repository_abstraction(repository: ToolUsageRepository) -> None:
+    assert issubclass(type(repository), ToolUsageRepository)
     assert isinstance(repository, ToolUsageRepository)
 
 

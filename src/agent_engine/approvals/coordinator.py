@@ -19,24 +19,21 @@ from __future__ import annotations
 
 import logging
 
-from agent_engine.approvals.decision import ApprovalDecision
-from agent_engine.approvals.invocation import SessionApprovalGrant, ToolInvocation
-from agent_engine.approvals.policy import (
-    ApprovalPolicy,
-    ApprovalQuery,
-    DefaultApprovalPolicy,
-)
-from agent_engine.approvals.provider import (
+from agent_engine.approvals.approval_policy import ApprovalPolicy, ApprovalQuery
+from agent_engine.approvals.approval_provider import (
     ApprovalOutcome,
     ApprovalProvider,
     ApprovalRequest,
 )
-from agent_engine.approvals.sanitization import mask_arguments
-from agent_engine.approvals.session_store import (
+from agent_engine.approvals.decision import ApprovalDecision
+from agent_engine.approvals.default_approval_policy import DefaultApprovalPolicy
+from agent_engine.approvals.in_memory_session_approval_repository import (
     InMemorySessionApprovalRepository,
-    SessionApprovalRepository,
-    SessionApprovalStore,
 )
+from agent_engine.approvals.invocation import SessionApprovalGrant, ToolInvocation
+from agent_engine.approvals.sanitization import mask_arguments
+from agent_engine.approvals.session_approval_repository import SessionApprovalRepository
+from agent_engine.approvals.session_approval_store import SessionApprovalStore
 from agent_engine.logging_config import log
 
 logger = logging.getLogger(__name__)

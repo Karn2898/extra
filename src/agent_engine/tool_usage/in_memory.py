@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 
 from agent_engine.tool_usage.models import ToolInvocationKind, ToolInvocationRecord
+from agent_engine.tool_usage.repository import ToolUsageRepository
 
 _Key = tuple[str, str]
 
 
-class InMemoryToolUsageRepository:
+class InMemoryToolUsageRepository(ToolUsageRepository):
     """Process-local implementation of :class:`ToolUsageRepository`.
 
     An ``asyncio.Lock`` guards the store, matching the approval repositories, so

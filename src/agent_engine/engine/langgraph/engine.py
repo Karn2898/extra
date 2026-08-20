@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import contextmanager, suppress
@@ -9,54 +8,48 @@ from pathlib import Path
 from typing import Any, cast
 
 from langchain_core.callbacks import BaseCallbackHandler
-from langchain_core.language_models import BaseChatModel
-from langchain_core.runnables import Runnable, RunnableConfig
-from langchain_core.tools import BaseTool, StructuredTool
-from langgraph.graph import END, START, StateGraph
-from langgraph.graph.state import CompiledStateGraph
+from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import BaseTool
 from langgraph.types import Command
 
+from agent_engine.approvals.approval_manager import ApprovalManager
 from agent_engine.approvals.coordinator import ApprovalCoordinator
 from agent_engine.approvals.decision import ApprovalDecision, parse_decision
 from agent_engine.approvals.errors import RunNotFound
-from agent_engine.approvals.manager import ApprovalManager, ToolExecutionManager
-from agent_engine.approvals.models import ApprovalRecord, RunStatus
-from agent_engine.approvals.repository import (
-    InMemoryApprovalRepository,
+from agent_engine.approvals.in_memory_approval_repository import InMemoryApprovalRepository
+from agent_engine.approvals.in_memory_session_approval_repository import (
+    InMemorySessionApprovalRepository,
+)
+from agent_engine.approvals.in_memory_tool_execution_repository import (
     InMemoryToolExecutionRepository,
 )
-from agent_engine.approvals.session_store import (
-    InMemorySessionApprovalRepository,
-    SessionApprovalRepository,
-    SessionApprovalStore,
-)
+from agent_engine.approvals.models import ApprovalRecord, RunStatus
+from agent_engine.approvals.session_approval_repository import SessionApprovalRepository
+from agent_engine.approvals.session_approval_store import SessionApprovalStore
+from agent_engine.approvals.tool_execution_manager import ToolExecutionManager
 from agent_engine.core.execution import ExecutionPolicy
-from agent_engine.core.spec import (
-    AgentSpec,
-    BaseModelConfig,
-    GraphNode,
-    OrchestratorSpec,
-    SystemSpec,
-)
-from agent_engine.core.spec import ModelConfig as NodeModelConfig
+from agent_engine.core.spec import AgentSpec, SystemSpec
+from agent_engine.engine.approval_cancellation_engine import ApprovalCancellationEngine
+from agent_engine.engine.approval_engine import ApprovalEngine
+from agent_engine.engine.approval_streaming_engine import ApprovalStreamingEngine
 from agent_engine.engine.engine import Engine
 from agent_engine.engine.langgraph.approval_provider import InterruptApprovalProvider
 from agent_engine.engine.langgraph.checkpointing import (
     CheckpointerHandle,
     CheckpointProviderFactory,
 )
+from agent_engine.engine.langgraph.execution.run_lifecycle import RunLifecycle
+from agent_engine.engine.langgraph.execution.stream_channel import StreamChannel
 from agent_engine.engine.langgraph.filters import AccessFilter, RouteFilter
-from agent_engine.engine.langgraph.helpers import (
+from agent_engine.engine.langgraph.graph.graph_builder import GraphBuilder, ModelFactory, RunGraph
+from agent_engine.engine.langgraph.graph.traversal import (
     collect_mcp_specs,
     has_protected_nodes,
-    node_id,
     render_graph,
     walk,
 )
-from agent_engine.engine.langgraph.nodes import AgentNode, ChildEntry, OrchestratorNode
-from agent_engine.engine.langgraph.run_lifecycle import RunLifecycle
-from agent_engine.engine.langgraph.stream_channel import StreamChannel
-from agent_engine.engine.langgraph.tool_invoker import AgentToolBinding, ToolInvoker
+from agent_engine.engine.langgraph.tools.mcp_connector import MCPConnector
+from agent_engine.engine.run_status_engine import RunStatusEngine
 from agent_engine.engine.types import ChatMessage, PendingApproval, RunResult
 from agent_engine.loaders.import_roots import register_import_roots
 from agent_engine.loaders.resolver_loader import ResolverLoader
@@ -66,14 +59,13 @@ from agent_engine.models.factory import build_chat_model
 from agent_engine.observability import build_callbacks
 from agent_engine.runs.in_memory import InMemoryRunRepository
 from agent_engine.runs.repository import RunRepository
-from agent_engine.runtime.execution import ExecutionLimiter, current_execution
+from agent_engine.runtime.execution_limiter import ExecutionLimiter, current_execution
 from agent_engine.runtime.hooks import (
     EngineContext,
     HookManager,
     RunContext,
     current_run_context,
 )
-from agent_engine.runtime.state import GraphState
 from agent_engine.runtime.streaming import (
     RunStreamEvent,
     StreamSinks,
@@ -81,28 +73,13 @@ from agent_engine.runtime.streaming import (
     current_streams,
 )
 from agent_engine.runtime.tool_models import ToolUsageRecord
-from agent_engine.tool_usage.context import ToolUsageContextProvider
+from agent_engine.tool_usage.context_provider import ToolUsageContextProvider
 from agent_engine.tool_usage.in_memory import InMemoryToolUsageRepository
 from agent_engine.tool_usage.repository import ToolUsageRepository
 from agent_engine.tool_usage.trace import as_usage_records
 from agent_engine.tool_usage.tracker import ToolUsageTracker
 
 logger = logging.getLogger(__name__)
-
-ModelFactory = Callable[..., BaseChatModel]
-_MODEL_FACTORY_OPTIONAL_KWARGS = ("region", "max_tokens", "top_p")
-
-# noinspection PyTypeChecker
-RunGraphBuilder = StateGraph[GraphState, None, GraphState, GraphState]
-# noinspection PyTypeChecker
-RunGraph = CompiledStateGraph[GraphState, None, GraphState, GraphState]
-
-
-def _root_cause(exc: BaseException) -> str:
-    if isinstance(exc, BaseExceptionGroup):
-        for sub in exc.exceptions:
-            return _root_cause(sub)
-    return str(exc)
 
 
 def _initial_state(
@@ -217,29 +194,13 @@ def _pending_approval_event(system_name: str, result: RunResult) -> RunStreamEve
     )
 
 
-def _model_factory_kwargs(factory: ModelFactory, model: BaseModelConfig) -> dict[str, object]:
-    optional = {
-        "region": model.region,
-        "max_tokens": model.max_tokens,
-        "top_p": model.top_p,
-    }
-    present: dict[str, object] = {
-        key: value for key, value in optional.items() if value is not None
-    }
-    if not present:
-        return {}
-    try:
-        signature = inspect.signature(factory)
-    except (TypeError, ValueError):
-        return present
-    parameters = signature.parameters.values()
-    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters):
-        return present
-    accepted = set(signature.parameters)
-    return {key: value for key, value in present.items() if key in accepted}
-
-
-class LangGraphEngine(Engine):
+class LangGraphEngine(
+    Engine,
+    ApprovalEngine,
+    ApprovalCancellationEngine,
+    ApprovalStreamingEngine,
+    RunStatusEngine,
+):
     def __init__(
         self,
         base_dir: Path,
@@ -263,13 +224,12 @@ class LangGraphEngine(Engine):
         self._app: RunGraph | None = None
         self._system_name = ""
         self._filters: list[RouteFilter] = []
-        self._mcp_clients: dict[str, Any] = {}
+        self._mcp_connector: MCPConnector | None = None
         self._mcp_tools: dict[str, list[BaseTool]] = {}
         self._tool_loader: ToolLoader | None = None
         self._resolver_loader: ResolverLoader | None = None
         self._hook_manager: HookManager | None = None
         self._lifecycle: RunLifecycle | None = None
-        self._mcp_server_by_tool: dict[str, str] = {}
         self._policy = ExecutionPolicy()
 
         self._checkpoint_connection_string = checkpoint_connection_string
@@ -320,11 +280,12 @@ class LangGraphEngine(Engine):
             run_repository=self._run_repository,
         )
         self._filters = self._setup_filters(spec)
-        self._mcp_tools = await self._connect_mcps(spec)
+        self._mcp_connector = MCPConnector(self._base_dir, self._hook_manager)
+        self._mcp_tools = await self._mcp_connector.connect(collect_mcp_specs(spec.graph))
         self._tool_loader = ToolLoader(self._base_dir)
         self._resolver_loader = ResolverLoader(self._base_dir)
         self._checkpointer = CheckpointProviderFactory().create(self._checkpoint_connection_string)
-        self._app = self._compile_graph(spec)
+        self._app = self._build_graph(spec)
         self._log_startup_summary(spec)
 
     def _log_startup_summary(self, spec: SystemSpec) -> None:
@@ -348,7 +309,8 @@ class LangGraphEngine(Engine):
         if self._hook_manager is not None:
             log(logger, logging.INFO, "engine stopping", system=self._system_name)
             await self._hook_manager.run_engine_stop(EngineContext(system_name=self._system_name))
-        self._mcp_clients.clear()
+        if self._mcp_connector is not None:
+            self._mcp_connector.clear()
         self._mcp_tools.clear()
 
     def discovered_mcp_tools(self) -> dict[str, tuple[str, ...]]:
@@ -407,7 +369,7 @@ class LangGraphEngine(Engine):
         ``graph_input`` is the initial state of a new run, or the ``Command``
         that continues a suspended one from its checkpoint.
         """
-        return cast(dict[str, Any], await app.ainvoke(graph_input, self._thread_config(ctx)))
+        return await app.ainvoke(graph_input, self._thread_config(ctx))
 
     async def _completed_result(
         self,
@@ -913,205 +875,24 @@ class LangGraphEngine(Engine):
                 filters.append(AccessFilter(self._base_dir))
         return filters
 
-    async def _connect_mcps(self, spec: SystemSpec) -> dict[str, list[BaseTool]]:
-        from langchain_mcp_adapters.client import MultiServerMCPClient
-
-        from agent_engine.loaders.mcp_auth_loader import MCPAuthLoader
-        from agent_engine.loaders.mcp_tags import apply_tool_tags, effective_tool_tag_transport
-        from agent_engine.runtime.hooks import HookedMCPAuth
-
-        auth_loader = MCPAuthLoader(self._base_dir)
-        assert self._hook_manager is not None
-        hook_mcp_auth = self._hook_manager.has("before_mcp_request")
-
-        mcp_tools: dict[str, list[BaseTool]] = {}
-        for server_id, mcp_spec in collect_mcp_specs(spec.graph).items():
-            config: dict[str, Any] = {"url": mcp_spec.url, "transport": "streamable_http"}
-            auth = auth_loader.get_auth(server_id)
-            if hook_mcp_auth:
-                auth = HookedMCPAuth(self._hook_manager, server_id, base=auth)
-            if auth is not None:
-                config["auth"] = auth
-
-            if mcp_spec.tool_tags:
-                transport = effective_tool_tag_transport(mcp_spec)
-                config = apply_tool_tags(config, mcp_spec.tool_tags, transport, server_id=server_id)
-                log(
-                    logger,
-                    logging.INFO,
-                    "mcp tool_tags configured",
-                    server=server_id,
-                    tags=len(mcp_spec.tool_tags),
-                    transport=transport.type if transport else "",
-                    default_transport=mcp_spec.tool_tag_transport is None,
-                )
-
-            client = MultiServerMCPClient({server_id: config})  # type: ignore[dict-item]
-            self._mcp_clients[server_id] = client
-            try:
-                log(logger, logging.INFO, "mcp discovery started", server=server_id)
-                mcp_tools[server_id] = await client.get_tools()
-                log(
-                    logger,
-                    logging.INFO,
-                    "mcp connected",
-                    server=server_id,
-                    tools=len(mcp_tools[server_id]),
-                )
-            except Exception as exc:
-                log(
-                    logger,
-                    logging.WARNING,
-                    "mcp unreachable",
-                    server=server_id,
-                    reason=_root_cause(exc),
-                )
-                mcp_tools[server_id] = []
-        return mcp_tools
-
-    # noinspection PyTypeChecker
-    def _compile_graph(self, spec: SystemSpec) -> RunGraph:
-        builder = StateGraph(GraphState)
-        self._wire_node(builder, spec.graph, parent_path=None)
-        builder.add_edge(START, node_id(spec.graph, parent_path=None))
-        assert self._checkpointer is not None
-        return builder.compile(checkpointer=self._checkpointer.saver)
-
-    # noinspection PyTypeChecker
-    def _wire_node(
-        self,
-        builder: RunGraphBuilder,
-        node: GraphNode,
-        parent_path: str | None,
-    ) -> None:
-        path = node_id(node, parent_path)
-
-        if isinstance(node.node, OrchestratorSpec):
-            builder.add_node(path, self._build_orchestrator_node(node, parent_path))
-        else:
-            assert isinstance(node.node, AgentSpec)
-            builder.add_node(path, self._build_agent_node(node.node, path))
-
-        builder.add_edge(path, END)
-
-    def _build_orchestrator_node(
-        self,
-        node: GraphNode,
-        parent_path: str | None,
-    ) -> OrchestratorNode:
-        assert isinstance(node.node, OrchestratorSpec)
-        spec = node.node
-        path = node_id(node, parent_path)
-        model = self._build_model(spec.model)
-        fb = spec.model.fallback
-        fallback_model = self._build_model(fb) if fb is not None else None
-
-        children: list[ChildEntry] = []
-        for child in node.children:
-            callable_node: AgentNode | OrchestratorNode
-            if isinstance(child.node, AgentSpec):
-                callable_node = self._build_agent_node(child.node, node_id(child, path))
-            else:
-                callable_node = self._build_orchestrator_node(child, path)
-            children.append(
-                ChildEntry(
-                    id=child.node.id,
-                    name=child.node.name or child.node.id,
-                    protected=child.node.protected,
-                    callable=callable_node,
-                    description=child.node.description,
-                )
-            )
-
-        return OrchestratorNode(
-            spec=spec,
-            node_path=path,
-            model=model,
-            children=children,
-            filters=self._filters,
-            base_dir=self._base_dir,
-            usage_context=self._tool_usage_context,
-            usage_tracker=self._tool_usage_tracker,
-            fallback_model=fallback_model,
-        )
-
-    def _build_agent_node(self, spec: AgentSpec, node_path: str) -> AgentNode:
+    def _build_graph(self, spec: SystemSpec) -> RunGraph:
+        """Delegate startup-only node assembly and compilation to ``GraphBuilder``."""
         assert self._tool_loader is not None
         assert self._resolver_loader is not None
         assert self._hook_manager is not None
-        tools, mcp_names, server_by_tool = self._build_agent_tools(spec)
-        bound_model = self._build_model_runnable(spec.model, tools=tools)
-        return AgentNode(
-            spec=spec,
-            node_path=node_path,
-            bound_model=bound_model,
-            resolver_loader=self._resolver_loader,
+        assert self._checkpointer is not None
+        return GraphBuilder(
             base_dir=self._base_dir,
-            tool_invoker=self._build_tool_invoker(
-                spec,
-                node_path,
-                AgentToolBinding(
-                    tools={t.name: t for t in tools},
-                    mcp_tool_names=frozenset(mcp_names),
-                    mcp_server_by_tool=server_by_tool,
-                ),
-            ),
-            usage_context=self._tool_usage_context,
-        )
-
-    def _build_tool_invoker(
-        self, spec: AgentSpec, node_path: str, binding: AgentToolBinding
-    ) -> ToolInvoker:
-        """Give the agent the one collaborator that runs its tool calls.
-
-        Every invoker shares the engine's approval, idempotency, and usage
-        collaborators, so agents of the same run agree on what already happened.
-        """
-        assert self._hook_manager is not None
-        return ToolInvoker(
-            spec=spec,
-            node_path=node_path,
-            binding=binding,
+            model_factory=self._model_factory,
+            filters=self._filters,
+            mcp_tools=self._mcp_tools,
+            tool_loader=self._tool_loader,
+            resolver_loader=self._resolver_loader,
             hook_manager=self._hook_manager,
+            checkpointer=self._checkpointer,
             execution_manager=self._execution_manager,
             approval_coordinator=self._approval_coordinator,
             usage_tracker=self._tool_usage_tracker,
+            usage_context=self._tool_usage_context,
             system_namespace=self._system_name,
-        )
-
-    def _build_model(self, model: BaseModelConfig) -> BaseChatModel:
-        return self._model_factory(
-            model.provider,
-            model.name,
-            model.temperature,
-            **_model_factory_kwargs(self._model_factory, model),
-        )
-
-    def _build_model_runnable(
-        self, model: NodeModelConfig, tools: list[BaseTool] | None = None
-    ) -> BaseChatModel | Runnable:
-        primary_model = self._build_model(model)
-        bound_primary = primary_model.bind_tools(tools) if tools else primary_model
-        if model.fallback is not None:
-            fallback_model = self._build_model(model.fallback)
-            bound_fallback = fallback_model.bind_tools(tools) if tools else fallback_model
-            return bound_primary.with_fallbacks([bound_fallback], exceptions_to_handle=(Exception,))
-        return bound_primary
-
-    def _build_agent_tools(
-        self, spec: AgentSpec
-    ) -> tuple[list[BaseTool], set[str], dict[str, str]]:
-        assert self._tool_loader is not None
-        tools: list[BaseTool] = []
-        mcp_names: set[str] = set()
-        server_by_tool: dict[str, str] = {}
-        for t in spec.tools:
-            fn = self._tool_loader.load(t.id)
-            tools.append(StructuredTool.from_function(fn, description=t.description))
-        for mcp in spec.mcps:
-            server_tools = self._mcp_tools.get(mcp.id, [])
-            tools.extend(server_tools)
-            for st in server_tools:
-                mcp_names.add(st.name)
-                server_by_tool[st.name] = mcp.id
-        return tools, mcp_names, server_by_tool
+        ).compile(spec.graph)

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import pytest
 
+from agent_engine.approvals.in_memory_session_approval_repository import (
+    InMemorySessionApprovalRepository,
+)
 from agent_engine.approvals.invocation import SessionApprovalKey
-from agent_engine.approvals.session_store import InMemorySessionApprovalRepository
 from agent_engine.runs.in_memory import InMemoryRunRepository
 from agent_manager.composition import application_repositories, build_session_approval_repository
 from agent_manager.config import Settings

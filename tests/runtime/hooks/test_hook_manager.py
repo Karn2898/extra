@@ -107,10 +107,10 @@ async def test_supports_sync_and_async_hooks() -> None:
     assert {c[0] for c in fixtures.CALLS} == {"sync", "async"}
 
 
-async def test_supports_callable_class_hook() -> None:
-    mgr = _manager(HookSpec("on_run_start", f"{_FIX}:CallableHook"))
+async def test_supports_explicit_class_method_hook() -> None:
+    mgr = _manager(HookSpec("on_run_start", f"{_FIX}:ExplicitHook.on_run_start"))
     await mgr.run_run_start(RunContext())
-    assert fixtures.CALLS[0][0] == "callable"
+    assert fixtures.CALLS[0][0] == "explicit_method"
 
 
 async def test_class_method_hook_reuses_instance() -> None:

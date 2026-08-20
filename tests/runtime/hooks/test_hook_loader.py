@@ -21,11 +21,10 @@ def test_loads_function_by_dotted_ref() -> None:
     assert callable(fn)
 
 
-def test_loads_class_hook_as_instance() -> None:
-    hook = HookLoader().load("on_run_start", f"{_FIX}:CallableHook")
-    # A class ref is instantiated; the returned object must itself be callable.
+def test_loads_explicit_class_method_hook() -> None:
+    hook = HookLoader().load("on_run_start", f"{_FIX}:ExplicitHook.on_run_start")
     assert callable(hook)
-    assert hook.__class__.__name__ == "CallableHook"
+    assert hook.__name__ == "on_run_start"
 
 
 def test_loads_class_method_hook_with_unconfigured_instance() -> None:

@@ -14,16 +14,16 @@ import uuid
 
 from langgraph.types import interrupt
 
+from agent_engine.approvals.approval_manager import ApprovalManager
+from agent_engine.approvals.approval_provider import ApprovalProvider, ApprovalRequest
 from agent_engine.approvals.decision import ApprovalDecision, parse_decision
-from agent_engine.approvals.manager import ApprovalManager
-from agent_engine.approvals.provider import ApprovalRequest
 from agent_engine.logging_config import log
 from agent_engine.runtime.hooks import current_run_context
 
 logger = logging.getLogger(__name__)
 
 
-class InterruptApprovalProvider:
+class InterruptApprovalProvider(ApprovalProvider):
     """Requests a human decision by interrupting the LangGraph run.
 
     Persists a sanitized pending :class:`ApprovalRecord` (so the HTTP API can

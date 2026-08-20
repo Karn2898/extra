@@ -29,7 +29,7 @@ import click
 
 from agent_engine.approvals.decision import ApprovalDecision, parse_decision
 from agent_engine.approvals.errors import InvalidDecision
-from agent_engine.engine.engine import ApprovalEngine
+from agent_engine.engine.approval_engine import ApprovalEngine
 from agent_engine.engine.types import PendingApproval, RunResult
 from agentctl.session import SpecError, load_and_validate, load_env
 
@@ -94,7 +94,9 @@ async def run_local_chat(
     grouped as a single Langfuse session. Pass ``session_id`` to set it
     explicitly; otherwise a short id is generated for the console session.
     """
-    from agent_engine.approvals.session_store import InMemorySessionApprovalRepository
+    from agent_engine.approvals.in_memory_session_approval_repository import (
+        InMemorySessionApprovalRepository,
+    )
     from agent_engine.engine.langgraph.engine import LangGraphEngine
     from agent_engine.runtime.hooks import RunContext
 

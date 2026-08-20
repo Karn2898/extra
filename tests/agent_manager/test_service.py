@@ -9,6 +9,7 @@ from typing import cast
 import pytest
 
 from agent_engine.approvals.errors import RunNotFound
+from agent_engine.engine.run_status_engine import RunStatusEngine
 from agent_engine.engine.types import ChatMessage, ChatRole
 from agent_engine.runtime.hooks.models import RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
@@ -50,7 +51,7 @@ class RenameFailingRepository(MemoryRepository):
         raise RuntimeError("title storage unavailable")
 
 
-class CancellableThenSuccessfulEngine(RecordingEngine):
+class CancellableThenSuccessfulEngine(RecordingEngine, RunStatusEngine):
     def __init__(self) -> None:
         super().__init__()
         self.cancelled = asyncio.Event()

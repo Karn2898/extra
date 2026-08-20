@@ -14,6 +14,7 @@ import pytest
 from click.testing import CliRunner
 
 from agent_engine.approvals.decision import ApprovalDecision
+from agent_engine.engine.approval_engine import ApprovalEngine
 from agent_engine.engine.engine import Engine
 from agent_engine.engine.types import ChatMessage, PendingApproval, RunResult
 from agent_engine.runtime.hooks.models import RunContext
@@ -92,7 +93,7 @@ def pending_approval(
     )
 
 
-class ApprovalFakeEngine(FakeEngine):
+class ApprovalFakeEngine(FakeEngine, ApprovalEngine):
     def __init__(self, results: list[RunResult], *, stream_pending: PendingApproval | None = None):
         super().__init__()
         self.results = iter(results)
@@ -166,7 +167,7 @@ class CollectingEcho:
     def __init__(self) -> None:
         self.lines: list[str] = []
 
-    def __call__(self, message: str = "", *, err: bool = False) -> None:
+    def write(self, message: str = "", *, err: bool = False) -> None:
         self.lines.append(message)
 
 
@@ -253,7 +254,10 @@ async def test_local_loop_reuses_engine_and_sends_each_question() -> None:
     engine = FakeEngine()
     echo = CollectingEcho()
     await run_chat_loop(
-        engine, stream=False, read_line=scripted_reader(["first", "second"]), echo=echo
+        engine,
+        stream=False,
+        read_line=scripted_reader(["first", "second"]),
+        echo=echo.write,
     )
     assert engine.questions == ["first", "second"]
     answers = [line for line in echo.lines if line.startswith("Agent > ")]
@@ -263,7 +267,7 @@ async def test_local_loop_reuses_engine_and_sends_each_question() -> None:
 async def test_local_loop_streaming_uses_stream_path() -> None:
     engine = FakeEngine()
     echo = CollectingEcho()
-    await run_chat_loop(engine, stream=True, read_line=scripted_reader(["hi"]), echo=echo)
+    await run_chat_loop(engine, stream=True, read_line=scripted_reader(["hi"]), echo=echo.write)
     assert engine.questions == ["hi"]
 
 
@@ -287,7 +291,7 @@ async def test_local_mode_builds_engine_once(monkeypatch: pytest.MonkeyPatch) ->
         None,
         stream=False,
         read_line=scripted_reader(["a", "b", "c"]),
-        echo=CollectingEcho(),
+        echo=CollectingEcho().write,
     )
     assert engine.builds == 1
     assert engine.questions == ["a", "b", "c"]
@@ -319,7 +323,7 @@ async def test_local_chat_groups_questions_under_one_session(
         stream=False,
         session_id="sess-xyz",
         read_line=scripted_reader(["a", "b", "c"]),
-        echo=CollectingEcho(),
+        echo=CollectingEcho().write,
     )
     sessions = {c.conversation_id for c in engine.contexts if c is not None}
     assert sessions == {"sess-xyz"}
@@ -335,7 +339,7 @@ async def test_local_chat_autogenerates_one_session(monkeypatch: pytest.MonkeyPa
         None,
         stream=False,
         read_line=scripted_reader(["a", "b"]),
-        echo=CollectingEcho(),
+        echo=CollectingEcho().write,
     )
     sessions = {c.conversation_id for c in engine.contexts if c is not None}
     assert len(sessions) == 1  # one auto id, shared by every question
@@ -357,7 +361,12 @@ async def test_local_one_failure_does_not_kill_loop() -> None:
 
     engine = FlakyEngine()
     echo = CollectingEcho()
-    await run_chat_loop(engine, stream=False, read_line=scripted_reader(["boom", "ok"]), echo=echo)
+    await run_chat_loop(
+        engine,
+        stream=False,
+        read_line=scripted_reader(["boom", "ok"]),
+        echo=echo.write,
+    )
     assert any("model exploded" in line for line in echo.lines)
     assert any(line == "Agent > echo:ok" for line in echo.lines)
 
@@ -388,7 +397,7 @@ async def test_local_chat_prompts_for_approval_and_resumes_allow_once() -> None:
         stream=False,
         context=RunContext(conversation_id="session-1", user_id="user-1"),
         read_line=scripted_reader(["question", "o"]),
-        echo=echo,
+        echo=echo.write,
     )
 
     assert engine.resume_calls == [("run-1", "approval-1", ApprovalDecision.ALLOW_ONCE, "user-1")]
@@ -417,7 +426,7 @@ async def test_local_chat_reprompts_invalid_approval_then_allows_session() -> No
         engine,
         stream=False,
         read_line=scripted_reader(["question", "maybe", "s"]),
-        echo=echo,
+        echo=echo.write,
     )
 
     assert engine.resume_calls[0][2] is ApprovalDecision.ALLOW_FOR_SESSION
@@ -443,7 +452,7 @@ async def test_local_chat_stops_when_approval_input_ends() -> None:
         engine,
         stream=False,
         read_line=scripted_reader(["question"]),
-        echo=echo,
+        echo=echo.write,
     )
 
     assert engine.resume_calls == []
@@ -469,7 +478,7 @@ async def test_local_chat_exit_words_stop_from_approval_prompt(word: str) -> Non
         engine,
         stream=False,
         read_line=scripted_reader(["question", word]),
-        echo=CollectingEcho(),
+        echo=CollectingEcho().write,
     )
 
     assert engine.resume_calls == []
@@ -502,7 +511,7 @@ async def test_local_chat_handles_multiple_approvals_in_one_run() -> None:
         engine,
         stream=False,
         read_line=scripted_reader(["question", "o", "d"]),
-        echo=CollectingEcho(),
+        echo=CollectingEcho().write,
     )
 
     assert [call[2] for call in engine.resume_calls] == [
@@ -523,7 +532,7 @@ async def test_local_stream_prompts_and_resumes_pending_approval() -> None:
         engine,
         stream=True,
         read_line=scripted_reader(["question", "allow once"]),
-        echo=echo,
+        echo=echo.write,
     )
 
     assert engine.resume_calls[0][2] is ApprovalDecision.ALLOW_ONCE
@@ -553,7 +562,7 @@ async def test_remote_sends_to_invoke_endpoint() -> None:
             "http://srv:8090",
             stream=False,
             read_line=scripted_reader(["question one"]),
-            echo=echo,
+            echo=echo.write,
             client=client,
         )
     assert seen == ["/invoke"]
@@ -573,7 +582,7 @@ async def test_remote_chat_sends_session_header() -> None:
             stream=False,
             session_id="rsess",
             read_line=scripted_reader(["one", "two"]),
-            echo=echo,
+            echo=echo.write,
             client=client,
         )
     assert seen_sessions == ["rsess", "rsess"]  # same session on every request
@@ -593,7 +602,7 @@ async def test_remote_server_error_does_not_kill_loop() -> None:
             "http://srv",
             stream=False,
             read_line=scripted_reader(["bad", "good"]),
-            echo=echo,
+            echo=echo.write,
             client=client,
         )
     assert any("server error 500" in line and "boom on server" in line for line in echo.lines)
@@ -613,7 +622,7 @@ async def test_remote_stream_flag_uses_stream_endpoint() -> None:
             "http://srv",
             stream=True,
             read_line=scripted_reader(["hi"]),
-            echo=CollectingEcho(),
+            echo=CollectingEcho().write,
             client=client,
         )
     assert seen == ["/stream"]
@@ -629,7 +638,7 @@ async def test_remote_network_error_does_not_kill_loop() -> None:
             "http://srv",
             stream=False,
             read_line=scripted_reader(["x"]),
-            echo=echo,
+            echo=echo.write,
             client=client,
         )
     assert any("request failed" in line for line in echo.lines)
@@ -676,7 +685,7 @@ async def test_remote_chat_prompts_for_approval_and_resumes_allow_once() -> None
             "http://srv",
             stream=False,
             read_line=scripted_reader(["question", "o"]),
-            echo=echo,
+            echo=echo.write,
             client=client,
         )
 
@@ -712,7 +721,7 @@ async def test_remote_chat_resumes_with_allow_for_session() -> None:
             "http://srv",
             stream=False,
             read_line=scripted_reader(["question", "s"]),
-            echo=CollectingEcho(),
+            echo=CollectingEcho().write,
             client=client,
         )
 
@@ -741,7 +750,7 @@ async def test_remote_chat_resumes_with_deny() -> None:
             "http://srv",
             stream=False,
             read_line=scripted_reader(["question", "d"]),
-            echo=CollectingEcho(),
+            echo=CollectingEcho().write,
             client=client,
         )
 
@@ -772,7 +781,7 @@ async def test_remote_chat_handles_multiple_approvals_in_one_run() -> None:
             # Only "question" is a real user message; "o"/"d" must be consumed
             # as approval-prompt answers, not sent as separate /invoke calls.
             read_line=scripted_reader(["question", "o", "d"]),
-            echo=echo,
+            echo=echo.write,
             client=client,
         )
 
@@ -809,7 +818,7 @@ async def test_remote_chat_stops_when_approval_input_ends() -> None:
             "http://srv",
             stream=False,
             read_line=scripted_reader(["question"]),  # EOF right at the approval prompt
-            echo=echo,
+            echo=echo.write,
             client=client,
         )
 
@@ -833,7 +842,7 @@ async def test_remote_stream_prompts_and_resumes_pending_approval() -> None:
             "http://srv",
             stream=True,
             read_line=scripted_reader(["question", "allow once"]),
-            echo=echo,
+            echo=echo.write,
             client=client,
         )
 
@@ -864,7 +873,7 @@ async def test_remote_decision_error_does_not_kill_loop() -> None:
             "http://srv",
             stream=False,
             read_line=scripted_reader(["first", "o", "second"]),
-            echo=echo,
+            echo=echo.write,
             client=client,
         )
 

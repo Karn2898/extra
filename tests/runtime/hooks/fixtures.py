@@ -61,11 +61,11 @@ def secret_boom(*args: Any) -> None:
     raise RuntimeError("secret-context7-key")
 
 
-class CallableHook:
-    """A class hook: instantiated by the loader, called like a function."""
+class ExplicitHook:
+    """A class hook whose lifecycle method is named explicitly in its ref."""
 
-    def __call__(self, context: Any) -> None:
-        CALLS.append(("callable", context))
+    def on_run_start(self, context: Any) -> None:
+        CALLS.append(("explicit_method", context))
 
 
 class McpAuthHook:

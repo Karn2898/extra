@@ -9,21 +9,21 @@ from __future__ import annotations
 
 import pytest
 
+from agent_engine.approvals.approval_manager import ApprovalManager
 from agent_engine.approvals.errors import (
     ApprovalAlreadyProcessed,
     ApprovalRunMismatch,
     RunNotFound,
     UnauthorizedApprover,
 )
-from agent_engine.approvals.manager import (
-    ApprovalManager,
-    ToolExecutionManager,
-    execution_id_for,
+from agent_engine.approvals.in_memory_approval_repository import InMemoryApprovalRepository
+from agent_engine.approvals.in_memory_tool_execution_repository import (
+    InMemoryToolExecutionRepository,
 )
 from agent_engine.approvals.models import ApprovalStatus, RunRecord, RunStatus
-from agent_engine.approvals.repository import (
-    InMemoryApprovalRepository,
-    InMemoryToolExecutionRepository,
+from agent_engine.approvals.tool_execution_manager import (
+    ToolExecutionManager,
+    execution_id_for,
 )
 from agent_engine.runs.in_memory import InMemoryRunRepository
 

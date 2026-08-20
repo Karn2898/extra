@@ -34,9 +34,9 @@ from agent_engine.core.spec import (
     ToolSpec,
 )
 from agent_engine.engine.langgraph.engine import LangGraphEngine
-from agent_engine.engine.langgraph.stream_channel import StreamChannel
+from agent_engine.engine.langgraph.execution.stream_channel import StreamChannel
 from agent_engine.runs.in_memory import InMemoryRunRepository
-from agent_engine.runtime.execution import current_execution
+from agent_engine.runtime.execution_limiter import current_execution
 from agent_engine.runtime.hooks import RunContext, current_run_context
 from agent_engine.runtime.streaming import RunStreamEvent, StreamSinks, current_streams
 from tests.runtime.hooks import fixtures

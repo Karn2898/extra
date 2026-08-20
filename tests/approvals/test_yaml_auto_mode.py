@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from agent_engine.core.spec import AgentSpec
-from agent_engine.engine.langgraph.helpers import walk
+from agent_engine.engine.langgraph.graph.traversal import walk
 from agent_engine.parsers.yaml.parser import YAMLParser
 
 _BASE = """

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +29,13 @@ class ResolverLoader:
         self._instances: dict[str, Any] = {}
         self._shared_loaded = False
 
-    def load(self, agent_id: str, resolver_id: str) -> Callable[[dict[str, Any]], Any]:
+    def resolve(
+        self,
+        agent_id: str,
+        resolver_id: str,
+        context: dict[str, Any],
+    ) -> Any:
+        """Run one named resolver method against the request-scoped context."""
         instance = self._get_or_create(agent_id)
         method = getattr(instance, resolver_id, None)
         if method is None or not callable(method):
@@ -38,7 +43,7 @@ class ResolverLoader:
             raise ResolverLoaderError(
                 f"Resolver class '{cls_name}' for agent '{agent_id}' has no method '{resolver_id}'"
             )
-        return method
+        return method(context)
 
     def _get_or_create(self, agent_id: str) -> Any:
         if agent_id not in self._instances:

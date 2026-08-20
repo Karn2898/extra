@@ -15,6 +15,9 @@ from fastapi.testclient import TestClient
 from agent_engine.approvals.decision import ApprovalDecision
 from agent_engine.approvals.errors import ApprovalAlreadyProcessed, ApprovalNotFound
 from agent_engine.approvals.models import RunStatus
+from agent_engine.engine.approval_cancellation_engine import ApprovalCancellationEngine
+from agent_engine.engine.approval_engine import ApprovalEngine
+from agent_engine.engine.approval_streaming_engine import ApprovalStreamingEngine
 from agent_engine.engine.engine import Engine
 from agent_engine.engine.types import ChatMessage, PendingApproval, RunResult
 from agent_engine.runs.in_memory import InMemoryRunRepository
@@ -42,7 +45,12 @@ from tests.agent_manager.conftest import (
 )
 
 
-class _ApprovalRecordingEngine(RecordingEngine):
+class _ApprovalRecordingEngine(
+    RecordingEngine,
+    ApprovalEngine,
+    ApprovalStreamingEngine,
+    ApprovalCancellationEngine,
+):
     def __init__(self, run_repository: InMemoryRunRepository | None = None) -> None:
         super().__init__()
         self.run_repository = run_repository

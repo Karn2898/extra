@@ -1,21 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from pathlib import Path
 
 from agent_engine.core.spec import AgentSpec, GraphNode, SystemSpec
+from agent_engine.generate.generate_result import GenerateResult
 from agent_engine.generate.manifest import (
     ensure_plugins_manifest_exists,
     manifest_package,
     update_manifest,
 )
-
-
-@dataclass
-class GenerateResult:
-    created: list[str] = field(default_factory=list)
-    skipped: list[str] = field(default_factory=list)
-    ignored: list[str] = field(default_factory=list)
 
 
 class Generator:

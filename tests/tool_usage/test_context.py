@@ -6,11 +6,11 @@ import logging
 
 import pytest
 
-from agent_engine.tool_usage.context import (
-    ToolUsageContextProvider,
+from agent_engine.tool_usage.context_models import (
     ToolUsageScope,
     format_executed_tools,
 )
+from agent_engine.tool_usage.context_provider import ToolUsageContextProvider
 from agent_engine.tool_usage.in_memory import InMemoryToolUsageRepository
 from agent_engine.tool_usage.models import (
     ToolCallIdentity,
