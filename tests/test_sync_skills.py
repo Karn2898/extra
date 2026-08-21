@@ -2,30 +2,25 @@
 
 from __future__ import annotations
 
-import importlib.util
 import shutil
-import sys
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from tools.skills.adapter_files import is_generated, split_skill_content
+from tools.skills.sync import sync
 
 ROOT = Path(__file__).resolve().parent.parent
-SCRIPT_PATH = ROOT / "tools" / "skills" / "__init__.py"
-
-
-def load_sync_skills():
-    spec = importlib.util.spec_from_file_location("sync_skills", SCRIPT_PATH)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["sync_skills"] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 @pytest.fixture
-def sync_skills():
-    return load_sync_skills()
+def sync_skills() -> SimpleNamespace:
+    return SimpleNamespace(
+        sync=sync,
+        split_skill_content=split_skill_content,
+        is_generated=is_generated,
+    )
 
 
 @pytest.fixture

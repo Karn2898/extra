@@ -136,6 +136,82 @@ def _trigger_pending_approval(
     return body["run_id"], pending["approval_id"]
 
 
+def _write_token_probe_config(base_dir: Path) -> Path:
+    """A tool that reports whichever credential it sees at call time, so a
+    test can tell a run's original token apart from the approver's."""
+    tools_dir = base_dir / "plugins" / "tools"
+    tools_dir.mkdir(parents=True, exist_ok=True)
+    (tools_dir / "send_email.py").write_text(
+        "from agent_engine.runtime.hooks import current_run_context\n\n"
+        "def send_email(message: str) -> str:\n"
+        "    ctx = current_run_context.get()\n"
+        "    auth = ctx.auth_context if ctx else None\n"
+        "    token = auth.inbound_access_token if auth else None\n"
+        "    return f'sent as {token}'\n",
+        encoding="utf-8",
+    )
+    config_path = base_dir / "agents.yaml"
+    config_path.write_text(
+        """
+system:
+  name: Approval Test System
+
+tools:
+  send_email:
+    description: Send an email.
+
+agents:
+  writer:
+    description: Writes and sends emails.
+    model:
+      provider: openai
+      name: gpt-4o-mini
+    tools: [send_email]
+
+graph:
+  writer:
+""",
+        encoding="utf-8",
+    )
+    return config_path
+
+
+@pytest.fixture
+def token_probe_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    from langchain_openai import ChatOpenAI
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-a-real-credential")
+    monkeypatch.setattr(
+        ChatOpenAI, "bind_tools", lambda self, tools, **_: FakeChatModel([t.name for t in tools])
+    )
+    config_path = _write_token_probe_config(tmp_path)
+    app = create_app(str(config_path))
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+def test_approval_resumes_with_the_approvers_token_not_the_original_caller(
+    token_probe_client: TestClient,
+) -> None:
+    """A run started by one caller may be approved by another — the tool call
+    that finally executes must act with the approver's credential, not
+    whatever the run happened to start with (extra-org/extra#112 review)."""
+    started = token_probe_client.post(
+        "/invoke", json={"message": "hi"}, headers={"Authorization": "Bearer TOKEN_A"}
+    )
+    assert started.status_code == 200
+    pending = started.json()["pending_approval"]
+    run_id, approval_id = started.json()["run_id"], pending["approval_id"]
+
+    approved = token_probe_client.post(
+        f"/runs/{run_id}/approvals/{approval_id}/approve",
+        headers={"Authorization": "Bearer TOKEN_B"},
+    )
+
+    assert approved.status_code == 200
+    assert "sent as TOKEN_B" in approved.json()["answer"]
+
+
 def test_approve_with_empty_json_body_succeeds(client: TestClient) -> None:
     run_id, approval_id = _trigger_pending_approval(client)
 

@@ -69,7 +69,7 @@ port first: stop `make dev`, and `make down` if the Docker stack is up.
 | ----------------- | ------------------------------------------------------------ |
 | Script path       | `src/agent_manager/cli.py` — check the dropdown says *Script path*, not *Module name* (as a module it's `agent_manager.cli`) |
 | Parameters        | `--config examples/starter/agents.yaml --host 127.0.0.1`      |
-| Working directory | the repository root — `chat.db` and `.env` resolve against it |
+| Working directory | the repository root — `.env` and any explicitly configured relative database path resolve against it |
 
 Debug it, open http://localhost:8100/playground, send a message — breakpoints
 hit.

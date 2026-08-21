@@ -3,11 +3,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime
 
+from agent_engine.approvals.in_memory_session_approval_repository import (
+    InMemorySessionApprovalRepository,
+)
 from agent_engine.approvals.invocation import (
     SessionApprovalGrant,
     SessionApprovalKey,
 )
-from agent_engine.approvals.session_store import InMemorySessionApprovalRepository
 
 EventSink = Callable[[str], None]
 

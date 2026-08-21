@@ -1,21 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from pathlib import Path
 
 from agent_engine.core.spec import AgentSpec, GraphNode, SystemSpec
+from agent_engine.generate.generate_result import GenerateResult
 from agent_engine.generate.manifest import (
     ensure_plugins_manifest_exists,
     manifest_package,
     update_manifest,
 )
-
-
-@dataclass
-class GenerateResult:
-    created: list[str] = field(default_factory=list)
-    skipped: list[str] = field(default_factory=list)
-    ignored: list[str] = field(default_factory=list)
 
 
 class Generator:
@@ -24,8 +17,8 @@ class Generator:
     Never overwrites existing files — only creates missing stubs.
 
     Shared resolvers (scope: shared) are generated once in plugins/resolvers/shared.py
-    as class SharedResolver. Per-agent files inherit from SharedResolver and only
-    include stubs for their agent-scoped resolvers.
+    as class SharedResolver. Per-node files inherit from SharedResolver and only
+    include stubs for their node-scoped resolvers.
     """
 
     def generate(self, spec: SystemSpec, base_dir: Path) -> GenerateResult:
@@ -33,8 +26,8 @@ class Generator:
         (
             tool_ids,
             shared_ids,
-            agent_resolver_ids,
-            agents_with_shared,
+            node_resolver_ids,
+            nodes_with_shared,
             has_protected,
             mcp_plugin_ids,
         ) = _collect(spec.graph)
@@ -58,11 +51,11 @@ class Generator:
                 base_dir,
             )
 
-        for agent_id, agent_only_ids in agent_resolver_ids.items():
-            has_shared = agent_id in agents_with_shared
+        for node_id, node_only_ids in node_resolver_ids.items():
+            has_shared = node_id in nodes_with_shared
             self._write(
-                resolvers_dir / f"{agent_id}.py",
-                _agent_resolver_stub(agent_only_ids, has_shared),
+                resolvers_dir / f"{node_id}.py",
+                _node_resolver_stub(node_only_ids, has_shared),
                 result,
                 base_dir,
             )
@@ -106,7 +99,7 @@ class Generator:
             spec,
             tool_ids,
             shared_ids,
-            agent_resolver_ids,
+            node_resolver_ids,
             hook_methods,
             result,
         )
@@ -118,7 +111,7 @@ class Generator:
         spec: SystemSpec,
         tool_ids: dict[str, str],
         shared_ids: list[str],
-        agent_resolver_ids: dict[str, list[str]],
+        node_resolver_ids: dict[str, list[str]],
         hook_methods: dict[str, list[str]],
         result: GenerateResult,
     ) -> None:
@@ -139,8 +132,8 @@ class Generator:
         resolver_refs: dict[str, str] = {}
         if shared_ids:
             resolver_refs["shared"] = f"{pkg}.resolvers.shared:SharedResolver"
-        for agent_id in agent_resolver_ids:
-            resolver_refs[agent_id] = f"{pkg}.resolvers.{agent_id}:Resolver"
+        for node_id in node_resolver_ids:
+            resolver_refs[node_id] = f"{pkg}.resolvers.{node_id}:Resolver"
 
         tool_refs = {tool_id: f"{pkg}.tools.{tool_id}:{tool_id}" for tool_id in tool_ids}
 
@@ -177,16 +170,16 @@ def _collect(
 ) -> tuple[dict[str, str], list[str], dict[str, list[str]], set[str], bool, list[str]]:
     """Walk the graph and collect:
     - tool_ids: {id: description}
-    - shared_ids: ordered list of shared resolver IDs (deduped across all agents)
-    - agent_resolver_ids: {agent_id: [agent-scoped resolver ids for that agent]}
-    - agents_with_shared: set of agent IDs that reference at least one shared resolver
+    - shared_ids: ordered list of shared resolver IDs (deduped across all nodes)
+    - node_resolver_ids: {node_id: [node-scoped resolver ids for that node]}
+    - nodes_with_shared: set of node IDs that reference at least one shared resolver
     - has_protected: whether any node is protected
     """
     tool_ids: dict[str, str] = {}
     shared_ids: list[str] = []
     seen_shared: set[str] = set()
-    agent_resolver_ids: dict[str, list[str]] = {}
-    agents_with_shared: set[str] = set()
+    node_resolver_ids: dict[str, list[str]] = {}
+    nodes_with_shared: set[str] = set()
     has_protected = False
     mcp_plugin_ids: list[str] = []
     seen_mcp_plugins: set[str] = set()
@@ -195,19 +188,19 @@ def _collect(
         nonlocal has_protected
         if n.node.protected:
             has_protected = True
+        for r in n.node.resolvers:
+            if r.scope == "shared":
+                if r.id not in seen_shared:
+                    shared_ids.append(r.id)
+                    seen_shared.add(r.id)
+                nodes_with_shared.add(n.node.id)
+            else:
+                ids = node_resolver_ids.setdefault(n.node.id, [])
+                if r.id not in ids:
+                    ids.append(r.id)
         if isinstance(n.node, AgentSpec):
             for t in n.node.tools:
                 tool_ids.setdefault(t.id, t.description)
-            for r in n.node.resolvers:
-                if r.scope == "shared":
-                    if r.id not in seen_shared:
-                        shared_ids.append(r.id)
-                        seen_shared.add(r.id)
-                    agents_with_shared.add(n.node.id)
-                else:
-                    ids = agent_resolver_ids.setdefault(n.node.id, [])
-                    if r.id not in ids:
-                        ids.append(r.id)
             for mcp in n.node.mcps:
                 if mcp.auth and mcp.id not in seen_mcp_plugins:
                     mcp_plugin_ids.append(mcp.id)
@@ -217,15 +210,15 @@ def _collect(
 
     walk(node)
 
-    # Agents that only have shared resolvers still need a stub file.
-    for agent_id in agents_with_shared:
-        agent_resolver_ids.setdefault(agent_id, [])
+    # Nodes that only have shared resolvers still need a stub file.
+    for node_id in nodes_with_shared:
+        node_resolver_ids.setdefault(node_id, [])
 
     return (
         tool_ids,
         shared_ids,
-        agent_resolver_ids,
-        agents_with_shared,
+        node_resolver_ids,
+        nodes_with_shared,
         has_protected,
         mcp_plugin_ids,
     )
@@ -255,7 +248,7 @@ def _shared_resolver_stub(resolver_ids: list[str]) -> str:
     )
 
 
-def _agent_resolver_stub(agent_only_ids: list[str], inherits_shared: bool) -> str:
+def _node_resolver_stub(node_only_ids: list[str], inherits_shared: bool) -> str:
     if inherits_shared:
         header = (
             "from __future__ import annotations\n\n"
@@ -267,12 +260,12 @@ def _agent_resolver_stub(agent_only_ids: list[str], inherits_shared: bool) -> st
         header = "from __future__ import annotations\n\n\nclass Resolver:\n"
         init = "    def __init__(self) -> None:\n        pass\n"
 
-    if agent_only_ids:
+    if node_only_ids:
         methods = "\n" + "\n".join(
             f"    def {r_id}(self, ctx: dict) -> str:\n"
             f'        """Returns the value for {{{{{r_id}}}}}"""\n'
             f"        raise NotImplementedError\n"
-            for r_id in agent_only_ids
+            for r_id in node_only_ids
         )
     else:
         methods = ""

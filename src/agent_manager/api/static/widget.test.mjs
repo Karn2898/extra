@@ -219,6 +219,15 @@ function jsonResponse(body, ok = true, status = ok ? 200 : 500) {
   return { ok, status, json: async () => body };
 }
 
+function sseResponse(events) {
+  const body = [
+    ...events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}`),
+    "event: done\ndata: [DONE]",
+    "",
+  ].join("\n\n");
+  return new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+}
+
 async function flush() {
   await new Promise((resolve) => setTimeout(resolve, 0));
   await Promise.resolve();
@@ -338,6 +347,15 @@ globalThis.fetch = async (url, options = {}) => {
   if (url.endsWith("/runs/run-1/approvals/approval-1/decision")) {
     return jsonResponse({ answer: "approved", status: "completed", pending_approval: null });
   }
+  if (url.endsWith("/runs/run-1/approvals/approval-1/decision/stream")) {
+    return sseResponse([
+      { type: "resume_started", run_id: "run-1" },
+      { type: "final", content: "approved" },
+    ]);
+  }
+  if (url.endsWith("/runs/run-1/approvals/approval-1/cancel")) {
+    return jsonResponse({ run_id: "run-1", status: "cancelled" });
+  }
   throw new Error(`unexpected fetch: ${url}`);
 };
 let client = new AgentChatClient("https://api.example", new TokenSource("https://api.example"));
@@ -360,6 +378,91 @@ assert.equal(
 );
 assert.equal(JSON.parse(fetchCalls[2].options.body).decision, "allow_for_session");
 assert.equal(approvalResponse.answer, "approved");
+const approvalEvents = [];
+for await (const event of client.streamApproval(
+  conversationId,
+  "run-1",
+  "approval-1",
+  "allow_once",
+)) {
+  approvalEvents.push(event);
+}
+assert.equal(
+  fetchCalls[3].url,
+  "https://api.example/conversations/conv-1/runs/run-1/approvals/approval-1/decision/stream",
+);
+assert.deepEqual(approvalEvents.map((event) => event.type), ["resume_started", "final"]);
+await client.cancelApproval(conversationId, "run-1", "approval-1");
+assert.equal(
+  fetchCalls[4].url,
+  "https://api.example/conversations/conv-1/runs/run-1/approvals/approval-1/cancel",
+);
+assert.equal(fetchCalls[4].options.method, "POST");
+
+{
+  const controller = new AbortController();
+  let receivedSignal;
+  globalThis.fetch = async (_url, options = {}) => {
+    receivedSignal = options.signal;
+    throw new DOMException("cancelled", "AbortError");
+  };
+  const streaming = client.streamMessage("conv-1", "stop", controller.signal);
+  controller.abort();
+  await assert.rejects(() => streaming.next(), { name: "AbortError" });
+  assert.equal(receivedSignal, controller.signal, "the stream signal reaches fetch unchanged");
+}
+
+{
+  let readerCancelled = false;
+  const encoded = new TextEncoder().encode(
+    'event: answer_delta\ndata: {"type":"answer_delta","content":"partial"}\n\n',
+  );
+  const reader = {
+    read: async () => ({ done: false, value: encoded }),
+    cancel: async () => {
+      readerCancelled = true;
+    },
+    releaseLock: () => {},
+  };
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    body: { getReader: () => reader },
+  });
+  const streaming = client.streamMessage("conv-1", "stop");
+  assert.equal((await streaming.next()).value.content, "partial");
+  await streaming.return();
+  assert.equal(readerCancelled, true, "abandoning iteration cancels the response body");
+}
+
+{
+  const encoded = new TextEncoder().encode(
+    'event: turn_started\r\ndata: {"type":"turn_started","run_id":"run-crlf","message_id":"msg-crlf"}\r\n\r\n' +
+      'event: final\r\ndata: {"type":"final","content":"done"}\r\n\r\n',
+  );
+  const reads = [
+    { done: false, value: encoded },
+    { done: true, value: undefined },
+  ];
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    body: {
+      getReader: () => ({
+        read: async () => reads.shift(),
+        cancel: async () => {},
+        releaseLock: () => {},
+      }),
+    },
+  });
+  const events = [];
+  for await (const event of client.streamMessage("conv-1", "crlf")) events.push(event);
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["turn_started", "final"],
+    "CRLF-delimited SSE frames are parsed independently",
+  );
+}
 
 resetPage();
 globalThis.fetch = async (url) => {

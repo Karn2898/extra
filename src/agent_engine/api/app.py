@@ -14,8 +14,16 @@ from uuid import uuid4
 
 from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
 
+from agent_engine.api.schemas import (
+    ApprovalDecisionBody,
+    ApprovalDecisionRequest,
+    InvokeRequest,
+    InvokeResponse,
+    PendingApprovalModel,
+    RunStatusResponse,
+    ToolRecord,
+)
 from agent_engine.approvals.decision import ApprovalDecision, parse_decision
 from agent_engine.approvals.errors import (
     ApprovalAlreadyProcessed,
@@ -24,17 +32,17 @@ from agent_engine.approvals.errors import (
     approval_http_status,
     approval_public_message,
 )
-from agent_engine.approvals.session_store import (
+from agent_engine.approvals.in_memory_session_approval_repository import (
     InMemorySessionApprovalRepository,
-    SessionApprovalRepository,
 )
+from agent_engine.approvals.session_approval_repository import SessionApprovalRepository
 from agent_engine.core.validator import SystemSpecValidator
 from agent_engine.engine.engine import Engine
 from agent_engine.engine.langgraph.engine import LangGraphEngine
 from agent_engine.engine.types import PendingApproval
 from agent_engine.logging_config import configure_logging, log, request_id_var
 from agent_engine.parsers.yaml.parser import YAMLParser
-from agent_engine.runtime.hooks import RunContext
+from agent_engine.runtime.hooks import AuthContext, RunContext
 
 logger = logging.getLogger(__name__)
 
@@ -65,15 +73,34 @@ def _preview(text: str, limit: int = 120) -> str:
     return collapsed[:limit] + ("…" if len(collapsed) > limit else "")
 
 
-def _run_context(x_session_id: str | None, *, run_id: str) -> RunContext:
-    """Build a RunContext carrying a run id and the caller's session id.
+def _run_context(
+    x_session_id: str | None, *, run_id: str, authorization: str | None = None
+) -> RunContext:
+    """Build a RunContext carrying a run id, the caller's session id, and the
+    credential the caller sent.
 
     The run id is the resumable identifier returned to the client (also the
     LangGraph checkpoint thread id). The session id flows into tracing metadata
     (the Langfuse session); it is untrusted, so sanitize and cap it.
+
+    ``Authorization`` is forwarded verbatim and never verified: a forged
+    credential just fails at the system that owns it, so this grants nothing.
+    Asserted facts (user id, role) are not accepted — derive those in a
+    resolver, or run behind `agent_manager`, which verifies signatures.
     """
     session_id = _RID_OK.sub("", x_session_id)[:64] if x_session_id else ""
-    return RunContext(run_id=run_id, conversation_id=session_id or None)
+    return RunContext(
+        run_id=run_id,
+        conversation_id=session_id or None,
+        auth_context=_auth_context(authorization),
+    )
+
+
+def _auth_context(authorization: str | None) -> AuthContext | None:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return None
+    token = authorization[len("bearer ") :].strip()
+    return AuthContext(inbound_access_token=token) if token else None
 
 
 def _pending_model(pa: PendingApproval | None) -> PendingApprovalModel | None:
@@ -99,19 +126,6 @@ def _map_approval_error(exc: ApprovalError) -> HTTPException:
     )
 
 
-class InvokeRequest(BaseModel):
-    message: str
-
-
-class ToolRecord(BaseModel):
-    name: str
-    provider: str
-    status: str
-    agent_id: str | None = None
-    server_id: str | None = None
-    error: str | None = None
-
-
 def _client_tool_record(t: Any) -> ToolRecord:
     fields = dataclasses.asdict(t)
     if fields.get("error"):
@@ -119,55 +133,10 @@ def _client_tool_record(t: Any) -> ToolRecord:
     return ToolRecord(**fields)
 
 
-class PendingApprovalModel(BaseModel):
-    """Sanitized pending-approval payload returned to the client/UI."""
-
-    run_id: str
-
-    approval_id: str
-    agent_id: str
-    tool_name: str
-    description: str
-    provider: str
-    server_id: str | None = None
-    arguments: dict[str, Any] = {}
-
-
-class InvokeResponse(BaseModel):
-    system_name: str
-    answer: str
-    visited: list[str]
-    used_tools: list[ToolRecord]
-    run_id: str
-    status: str = "completed"
-    pending_approval: PendingApprovalModel | None = None
-
-
-class ApprovalDecisionRequest(BaseModel):
-    """Decide a pending tool call. ``user_id`` must match the run's authorized
-    approver when one was recorded."""
-
-    user_id: str | None = None
-
-
-class ApprovalDecisionBody(ApprovalDecisionRequest):
-    """A free-text decision from a UI/CLI, parsed to a typed decision at this
-    boundary. Accepts values like ``allow``, ``allow for this session``, or
-    ``deny``; an unrecognized value yields a 400."""
-
-    decision: str
-
-
 # Every field on ApprovalDecisionRequest is optional, so an absent body should
 # be treated the same as an empty one. A shared, read-only singleton default
 # (rather than a call in the signature) satisfies ruff's B008 check.
 _DEFAULT_APPROVAL_REQUEST_BODY = ApprovalDecisionRequest()
-
-
-class RunStatusResponse(BaseModel):
-    run_id: str
-    status: str
-    pending_approval: PendingApprovalModel | None = None
 
 
 SessionApprovalRepositoryFactory = Callable[
@@ -228,6 +197,7 @@ def create_app(
         response: Response,
         x_request_id: str | None = Header(default=None),
         x_session_id: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
     ) -> InvokeResponse:
         assert _engine is not None
         rid = _begin_request(x_request_id)
@@ -244,7 +214,8 @@ def create_app(
         )
         try:
             result = await _engine.run(
-                body.message, context=_run_context(x_session_id, run_id=run_id)
+                body.message,
+                context=_run_context(x_session_id, run_id=run_id, authorization=authorization),
             )
         except Exception as exc:
             log(logger, logging.ERROR, "request end", status="error", error=str(exc))
@@ -274,10 +245,11 @@ def create_app(
         body: InvokeRequest,
         x_request_id: str | None = Header(default=None),
         x_session_id: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
     ) -> StreamingResponse:
         assert _engine is not None
         rid = _begin_request(x_request_id)
-        context = _run_context(x_session_id, run_id=uuid4().hex)
+        context = _run_context(x_session_id, run_id=uuid4().hex, authorization=authorization)
         started = time.perf_counter()
         log(
             logger,
@@ -325,7 +297,9 @@ def create_app(
         except ApprovalError as exc:
             raise _map_approval_error(exc) from exc
         return RunStatusResponse(
-            run_id=run_id, status=status, pending_approval=_pending_model(pending)
+            run_id=run_id,
+            status=status,
+            pending_approval=_pending_model(pending),
         )
 
     async def _decide(
@@ -334,9 +308,11 @@ def create_app(
         decision: ApprovalDecision,
         user_id: str | None,
         session_id: str | None,
+        authorization: str | None,
     ) -> InvokeResponse:
         engine = _hitl_engine()
         caller_session_id = _run_context(session_id, run_id=run_id).conversation_id
+        auth = _auth_context(authorization)
         try:
             result = await engine.resume(
                 run_id,
@@ -344,6 +320,7 @@ def create_app(
                 decision,
                 caller_user_id=user_id,
                 caller_session_id=caller_session_id,
+                access_token=auth.inbound_access_token if auth else None,
             )
         except ApprovalAlreadyProcessed as exc:
             # A retried decision (e.g. after a client-side timeout on a request
@@ -400,13 +377,16 @@ def create_app(
         approval_id: str,
         body: ApprovalDecisionBody,
         x_session_id: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
     ) -> InvokeResponse:
         # The single free-text → typed decision boundary for the API.
         try:
             decision = parse_decision(body.decision)
         except InvalidDecision as exc:
             raise _map_approval_error(exc) from exc
-        return await _decide(run_id, approval_id, decision, body.user_id, x_session_id)
+        return await _decide(
+            run_id, approval_id, decision, body.user_id, x_session_id, authorization
+        )
 
     @app.post("/runs/{run_id}/approvals/{approval_id}/approve", response_model=InvokeResponse)
     async def approve(
@@ -414,6 +394,7 @@ def create_app(
         approval_id: str,
         body: ApprovalDecisionRequest = _DEFAULT_APPROVAL_REQUEST_BODY,
         x_session_id: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
     ) -> InvokeResponse:
         return await _decide(
             run_id,
@@ -421,6 +402,7 @@ def create_app(
             ApprovalDecision.ALLOW_ONCE,
             body.user_id,
             x_session_id,
+            authorization,
         )
 
     @app.post("/runs/{run_id}/approvals/{approval_id}/reject", response_model=InvokeResponse)
@@ -429,6 +411,7 @@ def create_app(
         approval_id: str,
         body: ApprovalDecisionRequest = _DEFAULT_APPROVAL_REQUEST_BODY,
         x_session_id: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
     ) -> InvokeResponse:
         return await _decide(
             run_id,
@@ -436,6 +419,7 @@ def create_app(
             ApprovalDecision.DENY,
             body.user_id,
             x_session_id,
+            authorization,
         )
 
     return app

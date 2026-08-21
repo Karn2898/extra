@@ -1,5 +1,4 @@
-"""Alembic environment (async). Schema target is the SQLModel metadata; the URL
-comes from DATABASE_URL so migrations hit the same database the app uses."""
+"""Alembic environment for explicitly configured persistent storage."""
 
 from __future__ import annotations
 
@@ -18,6 +17,8 @@ from agent_manager.config import Settings
 
 config = context.config
 settings = Settings()
+if settings.uses_process_memory:
+    raise RuntimeError("Set EXTRA_DB_URL or DATABASE_URL to a persistent database before migrating")
 config.set_main_option("sqlalchemy.url", settings.effective_database_url)
 
 if config.config_file_name is not None:

@@ -129,8 +129,17 @@ POST /conversations/{id}/messages/stream
 
 Assistant text is rendered as `answer_delta` events arrive. The final event
 settles the answer and emits `agent-chat:answer` with the safe route/tool
-metadata. If streaming is unavailable or fails before a usable answer, the
-widget falls back to the regular non-streaming send endpoint.
+metadata. A failed streaming mutation is not automatically replayed through the
+non-streaming endpoint because a network failure cannot prove that the first
+request made no state change.
+
+If a tool pauses for human approval, the widget shows **Approve**, **Deny**,
+**Approve for this session**, and a separate **Cancel run** action. Cancel is
+terminal and remains available while an approval decision is applying; the
+backend atomically decides which request wins. Once execution resumes, the
+textarea and Edit remain available for preparing a draft, submission stays
+blocked, and the send action becomes **Stop**. Stop aborts the actual resumed
+graph execution under the original `run_id`.
 
 See [WIDGET_ARCHITECTURE.md](WIDGET_ARCHITECTURE.md) for the implementation
 details and next-step plan.

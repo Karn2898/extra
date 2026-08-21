@@ -49,6 +49,11 @@ def test_in_flight_runs_can_be_cancelled() -> None:
     resuming.transition(RunStatus.CANCELLED)
     assert resuming.status == RunStatus.CANCELLED
 
+    pending = _run()
+    pending.status = RunStatus.PENDING_APPROVAL
+    pending.transition(RunStatus.CANCELLED)
+    assert pending.status == RunStatus.CANCELLED
+
 
 @pytest.mark.parametrize(
     "start,target",
@@ -58,7 +63,6 @@ def test_in_flight_runs_can_be_cancelled() -> None:
         (RunStatus.RUNNING, RunStatus.RESUMING),
         (RunStatus.CANCELLED, RunStatus.RUNNING),
         (RunStatus.CANCELLED, RunStatus.COMPLETED),
-        (RunStatus.PENDING_APPROVAL, RunStatus.CANCELLED),
     ],
 )
 def test_invalid_run_transitions_raise(start: RunStatus, target: RunStatus) -> None:

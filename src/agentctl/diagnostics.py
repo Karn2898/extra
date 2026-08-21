@@ -22,7 +22,7 @@ from pathlib import Path
 
 from agent_engine.core.spec import AgentSpec, MCPSpec, OrchestratorSpec, SystemSpec
 from agent_engine.core.validator import SystemSpecValidator
-from agent_engine.engine.langgraph.helpers import collect_mcp_specs, render_graph, walk
+from agent_engine.engine.langgraph.graph.traversal import collect_mcp_specs, render_graph, walk
 from agent_engine.generate.manifest import hook_plugin_refs
 from agent_engine.loaders.import_roots import (
     ImportRootError,

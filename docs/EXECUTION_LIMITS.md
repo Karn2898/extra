@@ -77,7 +77,7 @@ results, headers, or secrets.
 
 - Policy parsed in `agent_engine/parsers/yaml/parser.py` → `ExecutionPolicy`
   (`agent_engine/core/execution.py`), carried on `SystemSpec.execution`.
-- A per-run `ExecutionLimiter` (`agent_engine/runtime/execution.py`) is created
+- A per-run `ExecutionLimiter` (`agent_engine/runtime/execution_limiter.py`) is created
   in `LangGraphEngine.run`/`stream` and published on the `current_execution`
   context var.
 - Enforced at three seams: the tool loop (`run_tool_loop` → iterations),

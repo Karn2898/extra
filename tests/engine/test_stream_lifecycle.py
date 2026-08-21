@@ -34,9 +34,9 @@ from agent_engine.core.spec import (
     ToolSpec,
 )
 from agent_engine.engine.langgraph.engine import LangGraphEngine
-from agent_engine.engine.langgraph.stream_channel import StreamChannel
+from agent_engine.engine.langgraph.execution.stream_channel import StreamChannel
 from agent_engine.runs.in_memory import InMemoryRunRepository
-from agent_engine.runtime.execution import current_execution
+from agent_engine.runtime.execution_limiter import current_execution
 from agent_engine.runtime.hooks import RunContext, current_run_context
 from agent_engine.runtime.streaming import RunStreamEvent, StreamSinks, current_streams
 from tests.runtime.hooks import fixtures
@@ -97,7 +97,10 @@ class BlockingModel:
         return AIMessage(content="first second")
 
     async def astream(self, messages: list[Any]) -> AsyncIterator[AIMessageChunk]:
-        yield AIMessageChunk(content="first")
+        yield AIMessageChunk(
+            content="first",
+            usage_metadata={"input_tokens": 4, "output_tokens": 1, "total_tokens": 5},
+        )
         await self.released.wait()
         self.resumed = True
         yield AIMessageChunk(content=" second")
@@ -242,6 +245,24 @@ async def test_stream_channel_preserves_producer_exception_type() -> None:
     assert raised.value is failure
 
 
+async def test_terminal_event_waits_for_lifecycle_finalization_before_delivery() -> None:
+    channel = StreamChannel()
+    terminal = channel.publish_terminal(RunStreamEvent(type="final", content="done"))
+    events = cast(AsyncGenerator[RunStreamEvent, None], channel.events())
+
+    async def receive() -> RunStreamEvent:
+        return await events.__anext__()
+
+    next_event = asyncio.create_task(receive())
+
+    await terminal.accepted.wait()
+    assert next_event.done() is False
+    terminal.finalized.set()
+
+    assert await next_event == RunStreamEvent(type="final", content="done")
+    await events.aclose()
+
+
 async def test_graph_failure_reaches_the_consumer_and_fails_the_run(tmp_path: Path) -> None:
     async with LangGraphEngine(tmp_path, model_factory=_broken_factory) as engine:
         await engine.build(
@@ -335,11 +356,16 @@ async def test_context_vars_are_restored_when_the_consumer_walks_away(tmp_path: 
 
 async def test_abandoned_stream_stops_the_graph_and_cancels_the_run(tmp_path: Path) -> None:
     model = BlockingModel()
+    runs = InMemoryRunRepository()
 
     def factory(*_: Any, **__: Any) -> BaseChatModel:
         return cast(BaseChatModel, cast(object, model))
 
-    async with LangGraphEngine(tmp_path, model_factory=factory) as engine:
+    async with LangGraphEngine(
+        tmp_path,
+        model_factory=factory,
+        run_repository=runs,
+    ) as engine:
         await engine.build(_spec())
         events = cast(
             AsyncGenerator[RunStreamEvent, None],
@@ -355,3 +381,6 @@ async def test_abandoned_stream_stops_the_graph_and_cancels_the_run(tmp_path: Pa
 
         assert model.resumed is False
         assert await engine.get_run_status("run-abandoned") == "cancelled"
+        stored = await runs.get("run-abandoned")
+        assert stored is not None
+        assert (stored.input_tokens, stored.output_tokens) == (4, 1)

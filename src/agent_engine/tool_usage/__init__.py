@@ -7,7 +7,7 @@ which run, and with what outcome* — and keeps its two audiences apart:
 * :mod:`repository` — the persistence port; the source of truth.
 * :mod:`in_memory` — the process-local adapter for development and tests.
 * :mod:`tracker` — writes execution outcomes through the port.
-* :mod:`context` — projects persisted usage into private model context.
+* :mod:`context_provider` — projects persisted usage into private model context.
 * :mod:`trace` — projects persisted usage into the public run trace.
 
 It makes no authorization decisions; whether a call may run belongs to
@@ -17,12 +17,12 @@ It makes no authorization decisions; whether a call may run belongs to
 
 from __future__ import annotations
 
-from agent_engine.tool_usage.context import (
+from agent_engine.tool_usage.context_models import (
     ToolUsageContext,
-    ToolUsageContextProvider,
     ToolUsageEntry,
     ToolUsageScope,
 )
+from agent_engine.tool_usage.context_provider import ToolUsageContextProvider
 from agent_engine.tool_usage.in_memory import InMemoryToolUsageRepository
 from agent_engine.tool_usage.models import (
     ToolCallIdentity,

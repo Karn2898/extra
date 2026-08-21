@@ -20,7 +20,8 @@ from agent_engine.runtime.hooks import (
     RunContext,
     ToolResultContext,
 )
-from agent_engine.runtime.hooks.manager import HookManager, LoadedHook
+from agent_engine.runtime.hooks.loaded_hook import LoadedHook
+from agent_engine.runtime.hooks.manager import HookManager
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 RESEARCH_HOOKS = (

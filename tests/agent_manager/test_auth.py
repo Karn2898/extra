@@ -22,6 +22,7 @@ from agent_manager.infrastructure.auth import (
     TokenVerifier,
     encode_token,
 )
+from agent_manager.infrastructure.auth.key_source import KeySource
 
 SECRET = "a-signing-secret-of-more-than-32-characters"
 OTHER_SECRET = "an-attacker-secret-of-sufficient-length"
@@ -88,7 +89,7 @@ def test_a_token_from_another_issuer_is_rejected() -> None:
 def test_verification_takes_its_algorithms_from_the_key_source() -> None:
     """The seam that keeps RS256/ES256 a new `KeySource` and nothing else."""
 
-    class Hmac512KeySource:
+    class Hmac512KeySource(KeySource):
         algorithms = ("HS512",)
 
         def key_for(self, header: Mapping[str, Any]) -> str:
@@ -193,6 +194,33 @@ def test_a_visitor_pass_round_trips_but_a_host_token_does_not_become_one() -> No
     host_user = resolver.resolve(encode_token(SECRET, subject="alice", ttl_seconds=300).token)
     assert not host_user.is_anonymous
     assert host_user.external_id == "alice"
+
+
+def test_a_verified_host_token_is_carried_so_tools_can_act_as_that_user() -> None:
+    token = _encode()
+
+    principal = HostIdentitySource(_verifier()).resolve(token)
+
+    assert principal.access_token == token
+
+
+def test_a_visitor_pass_is_never_carried_as_a_host_credential() -> None:
+    """A pass we minted proves nothing to the host."""
+    resolver = build_identity_resolver(
+        _settings(extra_auth_mode=AuthMode.MINT, extra_auth_secret=SECRET)
+    )
+
+    visitor = resolver.resolve(resolver.anonymous.issue().token)
+
+    assert visitor.access_token is None
+
+
+def test_a_carried_token_stays_out_of_the_principal_repr() -> None:
+    """`repr` reaches logs and tracebacks by accident; the credential must not."""
+    principal = HostIdentitySource(_verifier()).resolve(_encode())
+
+    assert principal.access_token is not None
+    assert principal.access_token not in repr(principal)
 
 
 def test_mint_mode_accepts_the_token_our_own_docs_tell_hosts_to_produce() -> None:

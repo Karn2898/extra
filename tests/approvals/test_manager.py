@@ -9,21 +9,21 @@ from __future__ import annotations
 
 import pytest
 
+from agent_engine.approvals.approval_manager import ApprovalManager
 from agent_engine.approvals.errors import (
     ApprovalAlreadyProcessed,
     ApprovalRunMismatch,
     RunNotFound,
     UnauthorizedApprover,
 )
-from agent_engine.approvals.manager import (
-    ApprovalManager,
-    ToolExecutionManager,
-    execution_id_for,
+from agent_engine.approvals.in_memory_approval_repository import InMemoryApprovalRepository
+from agent_engine.approvals.in_memory_tool_execution_repository import (
+    InMemoryToolExecutionRepository,
 )
 from agent_engine.approvals.models import ApprovalStatus, RunRecord, RunStatus
-from agent_engine.approvals.repository import (
-    InMemoryApprovalRepository,
-    InMemoryToolExecutionRepository,
+from agent_engine.approvals.tool_execution_manager import (
+    ToolExecutionManager,
+    execution_id_for,
 )
 from agent_engine.runs.in_memory import InMemoryRunRepository
 
@@ -139,6 +139,53 @@ async def test_second_claim_is_rejected() -> None:
     await mgr.claim(run_id="r1", approval_id="ap1")
     with pytest.raises(ApprovalAlreadyProcessed):
         await mgr.claim(run_id="r1", approval_id="ap1")
+
+
+async def test_cancel_pending_rejects_approval_without_claiming_run() -> None:
+    mgr = _approval_manager()
+    await _pending(mgr, user="owner", auth_ref="session-1")
+
+    cancelled = await mgr.cancel_pending(
+        run_id="r1",
+        approval_id="ap1",
+        caller_user_id="owner",
+        caller_auth_ref="session-1",
+    )
+
+    assert cancelled.status == ApprovalStatus.REJECTED
+    assert (await mgr.get_run("r1")).status == RunStatus.PENDING_APPROVAL
+    with pytest.raises(ApprovalAlreadyProcessed):
+        await mgr.claim(
+            run_id="r1",
+            approval_id="ap1",
+            caller_user_id="owner",
+            caller_auth_ref="session-1",
+        )
+
+
+async def test_cancel_pending_loses_after_resume_claim() -> None:
+    mgr = _approval_manager()
+    await _pending(mgr)
+    await mgr.claim(run_id="r1", approval_id="ap1")
+
+    with pytest.raises(ApprovalAlreadyProcessed):
+        await mgr.cancel_pending(run_id="r1", approval_id="ap1")
+
+
+async def test_unauthorized_cancellation_leaves_approval_pending() -> None:
+    mgr = _approval_manager()
+    await _pending(mgr, user="owner", auth_ref="session-1")
+
+    with pytest.raises(UnauthorizedApprover):
+        await mgr.cancel_pending(
+            run_id="r1",
+            approval_id="ap1",
+            caller_user_id="intruder",
+            caller_auth_ref="session-1",
+        )
+
+    assert (await mgr.get_approval("r1", "ap1")).status == ApprovalStatus.PENDING
+    assert (await mgr.get_run("r1")).status == RunStatus.PENDING_APPROVAL
 
 
 async def test_claim_validates_run_membership() -> None:

@@ -70,7 +70,7 @@ vite/dist/
 coverage/
 test-results/
 
-# Local runtime SQLite database (default database_url)
+# Local runtime SQLite database (when explicitly configured)
 chat.db
 
 # =========================

@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from pathlib import Path
 
 import pytest
 
-from agent_engine.approvals.manager import ApprovalManager
+from agent_engine.approvals.approval_manager import ApprovalManager
+from agent_engine.approvals.in_memory_approval_repository import InMemoryApprovalRepository
 from agent_engine.approvals.models import RunRecord, RunStatus
-from agent_engine.approvals.repository import InMemoryApprovalRepository
 from agent_engine.engine.langgraph.engine import LangGraphEngine
-from agent_engine.engine.langgraph.run_lifecycle import RunLifecycle
+from agent_engine.engine.langgraph.execution.run_lifecycle import RunLifecycle
 from agent_engine.runs.in_memory import InMemoryRunRepository
 from agent_engine.runs.repository import RunRepository
 from agent_engine.runtime.hooks import HookManager, RunContext
@@ -30,6 +31,9 @@ class RegistrationSpy(RunRepository):
     async def get(self, run_id: str) -> RunRecord | None:
         raise AssertionError("RunLifecycle must not read before registration")
 
+    async def get_many(self, run_ids: Collection[str]) -> dict[str, RunRecord]:
+        raise AssertionError("RunLifecycle must not read before registration")
+
     async def transition_if_allowed(self, run_id: str, target: RunStatus) -> bool:
         self.transitions.append((run_id, target))
         return True
@@ -43,6 +47,11 @@ class RegistrationSpy(RunRepository):
     ) -> RunRecord | None:
         del run_id, input_tokens, output_tokens
         raise AssertionError("RunLifecycle must not record engine-owned usage")
+
+
+class RunIdReplacingHookManager(HookManager):
+    async def run_run_start(self, context: RunContext) -> RunContext:
+        return context.replace(run_id="replaced-run")
 
 
 async def test_begin_delegates_registration_as_one_repository_operation() -> None:
@@ -63,6 +72,20 @@ async def test_begin_delegates_registration_as_one_repository_operation() -> Non
     await lifecycle.cancel(context)
 
     assert repository.transitions == [("run-1", RunStatus.CANCELLED)]
+
+
+async def test_begin_rejects_hook_replacement_of_authoritative_run_id() -> None:
+    repository = RegistrationSpy()
+    lifecycle = RunLifecycle(
+        system_name="system",
+        hook_manager=RunIdReplacingHookManager(),
+        run_repository=repository,
+    )
+
+    with pytest.raises(ValueError, match=r"cannot replace.*run_id"):
+        await lifecycle.begin(RunContext(run_id="run-1"))
+
+    assert repository.registered == []
 
 
 async def test_begin_does_not_reset_an_existing_run() -> None:

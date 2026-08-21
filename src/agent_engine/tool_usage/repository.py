@@ -1,20 +1,19 @@
 """Abstract persistence contract for tool usage.
 
-The engine depends only on this ``Protocol`` (Dependency Inversion). A shared
+The engine depends only on this explicit abstract base class. A shared
 deployment supplies a distributed adapter with the same contract; nothing in the
 agents, nodes, or tool-execution path changes when it does.
 """
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import Protocol, runtime_checkable
 
 from agent_engine.tool_usage.models import ToolInvocationKind, ToolInvocationRecord
 
 
-@runtime_checkable
-class ToolUsageRepository(Protocol):
+class ToolUsageRepository(ABC):
     """Persistence contract for observed tool usage, the source of truth.
 
     A record is identified by ``(run_id, tool_call_id)``. Implementations must:
@@ -32,10 +31,12 @@ class ToolUsageRepository(Protocol):
     identity carries no ``conversation_id`` is reachable by run only.
     """
 
+    @abstractmethod
     async def record(self, record: ToolInvocationRecord) -> None:
         """Store the outcome of one logical tool invocation."""
-        ...
+        raise NotImplementedError
 
+    @abstractmethod
     async def list_for_run(
         self,
         run_id: str,
@@ -44,8 +45,9 @@ class ToolUsageRepository(Protocol):
         kind: ToolInvocationKind | None = None,
     ) -> Sequence[ToolInvocationRecord]:
         """Return this run's records in call order (empty when unknown)."""
-        ...
+        raise NotImplementedError
 
+    @abstractmethod
     async def list_for_conversation(
         self,
         conversation_id: str,
@@ -54,4 +56,4 @@ class ToolUsageRepository(Protocol):
         kind: ToolInvocationKind | None = None,
     ) -> Sequence[ToolInvocationRecord]:
         """Return every run's records for this conversation, in call order."""
-        ...
+        raise NotImplementedError

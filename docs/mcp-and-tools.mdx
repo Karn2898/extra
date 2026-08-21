@@ -155,6 +155,28 @@ The docstring becomes the tool description the LLM sees. The engine wraps the fu
   Write clear descriptions and typed parameters. The LLM reads both when deciding how to call a tool. Vague descriptions lead to wrong or missed tool calls.
 </Tip>
 
+### Calling a real system as the user
+
+A tool that reaches your own API should act as the person who asked, so your API applies their permissions. The credential the request arrived with is on the run context — not a parameter, since anything in the signature becomes part of the schema the LLM sees:
+
+```python
+from agent_engine.runtime.hooks import current_run_context
+
+def get_order_status(order_id: str) -> dict:
+    """Get the current status and tracking info for an order. Requires an order ID."""
+    ctx = current_run_context.get()
+    auth = ctx.auth_context if ctx else None
+    if auth is None or not auth.inbound_access_token:
+        return {"error": "No credential for this request; the user must sign in."}
+    return your_api.get(order_id, token=auth.inbound_access_token)
+```
+
+It is filled from the caller's `Authorization` header (see [Identity](/docs/identity)), and never reaches the model.
+
+<Warning>
+  When there is no credential, fail. A fallback to one shared admin key lets every caller do whatever that key can.
+</Warning>
+
 ---
 
 ## Resolvers vs. tools

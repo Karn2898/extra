@@ -35,11 +35,11 @@ import logging
 import time
 from collections.abc import Mapping
 from contextlib import suppress
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from agent_engine.runtime.hooks.errors import HookExecutionError, HookLoadError
+from agent_engine.runtime.hooks.loaded_hook import LoadedHook
 from agent_engine.runtime.hooks.loader import HookLoader
 from agent_engine.runtime.hooks.models import (
     HOOK_POINTS,
@@ -57,19 +57,6 @@ from agent_engine.runtime.hooks.models import (
 
 logger = logging.getLogger(__name__)
 _SNAPSHOT_UNAVAILABLE = object()
-
-
-@dataclass(frozen=True)
-class LoadedHook:
-    """A resolved hook ready to run, with its declared policy."""
-
-    point: HookPoint
-    ref: str
-    func: Any
-    failure_policy: str = "fail"
-    plugin: str | None = None
-    method: str | None = None
-    event_mode: bool = False
 
 
 async def _invoke(

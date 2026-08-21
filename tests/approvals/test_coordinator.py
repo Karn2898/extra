@@ -11,14 +11,17 @@ import asyncio
 
 import pytest
 
+from agent_engine.approvals.approval_provider import ApprovalProvider, ApprovalRequest
 from agent_engine.approvals.coordinator import ApprovalCoordinator
 from agent_engine.approvals.decision import ApprovalDecision
+from agent_engine.approvals.in_memory_session_approval_repository import (
+    InMemorySessionApprovalStore,
+)
 from agent_engine.approvals.invocation import SessionApprovalKey, ToolInvocation
-from agent_engine.approvals.provider import ApprovalRequest
-from agent_engine.approvals.session_store import InMemorySessionApprovalStore
+from agent_engine.approvals.session_approval_store import SessionApprovalStore
 
 
-class RecordingProvider:
+class RecordingProvider(ApprovalProvider):
     """Returns a fixed decision (or raises) and records the requests it saw."""
 
     def __init__(
@@ -36,7 +39,7 @@ class RecordingProvider:
         return self._decision
 
 
-class MappingProvider:
+class MappingProvider(ApprovalProvider):
     """Returns a per-invocation decision, yielding so calls interleave."""
 
     def __init__(self, by_call: dict[str, ApprovalDecision]) -> None:
@@ -49,7 +52,7 @@ class MappingProvider:
         return self._by_call[request.invocation.tool_call_id]
 
 
-class LegacySessionApprovalStore:
+class LegacySessionApprovalStore(SessionApprovalStore):
     """An integration implementing the original two-method store contract."""
 
     def __init__(self) -> None:
