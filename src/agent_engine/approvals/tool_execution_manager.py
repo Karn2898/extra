@@ -9,13 +9,23 @@ from agent_engine.approvals.tool_execution_repository import ToolExecutionReposi
 
 
 def execution_id_for(tool_call_id: str, *, salt: str = "") -> str:
-    """Return a deterministic idempotency key for one tool call."""
+    """Deterministic idempotency key for one tool call.
+
+    Derived from the stable ``tool_call_id`` so that a retry or a graph re-entry
+    which reaches the same tool call computes the same key and can be
+    deduplicated. Optional ``salt`` (e.g. an approval id) scopes it further.
+    """
     digest = hashlib.sha256(f"{tool_call_id}:{salt}".encode()).hexdigest()
     return f"exec_{digest[:24]}"
 
 
 class ToolExecutionManager:
-    """Coordinates idempotent tool execution through an injected repository."""
+    """Idempotency ledger for tool executions.
+
+    Holds no per-run mutable state; safe to share across concurrent runs. The
+    repository is injected (Dependency Inversion) and defaults to ``None`` for
+    callers that do not need deduplication.
+    """
 
     def __init__(self, *, execution_repository: ToolExecutionRepository | None = None) -> None:
         self._executions = execution_repository

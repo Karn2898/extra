@@ -41,7 +41,12 @@ def _text(value: Any) -> str | None:
 
 
 def _identifier(value: Any) -> str | None:
-    """Return a usable textual identity claim; booleans are never identities."""
+    """A claim that names something, as text.
+
+    JSON numbers are accepted because plenty of hosts key users on an integer
+    primary key — Django and Rails out of the box. Booleans are not: `bool` is
+    an `int` in Python, and a boolean id is a bug rather than an identity.
+    """
     if isinstance(value, bool):
         return None
     if isinstance(value, int):

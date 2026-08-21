@@ -154,6 +154,8 @@ async def stream_message(
             payload = {"type": "error", "error": INTERNAL_ERROR_MESSAGE}
             yield f"event: error\ndata: {json.dumps(payload)}\n\n"
         finally:
+            # StreamingResponse cancellation closes the application-owned
+            # generator, which in turn cancels and awaits the graph producer.
             try:
                 await stream.aclose()
             finally:
