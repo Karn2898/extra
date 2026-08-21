@@ -250,6 +250,56 @@ def test_recovery_failure_is_reported_on_its_own_terms_not_as_409(
     assert retry.json()["detail"] == "not authorized to decide this approval"
 
 
+def test_approval_endpoint_sanitizes_unexpected_recovery_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unexpected (non-ApprovalError) failure inside get_processed_result
+    must be sanitized the same way an unexpected resume failure already is —
+    logged server-side, reported to the client only as the generic 500.
+
+    This is a sibling try/except to the ApprovalError-recovery-failure case
+    above: an exception raised inside `except ApprovalAlreadyProcessed` is
+    not retried against the outer `except Exception` clause, so without its
+    own handling here, this failure mode would bypass sanitization entirely.
+    """
+    from langchain_openai import ChatOpenAI
+
+    from agent_engine.engine.langgraph.engine import LangGraphEngine
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-a-real-credential")
+    monkeypatch.setattr(
+        ChatOpenAI, "bind_tools", lambda self, tools, **_: FakeChatModel([t.name for t in tools])
+    )
+    logged_exceptions: list[BaseException] = []
+
+    def capture_exception(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        exc = sys.exc_info()[1]
+        assert exc is not None
+        logged_exceptions.append(exc)
+
+    monkeypatch.setattr("agent_engine.api.app.logger.exception", capture_exception)
+    app = create_app(str(_write_config(tmp_path)))
+
+    with TestClient(app) as test_client:
+        run_id, approval_id = _trigger_pending_approval(test_client)
+        first = test_client.post(f"/runs/{run_id}/approvals/{approval_id}/approve")
+        assert first.status_code == 200
+
+        async def _fail_recovery(self: object, *args: object, **kwargs: object) -> None:
+            del self, args, kwargs
+            raise RuntimeError("private recovery failure")
+
+        monkeypatch.setattr(LangGraphEngine, "get_processed_result", _fail_recovery)
+        retry = test_client.post(f"/runs/{run_id}/approvals/{approval_id}/approve")
+
+    assert retry.status_code == 500
+    assert retry.json()["detail"] == "Internal server error"
+    assert "private recovery failure" not in retry.text
+    assert [str(exc) for exc in logged_exceptions] == ["private recovery failure"]
+
+
 def test_approval_endpoint_sanitizes_unexpected_resume_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

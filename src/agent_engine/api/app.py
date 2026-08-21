@@ -362,6 +362,17 @@ def create_app(
                 # recover its result either — map that error on its own terms
                 # rather than reporting the original ApprovalAlreadyProcessed.
                 raise _map_approval_error(recovery_exc) from recovery_exc
+            except Exception:
+                # An exception raised here is a sibling of, not a child of, the
+                # outer `except Exception` below — Python won't route it there.
+                # Without this, an unexpected recovery failure (e.g. a
+                # checkpointer/database error) would bypass sanitization and
+                # could leak internal details to the client.
+                logger.exception(
+                    "approval recovery failed",
+                    extra={"run_id": run_id, "approval_id": approval_id},
+                )
+                raise HTTPException(status_code=500, detail=_INTERNAL_ERROR_MESSAGE) from None
             if recovered is None:
                 raise _map_approval_error(exc) from exc
             result = recovered
