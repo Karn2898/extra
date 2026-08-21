@@ -10,6 +10,7 @@ from typing import cast
 import pytest
 
 from agent_engine.approvals.errors import RunNotFound
+from agent_engine.engine.run_status_engine import RunStatusEngine
 from agent_engine.engine.types import ChatMessage, ChatRole
 from agent_engine.runtime.hooks.models import RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
@@ -87,6 +88,12 @@ class CancellableThenSuccessfulEngine(RecordingEngine):
         finally:
             self.statuses[context.run_id] = "cancelled"
             self.cancelled.set()
+
+
+def test_run_status_capability_remains_structural() -> None:
+    engine = CancellableThenSuccessfulEngine()
+
+    assert isinstance(engine, RunStatusEngine)
 
 
 def _service(window: int = 10) -> tuple[ConversationService, RecordingEngine]:

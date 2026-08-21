@@ -283,10 +283,11 @@ future work behind their existing repository contracts.
 
 ## 7. Concurrency and idempotency
 
-**Run registration.** `RunRepository` is a runtime-checkable structural protocol,
+**Run registration.** `RunRepository` is an explicit abstract base class,
 with `InMemoryRunRepository` as its current process-local implementation. The
 contract lives in `agent_engine.runs.repository`; the adapter lives separately in
-`agent_engine.runs.in_memory`, leaving `agent_engine.approvals.repository`
+`agent_engine.runs.in_memory`, leaving the approval repositories under
+`agent_engine.approvals`
 focused on approval and execution-ledger persistence.
 `RunLifecycle` sends the abstraction one intent:
 create the run if its `run_id` is not already registered. The repository returns
@@ -315,7 +316,7 @@ therefore bounded and never scans or drains all expired runs on a request path.
 cannot invalidate an active execution or resumable approval. After a terminal
 record expires, its `run_id` is unknown and may be registered again; the TTL is
 therefore also the in-memory adapter's idempotency and status-query retention
-window. This policy does not change the `RunRepository` protocol: applications
+window. This policy does not change the `RunRepository` contract: applications
 that need different retention inject another configured or persistent adapter.
 
 `create_if_absent` deliberately performs no eviction. Its existence check and
@@ -397,8 +398,9 @@ If `/invoke` or `/stream` supplied `X-Session-ID`, every later decision request
 for that run must supply the same header. Omitting or changing it fails closed
 with 403 before the approval is claimed.
 
-The conversation API (`agent_manager/api/routes.py`) exposes the same engine
-capability inside the conversation ownership boundary:
+The conversation approval router
+(`agent_manager/api/routes/approvals.py`) exposes the same engine capability
+inside the conversation ownership boundary:
 
 ```text
 POST /conversations/{conversation_id}/runs/{run_id}/approvals/{approval_id}/decision

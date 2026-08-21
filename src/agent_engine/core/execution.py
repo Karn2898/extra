@@ -2,7 +2,7 @@
 
 A pure domain value object (no runtime imports). Parsed from the optional
 top-level ``execution:`` YAML block; when absent, the conservative defaults below
-apply. Enforcement lives in ``agent_engine.runtime.execution``.
+apply. Enforcement lives in ``agent_engine.runtime.execution_limiter``.
 """
 
 from __future__ import annotations

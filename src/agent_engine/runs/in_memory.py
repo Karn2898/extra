@@ -13,6 +13,7 @@ from agent_engine.approvals.models import (
     RunRecord,
     RunStatus,
 )
+from agent_engine.runs.repository import RunRepository
 
 DEFAULT_TERMINAL_RUN_TTL_SECONDS = 86_400.0  # 24 hours
 
@@ -33,7 +34,7 @@ class _StoredRun:
     expires_at: float | None = None
 
 
-class InMemoryRunRepository:
+class InMemoryRunRepository(RunRepository):
     """Process-local implementation of :class:`RunRepository`.
 
     This adapter assumes every call for an instance runs on one asyncio event

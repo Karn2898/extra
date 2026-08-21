@@ -29,7 +29,8 @@ import click
 
 from agent_engine.approvals.decision import ApprovalDecision, parse_decision
 from agent_engine.approvals.errors import InvalidDecision
-from agent_engine.engine.engine import ApprovalEngine
+from agent_engine.approvals.models import RunStatus
+from agent_engine.engine.approval_engine import ApprovalEngine
 from agent_engine.engine.types import PendingApproval, RunResult
 from agentctl.session import SpecError, load_and_validate, load_env
 
@@ -94,7 +95,9 @@ async def run_local_chat(
     grouped as a single Langfuse session. Pass ``session_id`` to set it
     explicitly; otherwise a short id is generated for the console session.
     """
-    from agent_engine.approvals.session_store import InMemorySessionApprovalRepository
+    from agent_engine.approvals.in_memory_session_approval_repository import (
+        InMemorySessionApprovalRepository,
+    )
     from agent_engine.engine.langgraph.engine import LangGraphEngine
     from agent_engine.runtime.hooks import RunContext
 
@@ -213,7 +216,7 @@ async def _answer_local_stream(
         system_name="",
         visited=[],
         answer="",
-        status="pending_approval",
+        status=RunStatus.PENDING_APPROVAL,
         pending_approval=pending,
     )
     result = await _resolve_local_approvals(
@@ -231,7 +234,7 @@ async def _resolve_local_approvals(
     echo: Callable[..., None],
 ) -> RunResult:
     """Prompt and resume until a run completes or stops requesting approvals."""
-    while result.status == "pending_approval":
+    while result.status == RunStatus.PENDING_APPROVAL:
         approval_engine = _require_approval_engine(engine)
         pending = result.pending_approval
         if pending is None:

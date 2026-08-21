@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from agent_engine.approvals.models import RunStatus
 from agent_engine.runtime.tool_models import ToolProviderName, ToolUsageRecord
 
 
@@ -44,10 +45,8 @@ class RunResult:
     """The outcome of one run: the route taken, the answer, and the tools
     observed along the way.
 
-    ``status`` is ``"completed"`` for a finished run or ``"pending_approval"``
-    when the run is suspended at an approval interrupt (in which case
-    ``pending_approval`` is populated and ``answer`` is empty). Defaulting
-    ``status`` keeps existing construction sites and callers backward compatible.
+    When ``status`` is ``PENDING_APPROVAL`` the run is suspended at an approval
+    interrupt, ``pending_approval`` is populated, and ``answer`` is empty.
     """
 
     system_name: str
@@ -56,5 +55,5 @@ class RunResult:
     used_tools: tuple[ToolUsageRecord, ...] = field(default_factory=tuple)
     input_tokens: int | None = None
     output_tokens: int | None = None
-    status: str = "completed"
+    status: RunStatus = RunStatus.COMPLETED
     pending_approval: PendingApproval | None = None

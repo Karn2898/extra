@@ -7,11 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from agent_engine.approvals.manager import ApprovalManager
+from agent_engine.approvals.approval_manager import ApprovalManager
+from agent_engine.approvals.in_memory_approval_repository import InMemoryApprovalRepository
 from agent_engine.approvals.models import RunRecord, RunStatus
-from agent_engine.approvals.repository import InMemoryApprovalRepository
 from agent_engine.engine.langgraph.engine import LangGraphEngine
-from agent_engine.engine.langgraph.run_lifecycle import RunLifecycle
+from agent_engine.engine.langgraph.execution.run_lifecycle import RunLifecycle
 from agent_engine.runs.in_memory import InMemoryRunRepository
 from agent_engine.runs.repository import RunRepository
 from agent_engine.runtime.hooks import HookManager, RunContext

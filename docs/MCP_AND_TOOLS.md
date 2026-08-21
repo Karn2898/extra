@@ -223,7 +223,7 @@ resume updates the existing record instead of adding a second one. Arguments and
 results are never stored: they may carry sensitive or oversized data, and no
 consumer of tool usage needs them.
 
-`ToolUsageRepository` is a `Protocol` with three operations (`record`,
+`ToolUsageRepository` is an abstract base class with three operations (`record`,
 `list_for_run`, `list_for_conversation`). The engine ships a process-local adapter
 (`InMemoryToolUsageRepository`); a distributed deployment supplies a Redis- or
 PostgreSQL-backed adapter with the same contract and injects it at the

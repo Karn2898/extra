@@ -7,14 +7,14 @@ import asyncio
 import pytest
 
 from agent_engine.approvals.errors import ApprovalNotFound, InvalidStateTransition
+from agent_engine.approvals.in_memory_approval_repository import InMemoryApprovalRepository
+from agent_engine.approvals.in_memory_tool_execution_repository import (
+    InMemoryToolExecutionRepository,
+)
 from agent_engine.approvals.models import (
     ApprovalRecord,
     ApprovalStatus,
     ToolExecutionRecord,
-)
-from agent_engine.approvals.repository import (
-    InMemoryApprovalRepository,
-    InMemoryToolExecutionRepository,
 )
 
 pytestmark = pytest.mark.asyncio

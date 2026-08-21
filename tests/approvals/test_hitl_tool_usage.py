@@ -12,8 +12,8 @@ from typing import Any, cast
 
 from langchain_core.language_models import BaseChatModel
 
-from agent_engine.approvals.manager import ApprovalManager
-from agent_engine.approvals.repository import InMemoryApprovalRepository
+from agent_engine.approvals.approval_manager import ApprovalManager
+from agent_engine.approvals.in_memory_approval_repository import InMemoryApprovalRepository
 from agent_engine.core.spec import (
     AgentSpec,
     BasePromptSet,

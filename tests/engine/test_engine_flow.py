@@ -34,12 +34,14 @@ from agent_engine.core.spec import (
     ToolSpec,
 )
 from agent_engine.engine.langgraph.engine import LangGraphEngine
+from agent_engine.engine.langgraph.execution.node_executor import NodeExecutor
 from agent_engine.engine.langgraph.filters import AccessFilter
+from agent_engine.engine.langgraph.nodes.child_entry import ChildEntry
 from agent_engine.engine.types import RunResult
 from agent_engine.loaders.resolver_loader import ResolverLoader
 from agent_engine.runtime.hooks import AuthContext, RunContext
 from agent_engine.runtime.state import GraphState
-from agent_engine.tool_usage.context import ToolUsageContextProvider
+from agent_engine.tool_usage.context_provider import ToolUsageContextProvider
 from agent_engine.tool_usage.in_memory import InMemoryToolUsageRepository
 from agent_engine.tool_usage.tracker import ToolUsageTracker
 from tests.fixtures.utils import fake_model_factory
@@ -322,17 +324,43 @@ async def test_only_root_answer_is_streamed(tmp_path: Path, model_factory: Any) 
 # ---------------------------------------------------------------------------
 
 
+class _UnusedNode(NodeExecutor):
+    async def execute(self, state: GraphState) -> GraphState:
+        return state
+
+
+def _candidate(node_id: str, protected: bool) -> ChildEntry:
+    return ChildEntry(
+        id=node_id,
+        name=node_id,
+        protected=protected,
+        node=_UnusedNode(),
+    )
+
+
 @dataclass(frozen=True)
-class _Candidate:
+class _FilterCandidate:
     id: str
     protected: bool
+
+
+def test_access_filter_accepts_candidates_without_runtime_node_dependency(tmp_path: Path) -> None:
+    write_access(tmp_path, allow=False)
+    route_filter = AccessFilter(tmp_path)
+
+    kept = route_filter.filter(
+        {},
+        [_FilterCandidate("public", False), _FilterCandidate("protected", True)],
+    )
+
+    assert kept == [_FilterCandidate("public", False)]
 
 
 def test_access_filter_drops_denied_protected(tmp_path: Path) -> None:
     write_access(tmp_path, allow=False)
     f = AccessFilter(tmp_path)
 
-    kept = f.filter({}, [_Candidate("pub", False), _Candidate("adm", True)])
+    kept = f.filter({}, [_candidate("pub", False), _candidate("adm", True)])
 
     assert [c.id for c in kept] == ["pub"]
 
@@ -341,7 +369,7 @@ def test_access_filter_keeps_protected_when_allowed(tmp_path: Path) -> None:
     write_access(tmp_path, allow=True)
     f = AccessFilter(tmp_path)
 
-    kept = f.filter({}, [_Candidate("adm", True)])
+    kept = f.filter({}, [_candidate("adm", True)])
 
     assert [c.id for c in kept] == ["adm"]
 
@@ -463,7 +491,10 @@ def write_resolver(base_dir: Path, node_id: str, body: str) -> None:
 
 async def test_orchestrator_loads_both_prompts(tmp_path: Path) -> None:
     from agent_engine.core.spec import OrchestratorPromptSet, OrchestratorSpec
-    from agent_engine.engine.langgraph.nodes import _ORCHESTRATOR_CONTRACT, OrchestratorNode
+    from agent_engine.engine.langgraph.nodes.orchestrator_node import (
+        _ORCHESTRATOR_CONTRACT,
+        OrchestratorNode,
+    )
 
     # Write prompt files
     sys_path = tmp_path / "system.md"
@@ -494,7 +525,7 @@ async def test_orchestrator_loads_both_prompts(tmp_path: Path) -> None:
         usage_context=usage_context(),
         usage_tracker=ToolUsageTracker(InMemoryToolUsageRepository()),
     )
-    await node_both({"message": "hi", "visited": []})
+    await node_both.execute({"message": "hi", "visited": []})
     expected_both = (
         f"System persona content\n\nOrchestrator routing content\n{_ORCHESTRATOR_CONTRACT}"
     )
@@ -522,7 +553,7 @@ async def test_orchestrator_loads_both_prompts(tmp_path: Path) -> None:
         usage_context=usage_context(),
         usage_tracker=ToolUsageTracker(InMemoryToolUsageRepository()),
     )
-    await node_sys({"message": "hi", "visited": []})
+    await node_sys.execute({"message": "hi", "visited": []})
     expected_sys = f"System persona content\n\n\n{_ORCHESTRATOR_CONTRACT}"
     assert model_sys.captured_prompt == expected_sys
 
@@ -549,7 +580,7 @@ async def test_orchestrator_loads_both_prompts(tmp_path: Path) -> None:
         usage_context=usage_context(),
         usage_tracker=ToolUsageTracker(InMemoryToolUsageRepository()),
     )
-    await node_orch({"message": "hi", "visited": []})
+    await node_orch.execute({"message": "hi", "visited": []})
     expected_orch = f"orch desc\n\nOrchestrator routing content\n{_ORCHESTRATOR_CONTRACT}"
     assert model_orch.captured_prompt == expected_orch
 
@@ -573,7 +604,7 @@ async def test_orchestrator_loads_both_prompts(tmp_path: Path) -> None:
         usage_context=usage_context(),
         usage_tracker=ToolUsageTracker(InMemoryToolUsageRepository()),
     )
-    await node_desc({"message": "hi", "visited": []})
+    await node_desc.execute({"message": "hi", "visited": []})
     expected_desc = f"orch desc\n\n\n{_ORCHESTRATOR_CONTRACT}"
     assert model_desc.captured_prompt == expected_desc
 
@@ -589,7 +620,10 @@ async def test_orchestrator_prompts_interpolate_resolver_values(tmp_path: Path) 
         OrchestratorSpec,
         ResolverSpec,
     )
-    from agent_engine.engine.langgraph.nodes import _ORCHESTRATOR_CONTRACT, OrchestratorNode
+    from agent_engine.engine.langgraph.nodes.orchestrator_node import (
+        _ORCHESTRATOR_CONTRACT,
+        OrchestratorNode,
+    )
 
     (tmp_path / "system.md").write_text("Persona for {{audience}}", encoding="utf-8")
     (tmp_path / "orchestrator.md").write_text("Routing for {{audience}}", encoding="utf-8")
@@ -619,7 +653,7 @@ async def test_orchestrator_prompts_interpolate_resolver_values(tmp_path: Path) 
         usage_tracker=ToolUsageTracker(InMemoryToolUsageRepository()),
     )
 
-    await node({"message": "hi", "visited": []})
+    await node.execute({"message": "hi", "visited": []})
 
     assert model.captured_prompt == (
         f"Persona for an admin\n\nRouting for an admin\n{_ORCHESTRATOR_CONTRACT}"
@@ -634,7 +668,7 @@ async def test_orchestrator_resolvers_run_on_every_call(tmp_path: Path) -> None:
         OrchestratorSpec,
         ResolverSpec,
     )
-    from agent_engine.engine.langgraph.nodes import OrchestratorNode
+    from agent_engine.engine.langgraph.nodes.orchestrator_node import OrchestratorNode
 
     (tmp_path / "orchestrator.md").write_text("caller={{caller}}", encoding="utf-8")
     write_resolver(
@@ -671,7 +705,7 @@ async def test_orchestrator_resolvers_run_on_every_call(tmp_path: Path) -> None:
             usage_context=usage_context(),
             usage_tracker=ToolUsageTracker(InMemoryToolUsageRepository()),
         )
-        await node({"message": "hi", "visited": []})
+        await node.execute({"message": "hi", "visited": []})
         prompts.append(model.captured_prompt)
 
     assert "caller=user-1" in prompts[0]

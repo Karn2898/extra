@@ -21,7 +21,7 @@ a state delta. Three problems followed from that ownership model:
 Execution metadata is owned by a dedicated subsystem, `agent_engine/tool_usage/`,
 with the repository as its source of truth.
 
-- `ToolUsageRepository` (Protocol) persists one record per logical invocation,
+- `ToolUsageRepository` (abstract base class) persists one record per logical invocation,
   identified by `(run_id, tool_call_id)` and carrying
   `conversation → run → agent → tool call`. `record` is an upsert on that
   identity, so an approval resume updates rather than duplicates. Its read

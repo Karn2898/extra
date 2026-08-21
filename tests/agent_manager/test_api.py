@@ -21,7 +21,8 @@ from agent_engine.runs.in_memory import InMemoryRunRepository
 from agent_engine.runtime.hooks.models import RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
 from agent_engine.runtime.tool_models import ToolUsageRecord
-from agent_manager.api.routes import stream_approval_decision, stream_message
+from agent_manager.api.routes.approvals import stream_approval_decision
+from agent_manager.api.routes.conversations import stream_message
 from agent_manager.api.schemas import ApprovalDecisionRequest, SendMessageRequest
 from agent_manager.application import ConversationService
 from agent_manager.config import AuthMode
@@ -67,7 +68,7 @@ class _ApprovalRecordingEngine(RecordingEngine):
             system_name="stub",
             visited=["writer"],
             answer="",
-            status="pending_approval",
+            status=RunStatus.PENDING_APPROVAL,
             pending_approval=self.pending,
         )
 

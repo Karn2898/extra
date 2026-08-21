@@ -17,11 +17,13 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.messages.tool import ToolCall
 
+from agent_engine.approvals.approval_provider import ApprovalProvider, ApprovalRequest
 from agent_engine.approvals.coordinator import ApprovalCoordinator
 from agent_engine.approvals.decision import ApprovalDecision
+from agent_engine.approvals.in_memory_session_approval_repository import (
+    InMemorySessionApprovalRepository,
+)
 from agent_engine.approvals.invocation import ToolInvocation
-from agent_engine.approvals.provider import ApprovalRequest
-from agent_engine.approvals.session_store import InMemorySessionApprovalRepository
 from agent_engine.core.spec import AgentSpec
 from agent_engine.engine.langgraph.engine import LangGraphEngine
 from agent_engine.engine.types import ChatMessage, RunResult
@@ -204,7 +206,7 @@ async def _complete_conversation_turn(
     return result, prompted
 
 
-class ScriptedApprovalProvider:
+class ScriptedApprovalProvider(ApprovalProvider):
     def __init__(self, decisions: list[ApprovalDecision]) -> None:
         self._decisions = iter(decisions)
         self.requests: list[ApprovalRequest] = []

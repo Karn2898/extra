@@ -14,6 +14,7 @@ from agent_engine.tool_usage.models import (
     ToolInvocationRecord,
     ToolInvocationStatus,
 )
+from agent_engine.tool_usage.repository import ToolUsageRepository
 from agent_engine.tool_usage.tracker import ToolUsageTracker
 
 
@@ -29,7 +30,7 @@ def call(agent_id: str = "developer", tool_name: str = "github.get_file") -> Too
     )
 
 
-class BrokenRepository:
+class BrokenRepository(ToolUsageRepository):
     """A repository whose backend is down, for the degradation policies."""
 
     async def record(self, record: ToolInvocationRecord) -> None:

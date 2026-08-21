@@ -18,6 +18,7 @@ from agent_engine.tool_usage.models import (
     ToolInvocationRecord,
     ToolInvocationStatus,
 )
+from agent_engine.tool_usage.repository import ToolUsageRepository
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS tool_usage (
@@ -39,7 +40,7 @@ CREATE TABLE IF NOT EXISTS tool_usage (
 """
 
 
-class SqliteToolUsageRepository:
+class SqliteToolUsageRepository(ToolUsageRepository):
     """SQLite implementation of the same ``ToolUsageRepository`` contract.
 
     ``record`` is an upsert on ``(run_id, tool_call_id)`` that keeps the row's

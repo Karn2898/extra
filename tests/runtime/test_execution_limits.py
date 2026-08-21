@@ -9,7 +9,7 @@ import pytest
 from agent_engine.core.execution import ExecutionPolicy
 from agent_engine.parsers.errors import ParseError
 from agent_engine.parsers.yaml.parser import YAMLParser
-from agent_engine.runtime.execution import (
+from agent_engine.runtime.execution_limiter import (
     ExecutionLimiter,
     ExecutionLimitExceeded,
     current_invocation,
