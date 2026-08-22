@@ -50,13 +50,19 @@ def agent(
     return GraphNode(node=spec)
 
 
-def orchestrator(node_id: str, children: list[GraphNode]) -> GraphNode:
+def orchestrator(
+    node_id: str,
+    children: list[GraphNode],
+    *,
+    resolvers: tuple[ResolverSpec, ...] = (),
+) -> GraphNode:
     spec = OrchestratorSpec(
         id=node_id,
         name=node_id,
         description=f"{node_id} orchestrator",
         model=_MODEL,
         prompts=OrchestratorPromptSet(),
+        resolvers=resolvers,
     )
     return GraphNode(node=spec, children=tuple(children))
 
@@ -213,6 +219,26 @@ def test_missing_resolver_file_is_reported(tmp_path: Path) -> None:
 
     assert len(errors) == 1
     assert "not found" in errors[0]
+
+
+def test_orchestrator_resolver_is_scanned_like_an_agent_one(tmp_path: Path) -> None:
+    # An orchestrator's prompt takes variables too, so an unimplemented stub
+    # behind one is the same defect and must be reported the same way.
+    write(
+        tmp_path,
+        "plugins/resolvers/root.py",
+        "class Resolver:\n"
+        "    def audience(self, ctx: dict) -> str:\n"
+        "        raise NotImplementedError\n",
+    )
+    spec = system(
+        orchestrator("root", [agent("a")], resolvers=(ResolverSpec(id="audience", scope="agent"),))
+    )
+
+    errors = scan(spec, tmp_path)
+
+    assert len(errors) == 1
+    assert "audience" in errors[0]
 
 
 def test_unknown_method_is_skipped_not_flagged(tmp_path: Path) -> None:

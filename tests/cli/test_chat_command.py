@@ -14,6 +14,7 @@ import pytest
 from click.testing import CliRunner
 
 from agent_engine.approvals.decision import ApprovalDecision
+from agent_engine.approvals.models import RunStatus
 from agent_engine.engine.engine import Engine
 from agent_engine.engine.types import ChatMessage, PendingApproval, RunResult
 from agent_engine.runtime.hooks.models import RunContext
@@ -136,6 +137,17 @@ class ApprovalFakeEngine(FakeEngine):
         assert run_id == self.stream_pending.run_id
         return self.stream_pending
 
+    async def get_processed_result(
+        self,
+        run_id: str,
+        approval_id: str,
+        *,
+        caller_user_id: str | None = None,
+        caller_session_id: str | None = None,
+    ) -> RunResult | None:
+        del run_id, approval_id, caller_user_id, caller_session_id
+        return None
+
     async def resume(
         self,
         run_id: str,
@@ -143,7 +155,10 @@ class ApprovalFakeEngine(FakeEngine):
         decision: ApprovalDecision | str,
         *,
         caller_user_id: str | None = None,
+        caller_session_id: str | None = None,
+        access_token: str | None = None,
     ) -> RunResult:
+        del caller_session_id, access_token
         assert isinstance(decision, ApprovalDecision)
         self.resume_calls.append((run_id, approval_id, decision, caller_user_id))
         return next(self.results)
@@ -153,7 +168,7 @@ class CollectingEcho:
     def __init__(self) -> None:
         self.lines: list[str] = []
 
-    def __call__(self, message: str = "", *, err: bool = False) -> None:
+    def write(self, message: str = "", *, err: bool = False) -> None:
         self.lines.append(message)
 
 
@@ -240,7 +255,10 @@ async def test_local_loop_reuses_engine_and_sends_each_question() -> None:
     engine = FakeEngine()
     echo = CollectingEcho()
     await run_chat_loop(
-        engine, stream=False, read_line=scripted_reader(["first", "second"]), echo=echo
+        engine,
+        stream=False,
+        read_line=scripted_reader(["first", "second"]),
+        echo=echo.write,
     )
     assert engine.questions == ["first", "second"]
     answers = [line for line in echo.lines if line.startswith("Agent > ")]
@@ -250,7 +268,7 @@ async def test_local_loop_reuses_engine_and_sends_each_question() -> None:
 async def test_local_loop_streaming_uses_stream_path() -> None:
     engine = FakeEngine()
     echo = CollectingEcho()
-    await run_chat_loop(engine, stream=True, read_line=scripted_reader(["hi"]), echo=echo)
+    await run_chat_loop(engine, stream=True, read_line=scripted_reader(["hi"]), echo=echo.write)
     assert engine.questions == ["hi"]
 
 
@@ -274,7 +292,7 @@ async def test_local_mode_builds_engine_once(monkeypatch: pytest.MonkeyPatch) ->
         None,
         stream=False,
         read_line=scripted_reader(["a", "b", "c"]),
-        echo=CollectingEcho(),
+        echo=CollectingEcho().write,
     )
     assert engine.builds == 1
     assert engine.questions == ["a", "b", "c"]
@@ -306,7 +324,7 @@ async def test_local_chat_groups_questions_under_one_session(
         stream=False,
         session_id="sess-xyz",
         read_line=scripted_reader(["a", "b", "c"]),
-        echo=CollectingEcho(),
+        echo=CollectingEcho().write,
     )
     sessions = {c.conversation_id for c in engine.contexts if c is not None}
     assert sessions == {"sess-xyz"}
@@ -322,7 +340,7 @@ async def test_local_chat_autogenerates_one_session(monkeypatch: pytest.MonkeyPa
         None,
         stream=False,
         read_line=scripted_reader(["a", "b"]),
-        echo=CollectingEcho(),
+        echo=CollectingEcho().write,
     )
     sessions = {c.conversation_id for c in engine.contexts if c is not None}
     assert len(sessions) == 1  # one auto id, shared by every question
@@ -344,7 +362,12 @@ async def test_local_one_failure_does_not_kill_loop() -> None:
 
     engine = FlakyEngine()
     echo = CollectingEcho()
-    await run_chat_loop(engine, stream=False, read_line=scripted_reader(["boom", "ok"]), echo=echo)
+    await run_chat_loop(
+        engine,
+        stream=False,
+        read_line=scripted_reader(["boom", "ok"]),
+        echo=echo.write,
+    )
     assert any("model exploded" in line for line in echo.lines)
     assert any(line == "Agent > echo:ok" for line in echo.lines)
 
@@ -362,7 +385,7 @@ async def test_local_chat_prompts_for_approval_and_resumes_allow_once() -> None:
                 system_name="fake",
                 visited=["researcher"],
                 answer="",
-                status="pending_approval",
+                status=RunStatus.PENDING_APPROVAL,
                 pending_approval=pending,
             ),
             RunResult(system_name="fake", visited=["researcher"], answer="architecture"),
@@ -375,7 +398,7 @@ async def test_local_chat_prompts_for_approval_and_resumes_allow_once() -> None:
         stream=False,
         context=RunContext(conversation_id="session-1", user_id="user-1"),
         read_line=scripted_reader(["question", "o"]),
-        echo=echo,
+        echo=echo.write,
     )
 
     assert engine.resume_calls == [("run-1", "approval-1", ApprovalDecision.ALLOW_ONCE, "user-1")]
@@ -392,7 +415,7 @@ async def test_local_chat_reprompts_invalid_approval_then_allows_session() -> No
                 system_name="fake",
                 visited=[],
                 answer="",
-                status="pending_approval",
+                status=RunStatus.PENDING_APPROVAL,
                 pending_approval=pending,
             ),
             RunResult(system_name="fake", visited=[], answer="done"),
@@ -404,7 +427,7 @@ async def test_local_chat_reprompts_invalid_approval_then_allows_session() -> No
         engine,
         stream=False,
         read_line=scripted_reader(["question", "maybe", "s"]),
-        echo=echo,
+        echo=echo.write,
     )
 
     assert engine.resume_calls[0][2] is ApprovalDecision.ALLOW_FOR_SESSION
@@ -419,7 +442,7 @@ async def test_local_chat_stops_when_approval_input_ends() -> None:
                 system_name="fake",
                 visited=[],
                 answer="",
-                status="pending_approval",
+                status=RunStatus.PENDING_APPROVAL,
                 pending_approval=pending,
             ),
         ]
@@ -430,7 +453,7 @@ async def test_local_chat_stops_when_approval_input_ends() -> None:
         engine,
         stream=False,
         read_line=scripted_reader(["question"]),
-        echo=echo,
+        echo=echo.write,
     )
 
     assert engine.resume_calls == []
@@ -446,7 +469,7 @@ async def test_local_chat_exit_words_stop_from_approval_prompt(word: str) -> Non
                 system_name="fake",
                 visited=[],
                 answer="",
-                status="pending_approval",
+                status=RunStatus.PENDING_APPROVAL,
                 pending_approval=pending,
             ),
         ]
@@ -456,7 +479,7 @@ async def test_local_chat_exit_words_stop_from_approval_prompt(word: str) -> Non
         engine,
         stream=False,
         read_line=scripted_reader(["question", word]),
-        echo=CollectingEcho(),
+        echo=CollectingEcho().write,
     )
 
     assert engine.resume_calls == []
@@ -471,14 +494,14 @@ async def test_local_chat_handles_multiple_approvals_in_one_run() -> None:
                 system_name="fake",
                 visited=[],
                 answer="",
-                status="pending_approval",
+                status=RunStatus.PENDING_APPROVAL,
                 pending_approval=first,
             ),
             RunResult(
                 system_name="fake",
                 visited=[],
                 answer="",
-                status="pending_approval",
+                status=RunStatus.PENDING_APPROVAL,
                 pending_approval=second,
             ),
             RunResult(system_name="fake", visited=[], answer="complete"),
@@ -489,7 +512,7 @@ async def test_local_chat_handles_multiple_approvals_in_one_run() -> None:
         engine,
         stream=False,
         read_line=scripted_reader(["question", "o", "d"]),
-        echo=CollectingEcho(),
+        echo=CollectingEcho().write,
     )
 
     assert [call[2] for call in engine.resume_calls] == [
@@ -510,7 +533,7 @@ async def test_local_stream_prompts_and_resumes_pending_approval() -> None:
         engine,
         stream=True,
         read_line=scripted_reader(["question", "allow once"]),
-        echo=echo,
+        echo=echo.write,
     )
 
     assert engine.resume_calls[0][2] is ApprovalDecision.ALLOW_ONCE
@@ -540,7 +563,7 @@ async def test_remote_sends_to_invoke_endpoint() -> None:
             "http://srv:8090",
             stream=False,
             read_line=scripted_reader(["question one"]),
-            echo=echo,
+            echo=echo.write,
             client=client,
         )
     assert seen == ["/invoke"]
@@ -560,7 +583,7 @@ async def test_remote_chat_sends_session_header() -> None:
             stream=False,
             session_id="rsess",
             read_line=scripted_reader(["one", "two"]),
-            echo=echo,
+            echo=echo.write,
             client=client,
         )
     assert seen_sessions == ["rsess", "rsess"]  # same session on every request
@@ -580,7 +603,7 @@ async def test_remote_server_error_does_not_kill_loop() -> None:
             "http://srv",
             stream=False,
             read_line=scripted_reader(["bad", "good"]),
-            echo=echo,
+            echo=echo.write,
             client=client,
         )
     assert any("server error 500" in line and "boom on server" in line for line in echo.lines)
@@ -600,7 +623,7 @@ async def test_remote_stream_flag_uses_stream_endpoint() -> None:
             "http://srv",
             stream=True,
             read_line=scripted_reader(["hi"]),
-            echo=CollectingEcho(),
+            echo=CollectingEcho().write,
             client=client,
         )
     assert seen == ["/stream"]
@@ -616,7 +639,244 @@ async def test_remote_network_error_does_not_kill_loop() -> None:
             "http://srv",
             stream=False,
             read_line=scripted_reader(["x"]),
-            echo=echo,
+            echo=echo.write,
             client=client,
         )
     assert any("request failed" in line for line in echo.lines)
+
+
+# ---------------------------------------------------------------------------
+# remote mode: human approval and resume
+# ---------------------------------------------------------------------------
+
+
+def _pending_json(pending: PendingApproval) -> dict[str, object]:
+    return {
+        "run_id": pending.run_id,
+        "approval_id": pending.approval_id,
+        "agent_id": pending.agent_id,
+        "tool_name": pending.tool_name,
+        "description": pending.description,
+        "provider": pending.provider,
+        "server_id": pending.server_id,
+        "arguments": pending.arguments,
+    }
+
+
+async def test_remote_chat_prompts_for_approval_and_resumes_allow_once() -> None:
+    pending = pending_approval()
+    decisions_sent: list[tuple[str, dict[str, object]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/invoke":
+            return httpx.Response(
+                200,
+                json={
+                    "answer": "",
+                    "status": "pending_approval",
+                    "pending_approval": _pending_json(pending),
+                },
+            )
+        decisions_sent.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"answer": "architecture", "status": "completed"})
+
+    echo = CollectingEcho()
+    async with _mock_client(handler) as client:
+        await run_remote_chat(
+            "http://srv",
+            stream=False,
+            read_line=scripted_reader(["question", "o"]),
+            echo=echo.write,
+            client=client,
+        )
+
+    assert decisions_sent == [
+        (
+            f"/runs/{pending.run_id}/approvals/{pending.approval_id}/decision",
+            {"decision": "allow_once"},
+        )
+    ]
+    assert "  Tool      : deepwiki.read_docs (mcp)" in echo.lines
+    assert "Agent > architecture" in echo.lines
+
+
+async def test_remote_chat_resumes_with_allow_for_session() -> None:
+    pending = pending_approval()
+    decisions_sent: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/invoke":
+            return httpx.Response(
+                200,
+                json={
+                    "answer": "",
+                    "status": "pending_approval",
+                    "pending_approval": _pending_json(pending),
+                },
+            )
+        decisions_sent.append(json.loads(request.content))
+        return httpx.Response(200, json={"answer": "done", "status": "completed"})
+
+    async with _mock_client(handler) as client:
+        await run_remote_chat(
+            "http://srv",
+            stream=False,
+            read_line=scripted_reader(["question", "s"]),
+            echo=CollectingEcho().write,
+            client=client,
+        )
+
+    assert decisions_sent == [{"decision": "allow_for_session"}]
+
+
+async def test_remote_chat_resumes_with_deny() -> None:
+    pending = pending_approval()
+    decisions_sent: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/invoke":
+            return httpx.Response(
+                200,
+                json={
+                    "answer": "",
+                    "status": "pending_approval",
+                    "pending_approval": _pending_json(pending),
+                },
+            )
+        decisions_sent.append(json.loads(request.content))
+        return httpx.Response(200, json={"answer": "denied", "status": "completed"})
+
+    async with _mock_client(handler) as client:
+        await run_remote_chat(
+            "http://srv",
+            stream=False,
+            read_line=scripted_reader(["question", "d"]),
+            echo=CollectingEcho().write,
+            client=client,
+        )
+
+    assert decisions_sent == [{"decision": "deny"}]
+
+
+async def test_remote_chat_handles_multiple_approvals_in_one_run() -> None:
+    first = pending_approval()
+    second = pending_approval(approval_id="approval-2", tool_name="read_page")
+    responses = iter(
+        [
+            {"answer": "", "status": "pending_approval", "pending_approval": _pending_json(first)},
+            {"answer": "", "status": "pending_approval", "pending_approval": _pending_json(second)},
+            {"answer": "complete", "status": "completed"},
+        ]
+    )
+    seen: list[tuple[str, dict[str, object]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json=next(responses))
+
+    echo = CollectingEcho()
+    async with _mock_client(handler) as client:
+        await run_remote_chat(
+            "http://srv",
+            stream=False,
+            # Only "question" is a real user message; "o"/"d" must be consumed
+            # as approval-prompt answers, not sent as separate /invoke calls.
+            read_line=scripted_reader(["question", "o", "d"]),
+            echo=echo.write,
+            client=client,
+        )
+
+    assert [path for path, _ in seen] == [
+        "/invoke",
+        f"/runs/{first.run_id}/approvals/{first.approval_id}/decision",
+        f"/runs/{second.run_id}/approvals/{second.approval_id}/decision",
+    ]
+    assert [body["decision"] for _, body in seen[1:]] == ["allow_once", "deny"]
+    assert "Agent > complete" in echo.lines
+
+
+async def test_remote_chat_stops_when_approval_input_ends() -> None:
+    pending = pending_approval()
+    decision_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal decision_calls
+        if request.url.path == "/invoke":
+            return httpx.Response(
+                200,
+                json={
+                    "answer": "",
+                    "status": "pending_approval",
+                    "pending_approval": _pending_json(pending),
+                },
+            )
+        decision_calls += 1
+        return httpx.Response(200, json={"answer": "should not get here", "status": "completed"})
+
+    echo = CollectingEcho()
+    async with _mock_client(handler) as client:
+        await run_remote_chat(
+            "http://srv",
+            stream=False,
+            read_line=scripted_reader(["question"]),  # EOF right at the approval prompt
+            echo=echo.write,
+            client=client,
+        )
+
+    assert decision_calls == 0
+    assert not any(line.startswith("Agent > ") for line in echo.lines)
+
+
+async def test_remote_stream_prompts_and_resumes_pending_approval() -> None:
+    pending = pending_approval()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/stream":
+            payload = {"type": "pending_approval", **_pending_json(pending)}
+            sse = f"data: {json.dumps(payload)}\n\n"
+            return httpx.Response(200, text=sse, headers={"content-type": "text/event-stream"})
+        return httpx.Response(200, json={"answer": "stream resumed", "status": "completed"})
+
+    echo = CollectingEcho()
+    async with _mock_client(handler) as client:
+        await run_remote_chat(
+            "http://srv",
+            stream=True,
+            read_line=scripted_reader(["question", "allow once"]),
+            echo=echo.write,
+            client=client,
+        )
+
+    assert "Agent > stream resumed" in echo.lines
+
+
+async def test_remote_decision_error_does_not_kill_loop() -> None:
+    pending = pending_approval()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/invoke":
+            body = json.loads(request.content)
+            if body["message"] == "first":
+                return httpx.Response(
+                    200,
+                    json={
+                        "answer": "",
+                        "status": "pending_approval",
+                        "pending_approval": _pending_json(pending),
+                    },
+                )
+            return httpx.Response(200, json={"answer": "second works", "status": "completed"})
+        return httpx.Response(404, json={"detail": "run not found"})
+
+    echo = CollectingEcho()
+    async with _mock_client(handler) as client:
+        await run_remote_chat(
+            "http://srv",
+            stream=False,
+            read_line=scripted_reader(["first", "o", "second"]),
+            echo=echo.write,
+            client=client,
+        )
+
+    assert any("server error 404" in line and "run not found" in line for line in echo.lines)
+    assert "Agent > second works" in echo.lines

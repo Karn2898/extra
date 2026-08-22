@@ -155,6 +155,28 @@ The docstring becomes the tool description the LLM sees. The engine wraps the fu
   Write clear descriptions and typed parameters. The LLM reads both when deciding how to call a tool. Vague descriptions lead to wrong or missed tool calls.
 </Tip>
 
+### Calling a real system as the user
+
+A tool that reaches your own API should act as the person who asked, so your API applies their permissions. The credential the request arrived with is on the run context — not a parameter, since anything in the signature becomes part of the schema the LLM sees:
+
+```python
+from agent_engine.runtime.hooks import current_run_context
+
+def get_order_status(order_id: str) -> dict:
+    """Get the current status and tracking info for an order. Requires an order ID."""
+    ctx = current_run_context.get()
+    auth = ctx.auth_context if ctx else None
+    if auth is None or not auth.inbound_access_token:
+        return {"error": "No credential for this request; the user must sign in."}
+    return your_api.get(order_id, token=auth.inbound_access_token)
+```
+
+It is filled from the caller's `Authorization` header (see [Identity](/docs/identity)), and never reaches the model.
+
+<Warning>
+  When there is no credential, fail. A fallback to one shared admin key lets every caller do whatever that key can.
+</Warning>
+
 ---
 
 ## Resolvers vs. tools
@@ -183,3 +205,26 @@ tools used:
   * get_order_status [local] succeeded (42ms)
   * crm_lookup [mcp: crm_mcp] succeeded (118ms)
 ```
+
+## Shared tool usage across agents
+
+Tool usage is stored in a repository, not carried in graph state, so every agent and orchestrator working on the same conversation shares it. Each one is privately told what has already been run — including in earlier turns of the same conversation, so an agent can answer "which tools have you used?":
+
+```
+## Execution record for this conversation
+
+### Tools executed
+user_management:
+- create_user [succeeded]
+
+### Agents delegated to
+- openwebui -> admin_management
+```
+
+Tools and agents are listed apart on purpose: an orchestrator's children are bound to it as tools, so a flat list made it answer "the tool I ran is admin_management" when it had only routed there.
+
+For direct questions ("which tools have you run?"), orchestrators also get a read-only `list_executed_tools` tool that returns the executed tools straight from the repository. The passive context is useful for reasoning but a model can still mistake a bound child agent for a tool when explicitly reporting. This deterministic lookup trades one reserved engine-tool name and an extra model tool call for an answer grounded in repository data. It is not recorded, does not consume tool/child-call limits, and a configured child with the same name wins.
+
+That block is internal execution context: it is given to the model as a system message, never as a conversation turn, and never persisted as chat history. Only agent, tool name, and status are included — never arguments, results, or errors. It is refreshed before every model turn, so a supervisor's final answer reflects what the agents it just called actually ran.
+
+The store behind it is a repository port. The in-memory adapter ships with the engine; a shared backend (Redis, PostgreSQL) is an adapter swap in the composition layer, with no change to agents or tools. Bounded reads return the newest matching records in chronological order, and context requests one extra record only to detect truncation.

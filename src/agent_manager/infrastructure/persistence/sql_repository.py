@@ -9,12 +9,14 @@ from __future__ import annotations
 import base64
 import json
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import and_, delete, or_, update
+from sqlalchemy import and_, delete, literal, or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.orm import aliased
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -147,6 +149,7 @@ class SqlRepository(Repository):
                 system_name=system_name,
                 config_path=config_path,
                 title=title,
+                head_message_id=None,
                 metadata_json=dict(metadata or {}),
                 created_at=now,
                 updated_at=now,
@@ -259,6 +262,7 @@ class SqlRepository(Repository):
                 session_row = ConversationSessionRow(
                     session_id=message.session_id,
                     user_id=message.user_id,
+                    head_message_id=message.message_id,
                     created_at=message.created_at,
                     updated_at=message.created_at,
                     last_message_at=message.created_at,
@@ -267,8 +271,11 @@ class SqlRepository(Repository):
                 session.add(session_row)
             else:
                 # No user_id here: writing a message never claims a conversation.
+                if message.parent_message_id is None and session_row.head_message_id is not None:
+                    message = replace(message, parent_message_id=session_row.head_message_id)
                 session_row.updated_at = message.created_at
                 session_row.last_message_at = message.created_at
+                session_row.head_message_id = message.message_id
 
             session.add(_message_row(message))
             await session.flush()
@@ -278,11 +285,113 @@ class SqlRepository(Repository):
             assert snapshot is not None
             return snapshot
 
+    async def append_message_if_absent(
+        self,
+        message: ConversationMessage,
+        *,
+        snapshot_ttl_seconds: int | None = None,
+    ) -> bool:
+        """Append once, retaining stale-branch children without selecting them."""
+        try:
+            async with self._sessions() as session, session.begin():
+                if await session.get(ConversationMessageRow, message.message_id) is not None:
+                    return False
+                session_row = await session.get(ConversationSessionRow, message.session_id)
+                if session_row is None:
+                    session_row = ConversationSessionRow(
+                        session_id=message.session_id,
+                        user_id=message.user_id,
+                        head_message_id=message.message_id,
+                        created_at=message.created_at,
+                        updated_at=message.created_at,
+                        last_message_at=message.created_at,
+                        metadata_json={},
+                    )
+                    session.add(session_row)
+                    activate = True
+                else:
+                    activate = session_row.head_message_id == message.parent_message_id
+                    if activate:
+                        session_row.head_message_id = message.message_id
+                        session_row.updated_at = message.created_at
+                        session_row.last_message_at = message.created_at
+                async with session.begin_nested():
+                    session.add(_message_row(message))
+                if activate:
+                    await self._rebuild_snapshot_in_session(
+                        session,
+                        message.session_id,
+                        snapshot_ttl_seconds=snapshot_ttl_seconds,
+                    )
+        except IntegrityError:
+            async with self._sessions() as session:
+                existing = await session.get(ConversationMessageRow, message.message_id)
+            if existing is None:
+                raise
+            return False
+        return True
+
+    async def append_message_if_head(
+        self,
+        message: ConversationMessage,
+        expected_head_message_id: str | None,
+        *,
+        snapshot_ttl_seconds: int | None = None,
+    ) -> bool:
+        async with self._sessions() as session, session.begin():
+            head = col(ConversationSessionRow.head_message_id)
+            expected = (
+                head.is_(None)
+                if expected_head_message_id is None
+                else head == expected_head_message_id
+            )
+            changed = await session.exec(
+                update(ConversationSessionRow)
+                .where(
+                    col(ConversationSessionRow.session_id) == message.session_id,
+                    expected,
+                )
+                .values(
+                    head_message_id=message.message_id,
+                    updated_at=message.created_at,
+                    last_message_at=message.created_at,
+                )
+            )
+            if _rows_affected(changed) == 0:
+                return False
+            session.add(_message_row(message))
+            await session.flush()
+            await self._rebuild_snapshot_in_session(
+                session,
+                message.session_id,
+                snapshot_ttl_seconds=snapshot_ttl_seconds,
+            )
+        return True
+
+    async def get_message(self, message_id: str) -> ConversationMessage | None:
+        async with self._sessions() as session:
+            row = await session.get(ConversationMessageRow, message_id)
+        return _message(row) if row is not None else None
+
+    async def get_user_message_for_run(
+        self, session_id: str, run_id: str
+    ) -> ConversationMessage | None:
+        async with self._sessions() as session:
+            result = await session.exec(
+                select(ConversationMessageRow).where(
+                    col(ConversationMessageRow.session_id) == session_id,
+                    col(ConversationMessageRow.run_id) == run_id,
+                    col(ConversationMessageRow.role) == Role.USER.value,
+                )
+            )
+            row = result.first()
+        return _message(row) if row is not None else None
+
     async def list_conversation_messages(
         self, session_id: str, limit: int | None = None
     ) -> list[ConversationMessage]:
         async with self._sessions() as session:
-            rows = await self._message_rows(session, session_id, limit)
+            rows = await self._active_message_rows(session, session_id, limit)
         return [_message(row) for row in rows]
 
     async def list_messages(self, conversation_id: str, limit: int | None = None) -> list[Message]:
@@ -331,6 +440,28 @@ class SqlRepository(Repository):
             snapshot=snapshot,
         )
 
+    async def get_context_at(
+        self,
+        session_id: str,
+        head_message_id: str | None,
+        *,
+        max_messages: int | None = None,
+        max_chars: int | None = None,
+    ) -> ConversationContext:
+        async with self._sessions() as session:
+            branch = await self._branch_message_rows(session, session_id, head_message_id)
+        messages = [
+            Message(role=Role(row.role), content=row.content, created_at=row.created_at)
+            for row in branch
+        ]
+        bounded = _bound_messages(messages, max_messages=max_messages, max_chars=max_chars)
+        return ConversationContext(
+            session_id=session_id,
+            messages=bounded,
+            message_count=len(branch),
+            source="branch",
+        )
+
     async def delete_expired_snapshots(self, now: datetime) -> int:
         async with self._sessions() as session, session.begin():
             expires_at = col(ConversationSnapshotRow.expires_at)
@@ -351,7 +482,7 @@ class SqlRepository(Repository):
         session_row = await session.get(ConversationSessionRow, session_id)
         if session_row is None:
             return None
-        rows = await self._message_rows(session, session_id, None)
+        rows = await self._active_message_rows(session, session_id)
         now = datetime.now(UTC)
         last = rows[-1] if rows else None
         expires_at = (
@@ -388,10 +519,66 @@ class SqlRepository(Repository):
     ) -> list[ConversationMessageRow]:
         stmt = select(ConversationMessageRow).where(ConversationMessageRow.session_id == session_id)
         if limit is not None:
-            recent = stmt.order_by(col(ConversationMessageRow.created_at).desc()).limit(limit)
+            recent = stmt.order_by(
+                col(ConversationMessageRow.created_at).desc(),
+                col(ConversationMessageRow.message_id).desc(),
+            ).limit(limit)
             result = await session.exec(recent)
             return list(reversed(result.all()))
-        result = await session.exec(stmt.order_by(col(ConversationMessageRow.created_at)))
+        result = await session.exec(
+            stmt.order_by(
+                col(ConversationMessageRow.created_at),
+                col(ConversationMessageRow.message_id),
+            )
+        )
+        return list(result.all())
+
+    async def _active_message_rows(
+        self, session: AsyncSession, session_id: str, limit: int | None = None
+    ) -> list[ConversationMessageRow]:
+        session_row = await session.get(ConversationSessionRow, session_id)
+        if session_row is None:
+            return []
+        return await self._branch_message_rows(
+            session, session_id, session_row.head_message_id, limit
+        )
+
+    async def _branch_message_rows(
+        self,
+        session: AsyncSession,
+        session_id: str,
+        head_message_id: str | None,
+        limit: int | None = None,
+    ) -> list[ConversationMessageRow]:
+        """Return one branch, oldest first, walking `parent_message_id` in SQL.
+
+        A recursive CTE keeps both the traversal and the limit in the database:
+        history reads the tail of the active branch, never every message the
+        conversation has stored.
+        """
+        if head_message_id is None or (limit is not None and limit <= 0):
+            return []
+        head = (
+            select(ConversationMessageRow, literal(0).label("depth"))
+            .where(
+                col(ConversationMessageRow.session_id) == session_id,
+                col(ConversationMessageRow.message_id) == head_message_id,
+            )
+            .cte("branch", recursive=True)
+        )
+        parent = aliased(ConversationMessageRow, name="parent_message")
+        ancestors = select(parent, (head.c.depth + 1).label("depth")).where(
+            col(parent.session_id) == session_id,
+            col(parent.message_id) == head.c.parent_message_id,
+        )
+        if limit is not None:
+            ancestors = ancestors.where(head.c.depth < limit - 1)
+        branch = head.union_all(ancestors)
+        result = await session.exec(
+            select(ConversationMessageRow)
+            .join(branch, col(ConversationMessageRow.message_id) == branch.c.message_id)
+            .order_by(branch.c.depth.desc())
+        )
         return list(result.all())
 
 
@@ -421,6 +608,7 @@ def _session(row: ConversationSessionRow) -> ConversationSession:
         system_name=row.system_name,
         config_path=row.config_path,
         title=row.title,
+        head_message_id=row.head_message_id,
         metadata=dict(row.metadata_json or {}),
         created_at=_utc(row.created_at),
         updated_at=_utc(row.updated_at),

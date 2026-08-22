@@ -28,7 +28,7 @@ plugins/
   resolvers/
     __init__.py
     shared.py           ← SharedResolver (shared methods)
-    orders_agent.py     ← per-agent Resolver subclass
+    orders_agent.py     ← per-node Resolver subclass
     returns_agent.py
   tools/
     __init__.py
@@ -46,18 +46,18 @@ Run `generate --config agents.yml` (see [Quickstart](/docs/quickstart)) to creat
 
 ## Resolver plugins
 
-Resolvers fill prompt variables. They run before the agent, they're chosen by the engine (not the LLM), and they cost no tokens.
+Resolvers fill prompt variables. They run before the node, they're chosen by the engine (not the LLM), and they cost no tokens. Agents and orchestrators both take them, so a router's own instructions can depend on the request instead of being fixed text.
 
 ### Declaration
 
 ```yaml
 resolvers:
   current_date:
-    scope: shared    # generated once on SharedResolver, all agents inherit it
+    scope: shared    # generated once on SharedResolver, all nodes inherit it
   customer_name:
     scope: shared
   account_tier:
-    scope: agent     # generated per-agent, only agents that declare it get it
+    scope: agent     # generated per-node, only nodes that declare it get it
 ```
 
 ### Implementation

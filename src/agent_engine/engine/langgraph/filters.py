@@ -10,12 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class Filterable(Protocol):
-    """The minimal view a RouteFilter needs of a routing candidate.
-
-    Decouples filters from the spec layer (``GraphNode``) and the runtime layer
-    (node callables): a filter only ever inspects a candidate's id and whether
-    it is protected. Declared read-only so frozen dataclasses satisfy it.
-    """
+    """The minimal view a RouteFilter needs of a routing candidate."""
 
     @property
     def id(self) -> str: ...
@@ -36,7 +31,8 @@ class RouteFilter(ABC):
     """
 
     @abstractmethod
-    def filter(self, ctx: dict[str, Any], candidates: list[T]) -> list[T]: ...
+    def filter(self, ctx: dict[str, Any], candidates: list[T]) -> list[T]:
+        raise NotImplementedError
 
 
 class AccessFilter(RouteFilter):

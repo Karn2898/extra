@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import os
 import warnings
+from collections.abc import Mapping
 from enum import StrEnum
 from typing import Annotated, Any, Literal, NamedTuple
+from urllib.parse import parse_qs, urlsplit
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 ONE_HOUR_SECONDS = 3_600
 THIRTY_DAYS_SECONDS = 2_592_000
@@ -89,6 +93,37 @@ def normalize_database_url(url: str, backend: str) -> str:
                 f"(expected 'postgresql://' or 'postgresql+asyncpg://')."
             )
     return url
+
+
+def _query_mode(query: Mapping[str, Any]) -> str | None:
+    value = query.get("mode")
+    if isinstance(value, list | tuple):
+        return str(value[0]) if value else None
+    return None if value is None else str(value)
+
+
+def _is_in_memory_sqlite(url: str) -> bool:
+    """Whether ``url`` names a SQLite database that lives only in process memory.
+
+    Parsed rather than substring-matched, so an on-disk path containing
+    ``:memory:`` keeps its persistence.
+    """
+    try:
+        parsed = make_url(url)
+    except ArgumentError:
+        return False
+    if parsed.get_backend_name() != "sqlite":
+        return False
+    database = parsed.database
+    if not database or database == ":memory:":
+        return True
+    if _query_mode(parsed.query) == "memory":
+        return True
+    if database.startswith("file:"):
+        # A SQLite URI filename carries its own query, e.g. `file:x?mode=memory`.
+        uri = urlsplit(database)
+        return uri.path == ":memory:" or _query_mode(parse_qs(uri.query)) == "memory"
+    return False
 
 
 class Settings(BaseSettings):
@@ -176,3 +211,8 @@ class Settings(BaseSettings):
     @property
     def effective_database_url(self) -> str:
         return normalize_database_url(self.extra_db_url or self.database_url, self.extra_db_backend)
+
+    @property
+    def uses_process_memory(self) -> bool:
+        """True only for a SQLite URL that names no on-disk database."""
+        return _is_in_memory_sqlite(self.effective_database_url)

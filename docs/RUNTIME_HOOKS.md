@@ -325,6 +325,11 @@ updated `RunContext`; `before_mcp_request` may return an updated
 observe-only — their return value is ignored.** (Mutating a pending tool call or
 an MCP response is not supported in this version.)
 
+`on_run_start` may enrich request context, but it cannot replace `run_id`. That
+identifier is allocated by the caller or engine before hooks run and remains the
+authoritative identity shared by lifecycle persistence, conversation history,
+checkpoints, approvals, and stream events.
+
 In **managed plugin mode**, a method receives a single `HookInvocation` whose
 `.payload` is the same context object (use `event.payload_as(ToolCallContext)`
 for a typed view) and whose `.run_context` carries the active `RunContext`.

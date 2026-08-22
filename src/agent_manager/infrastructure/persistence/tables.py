@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Column, DateTime, Index, Integer, Text
+from sqlalchemy import JSON, Column, DateTime, Float, Index, Integer, Text
 from sqlmodel import Field, SQLModel
 
 
@@ -39,6 +39,7 @@ class ConversationSessionRow(SQLModel, table=True):
     system_name: str | None = Field(default=None, max_length=256)
     config_path: str | None = Field(default=None, max_length=1024)
     title: str | None = Field(default=None, max_length=512)
+    head_message_id: str | None = Field(default=None, max_length=64)
     metadata_json: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
     created_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     updated_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
@@ -96,3 +97,18 @@ class ConversationSnapshotRow(SQLModel, table=True):
     expires_at: datetime | None = Field(
         default=None, sa_column=Column(DateTime(timezone=True), index=True)
     )
+
+
+class RunRecordRow(SQLModel, table=True):
+    """Durable adapter row for the engine's existing RunRepository contract."""
+
+    __tablename__ = "agent_runs"
+
+    run_id: str = Field(primary_key=True, max_length=64)
+    thread_id: str = Field(max_length=64)
+    system_name: str = Field(max_length=256)
+    status: str = Field(max_length=32, index=True)
+    input_tokens: int | None = Field(default=None, sa_column=Column(Integer))
+    output_tokens: int | None = Field(default=None, sa_column=Column(Integer))
+    created_at: float = Field(sa_column=Column(Float, nullable=False))
+    updated_at: float = Field(sa_column=Column(Float, nullable=False))

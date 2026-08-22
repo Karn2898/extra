@@ -1,61 +1,51 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import logging
-from collections.abc import AsyncIterator, Callable, Iterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any, cast
 
 from langchain_core.callbacks import BaseCallbackHandler
-from langchain_core.language_models import BaseChatModel
-from langchain_core.runnables import Runnable, RunnableConfig
-from langchain_core.tools import BaseTool, StructuredTool
-from langgraph.graph import END, START, StateGraph
-from langgraph.graph.state import CompiledStateGraph
+from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import BaseTool
 from langgraph.types import Command
 
+from agent_engine.approvals.approval_manager import ApprovalManager
 from agent_engine.approvals.coordinator import ApprovalCoordinator
 from agent_engine.approvals.decision import ApprovalDecision, parse_decision
 from agent_engine.approvals.errors import RunNotFound
-from agent_engine.approvals.manager import ApprovalManager, ToolExecutionManager
-from agent_engine.approvals.models import ApprovalRecord
-from agent_engine.approvals.repository import (
-    InMemoryApprovalRepository,
+from agent_engine.approvals.in_memory_approval_repository import InMemoryApprovalRepository
+from agent_engine.approvals.in_memory_session_approval_repository import (
+    InMemorySessionApprovalRepository,
+)
+from agent_engine.approvals.in_memory_tool_execution_repository import (
     InMemoryToolExecutionRepository,
 )
-from agent_engine.approvals.session_store import (
-    InMemorySessionApprovalRepository,
-    SessionApprovalRepository,
-    SessionApprovalStore,
-)
+from agent_engine.approvals.models import ApprovalRecord, RunStatus
+from agent_engine.approvals.session_approval_repository import SessionApprovalRepository
+from agent_engine.approvals.session_approval_store import SessionApprovalStore
+from agent_engine.approvals.tool_execution_manager import ToolExecutionManager
 from agent_engine.core.execution import ExecutionPolicy
-from agent_engine.core.spec import (
-    AgentSpec,
-    BaseModelConfig,
-    GraphNode,
-    OrchestratorSpec,
-    SystemSpec,
-)
-from agent_engine.core.spec import ModelConfig as NodeModelConfig
+from agent_engine.core.spec import AgentSpec, SystemSpec
 from agent_engine.engine.engine import Engine
 from agent_engine.engine.langgraph.approval_provider import InterruptApprovalProvider
 from agent_engine.engine.langgraph.checkpointing import (
     CheckpointerHandle,
     CheckpointProviderFactory,
 )
+from agent_engine.engine.langgraph.execution.run_lifecycle import RunLifecycle
+from agent_engine.engine.langgraph.execution.stream_channel import StreamChannel
 from agent_engine.engine.langgraph.filters import AccessFilter, RouteFilter
-from agent_engine.engine.langgraph.helpers import (
+from agent_engine.engine.langgraph.graph.graph_builder import GraphBuilder, ModelFactory, RunGraph
+from agent_engine.engine.langgraph.graph.traversal import (
     collect_mcp_specs,
     has_protected_nodes,
-    node_id,
     render_graph,
     walk,
 )
-from agent_engine.engine.langgraph.nodes import AgentNode, ChildEntry, OrchestratorNode
-from agent_engine.engine.langgraph.run_lifecycle import RunLifecycle
-from agent_engine.engine.langgraph.stream_channel import StreamChannel
+from agent_engine.engine.langgraph.tools.mcp_connector import MCPConnector
 from agent_engine.engine.types import ChatMessage, PendingApproval, RunResult
 from agent_engine.loaders.import_roots import register_import_roots
 from agent_engine.loaders.resolver_loader import ResolverLoader
@@ -65,37 +55,28 @@ from agent_engine.models.factory import build_chat_model
 from agent_engine.observability import build_callbacks
 from agent_engine.runs.in_memory import InMemoryRunRepository
 from agent_engine.runs.repository import RunRepository
-from agent_engine.runtime.execution import ExecutionLimiter, current_execution
+from agent_engine.runtime.execution_limiter import ExecutionLimiter, current_execution
 from agent_engine.runtime.hooks import (
+    AuthContext,
     EngineContext,
     HookManager,
     RunContext,
     current_run_context,
 )
-from agent_engine.runtime.state import GraphState
 from agent_engine.runtime.streaming import (
     RunStreamEvent,
     StreamSinks,
     TokenUsage,
     current_streams,
 )
+from agent_engine.runtime.tool_models import ToolUsageRecord
+from agent_engine.tool_usage.context_provider import ToolUsageContextProvider
+from agent_engine.tool_usage.in_memory import InMemoryToolUsageRepository
+from agent_engine.tool_usage.repository import ToolUsageRepository
+from agent_engine.tool_usage.trace import as_usage_records
+from agent_engine.tool_usage.tracker import ToolUsageTracker
 
 logger = logging.getLogger(__name__)
-
-ModelFactory = Callable[..., BaseChatModel]
-_MODEL_FACTORY_OPTIONAL_KWARGS = ("region", "max_tokens", "top_p")
-
-# noinspection PyTypeChecker
-RunGraphBuilder = StateGraph[GraphState, None, GraphState, GraphState]
-# noinspection PyTypeChecker
-RunGraph = CompiledStateGraph[GraphState, None, GraphState, GraphState]
-
-
-def _root_cause(exc: BaseException) -> str:
-    if isinstance(exc, BaseExceptionGroup):
-        for sub in exc.exceptions:
-            return _root_cause(sub)
-    return str(exc)
 
 
 def _initial_state(
@@ -116,7 +97,6 @@ def _initial_state(
             {"role": history_message.role.value, "content": history_message.content}
             for history_message in history
         ],
-        "used_tools": [],
     }
     if expose_run_context:
         state["run_context"] = _state_run_context(ctx)
@@ -205,29 +185,10 @@ def _pending_approval_event(system_name: str, result: RunResult) -> RunStreamEve
         agent_id=approval.agent_id,
         tool_name=approval.tool_name,
         description=approval.description,
+        provider=approval.provider,
+        server_id=approval.server_id,
+        arguments=dict(approval.arguments),
     )
-
-
-def _model_factory_kwargs(factory: ModelFactory, model: BaseModelConfig) -> dict[str, object]:
-    optional = {
-        "region": model.region,
-        "max_tokens": model.max_tokens,
-        "top_p": model.top_p,
-    }
-    present: dict[str, object] = {
-        key: value for key, value in optional.items() if value is not None
-    }
-    if not present:
-        return {}
-    try:
-        signature = inspect.signature(factory)
-    except (TypeError, ValueError):
-        return present
-    parameters = signature.parameters.values()
-    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters):
-        return present
-    accepted = set(signature.parameters)
-    return {key: value for key, value in present.items() if key in accepted}
 
 
 class LangGraphEngine(Engine):
@@ -243,6 +204,7 @@ class LangGraphEngine(Engine):
         run_repository: RunRepository | None = None,
         session_approval_repository: SessionApprovalRepository | None = None,
         session_approval_store: SessionApprovalStore | None = None,
+        tool_usage_repository: ToolUsageRepository | None = None,
     ) -> None:
         if session_approval_repository is not None and session_approval_store is not None:
             raise ValueError("pass session_approval_repository or session_approval_store, not both")
@@ -253,13 +215,12 @@ class LangGraphEngine(Engine):
         self._app: RunGraph | None = None
         self._system_name = ""
         self._filters: list[RouteFilter] = []
-        self._mcp_clients: dict[str, Any] = {}
+        self._mcp_connector: MCPConnector | None = None
         self._mcp_tools: dict[str, list[BaseTool]] = {}
         self._tool_loader: ToolLoader | None = None
         self._resolver_loader: ResolverLoader | None = None
         self._hook_manager: HookManager | None = None
         self._lifecycle: RunLifecycle | None = None
-        self._mcp_server_by_tool: dict[str, str] = {}
         self._policy = ExecutionPolicy()
 
         self._checkpoint_connection_string = checkpoint_connection_string
@@ -288,6 +249,12 @@ class LangGraphEngine(Engine):
             session_repository=self._session_approval_repository,
             session_store=session_approval_store,
         )
+        # One usage repository per engine, so every agent of every run reads and
+        # writes the same store; the writer and the reader are separate roles on
+        # top of it.
+        self._tool_usage_repository = tool_usage_repository or InMemoryToolUsageRepository()
+        self._tool_usage_tracker = ToolUsageTracker(self._tool_usage_repository)
+        self._tool_usage_context = ToolUsageContextProvider(self._tool_usage_repository)
 
     async def build(self, spec: SystemSpec) -> None:
         self._system_name = spec.meta.name
@@ -304,11 +271,12 @@ class LangGraphEngine(Engine):
             run_repository=self._run_repository,
         )
         self._filters = self._setup_filters(spec)
-        self._mcp_tools = await self._connect_mcps(spec)
+        self._mcp_connector = MCPConnector(self._base_dir, self._hook_manager)
+        self._mcp_tools = await self._mcp_connector.connect(collect_mcp_specs(spec.graph))
         self._tool_loader = ToolLoader(self._base_dir)
         self._resolver_loader = ResolverLoader(self._base_dir)
         self._checkpointer = CheckpointProviderFactory().create(self._checkpoint_connection_string)
-        self._app = self._compile_graph(spec)
+        self._app = self._build_graph(spec)
         self._log_startup_summary(spec)
 
     def _log_startup_summary(self, spec: SystemSpec) -> None:
@@ -332,7 +300,8 @@ class LangGraphEngine(Engine):
         if self._hook_manager is not None:
             log(logger, logging.INFO, "engine stopping", system=self._system_name)
             await self._hook_manager.run_engine_stop(EngineContext(system_name=self._system_name))
-        self._mcp_clients.clear()
+        if self._mcp_connector is not None:
+            self._mcp_connector.clear()
         self._mcp_tools.clear()
 
     def discovered_mcp_tools(self) -> dict[str, tuple[str, ...]]:
@@ -391,21 +360,52 @@ class LangGraphEngine(Engine):
         ``graph_input`` is the initial state of a new run, or the ``Command``
         that continues a suspended one from its checkpoint.
         """
-        return cast(dict[str, Any], await app.ainvoke(graph_input, self._thread_config(ctx)))
+        return await app.ainvoke(graph_input, self._thread_config(ctx))
 
-    def _completed_result(
-        self, result: dict[str, Any], *, tokens: TokenUsage | None = None
+    async def _completed_result(
+        self,
+        ctx: RunContext,
+        result: dict[str, Any],
+        *,
+        token_usage: tuple[int | None, int | None] = (None, None),
     ) -> RunResult:
         """Map the graph's raw output onto the public run result."""
-        input_tokens, output_tokens = tokens.totals() if tokens is not None else (None, None)
+        input_tokens, output_tokens = token_usage
         return RunResult(
             system_name=self._system_name,
             visited=result.get("visited", []),
             answer=result.get("answer", ""),
-            used_tools=tuple(result.get("used_tools", [])),
+            used_tools=await self._used_tools(ctx),
             input_tokens=input_tokens,
             output_tokens=output_tokens,
         )
+
+    async def _used_tools(self, ctx: RunContext) -> tuple[ToolUsageRecord, ...]:
+        """The run's tool trace, read from the usage repository.
+
+        The trace is a projection of persisted usage — including tools called by
+        nested agents — rather than something the graph state carried up.
+        """
+        if ctx.run_id is None:
+            return ()
+        return as_usage_records(await self._tool_usage_repository.list_for_run(ctx.run_id))
+
+    async def _record_token_usage(
+        self,
+        ctx: RunContext,
+        tokens: TokenUsage,
+    ) -> tuple[int | None, int | None]:
+        """Persist one execution leg and return cumulative usage for the run."""
+        assert ctx.run_id is not None
+        input_tokens, output_tokens = tokens.totals()
+        run = await self._run_repository.add_token_usage(
+            ctx.run_id,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+        if run is None:
+            raise RunNotFound(ctx.run_id)
+        return run.input_tokens, run.output_tokens
 
     async def run(
         self,
@@ -423,10 +423,11 @@ class LangGraphEngine(Engine):
         with self._run_scope(ctx, sinks=StreamSinks(token=tokens.add)):
             try:
                 result = await self._invoke_graph(app, ctx, state)
-                pending = await self._pending_result(ctx, result)
+                token_usage = await self._record_token_usage(ctx, tokens)
+                pending = await self._pending_result(ctx, result, token_usage=token_usage)
                 if pending is not None:
                     return pending
-                run_result = self._completed_result(result, tokens=tokens)
+                run_result = await self._completed_result(ctx, result, token_usage=token_usage)
                 await lifecycle.succeed(ctx, run_result)
                 return run_result
             except Exception as exc:
@@ -446,7 +447,13 @@ class LangGraphEngine(Engine):
             configurable={"thread_id": ctx.run_id},
         )
 
-    async def _pending_result(self, ctx: RunContext, result: Any) -> RunResult | None:
+    async def _pending_result(
+        self,
+        ctx: RunContext,
+        result: Any,
+        *,
+        token_usage: tuple[int | None, int | None] = (None, None),
+    ) -> RunResult | None:
         """If the graph suspended at an approval interrupt, return a pending
         RunResult built from the persisted approval; otherwise return None."""
         interrupts = result.get("__interrupt__") if isinstance(result, dict) else None
@@ -469,22 +476,67 @@ class LangGraphEngine(Engine):
             system_name=self._system_name,
             visited=result.get("visited", []),
             answer="",
-            used_tools=tuple(result.get("used_tools", [])),
-            status="pending_approval",
+            used_tools=await self._used_tools(ctx),
+            input_tokens=token_usage[0],
+            output_tokens=token_usage[1],
+            status=RunStatus.PENDING_APPROVAL,
             pending_approval=_pending_approval(approval),
         )
 
-    async def get_run_status(self, run_id: str) -> str:
+    async def get_run_status(self, run_id: str) -> RunStatus:
         """Return the current status of a run (raises RunNotFound if unknown)."""
         run = await self._run_repository.get(run_id)
         if run is None:
             raise RunNotFound(run_id)
-        return run.status.value
+        return run.status
 
     async def get_pending_approval(self, run_id: str) -> PendingApproval | None:
         """Return the run's outstanding approval, or None if there is none."""
         approval = await self._approval_manager.get_pending(run_id)
         return _pending_approval(approval) if approval is not None else None
+
+    async def get_processed_result(
+        self,
+        run_id: str,
+        approval_id: str,
+        *,
+        caller_user_id: str | None = None,
+        caller_session_id: str | None = None,
+    ) -> RunResult | None:
+        """Recover the result left by an already-processed approval decision."""
+        app, _ = self._require_built("recovering a processed approval")
+        await self._approval_manager.get_authorized(
+            run_id=run_id,
+            approval_id=approval_id,
+            caller_user_id=caller_user_id,
+            caller_auth_ref=caller_session_id,
+        )
+        run = await self._run_repository.get(run_id)
+        if run is None:
+            raise RunNotFound(run_id)
+        if run.status not in {RunStatus.COMPLETED, RunStatus.PENDING_APPROVAL}:
+            return None
+        ctx = RunContext(run_id=run_id)
+        snapshot = await app.aget_state(self._thread_config(ctx))
+        values = snapshot.values
+        if not isinstance(values, dict):
+            return None
+        token_usage = (run.input_tokens, run.output_tokens)
+        if run.status == RunStatus.PENDING_APPROVAL:
+            approval = await self.get_pending_approval(run_id)
+            if approval is None:
+                return None
+            return RunResult(
+                system_name=self._system_name,
+                visited=values.get("visited", []),
+                answer="",
+                used_tools=await self._used_tools(ctx),
+                input_tokens=token_usage[0],
+                output_tokens=token_usage[1],
+                status=RunStatus.PENDING_APPROVAL,
+                pending_approval=approval,
+            )
+        return await self._completed_result(ctx, values, token_usage=token_usage)
 
     async def resume(
         self,
@@ -493,6 +545,8 @@ class LangGraphEngine(Engine):
         decision: ApprovalDecision | str,
         *,
         caller_user_id: str | None = None,
+        caller_session_id: str | None = None,
+        access_token: str | None = None,
     ) -> RunResult:
         """Apply a human decision to a pending tool call and resume the same run.
 
@@ -505,17 +559,15 @@ class LangGraphEngine(Engine):
         """
         app, lifecycle = self._require_built("resuming")
         kind = parse_decision(decision)
-        approval = await self._approval_manager.claim(
-            run_id=run_id, approval_id=approval_id, caller_user_id=caller_user_id
+        ctx = await self._activate_approval_resume(
+            lifecycle,
+            run_id=run_id,
+            approval_id=approval_id,
+            caller_user_id=caller_user_id,
+            caller_session_id=caller_session_id,
+            access_token=access_token,
         )
         approved = kind != ApprovalDecision.DENY
-        ctx = RunContext(
-            run_id=run_id,
-            conversation_id=approval.auth_ref,
-            user_id=approval.authorized_user_id,
-            organization_id=approval.organization_id,
-            metadata={"approval_id": approval.approval_id},
-        )
         log(
             logger,
             logging.INFO,
@@ -524,15 +576,17 @@ class LangGraphEngine(Engine):
             approval_id=approval_id,
             decision=kind.value,
         )
-        with self._run_scope(ctx, sinks=None):
+        tokens = TokenUsage()
+        with self._run_scope(ctx, sinks=StreamSinks(token=tokens.add)):
             try:
                 resume_command: Command[Any] = Command(resume={"decision": kind.value})
                 result = await self._invoke_graph(app, ctx, resume_command)
+                token_usage = await self._record_token_usage(ctx, tokens)
                 await self._approval_manager.finalize(approval_id, approved=approved)
-                pending = await self._pending_result(ctx, result)
+                pending = await self._pending_result(ctx, result, token_usage=token_usage)
                 if pending is not None:
                     return pending
-                run_result = self._completed_result(result)
+                run_result = await self._completed_result(ctx, result, token_usage=token_usage)
                 await lifecycle.succeed(ctx, run_result)
                 log(
                     logger,
@@ -543,9 +597,151 @@ class LangGraphEngine(Engine):
                     decision=kind.value,
                 )
                 return run_result
+            except asyncio.CancelledError:
+                await asyncio.shield(
+                    lifecycle.cancel(ctx, reason="approval resume request cancelled")
+                )
+                raise
             except Exception as exc:
                 await lifecycle.fail(ctx, exc)
                 raise
+
+    async def resume_stream(
+        self,
+        run_id: str,
+        approval_id: str,
+        decision: ApprovalDecision | str,
+        *,
+        caller_user_id: str | None = None,
+        caller_session_id: str | None = None,
+        access_token: str | None = None,
+    ) -> AsyncIterator[RunStreamEvent]:
+        """Resume one approval through the same owned stream used by new runs."""
+        app, lifecycle = self._require_built("streaming an approval resume")
+        kind = parse_decision(decision)
+        ctx = await self._activate_approval_resume(
+            lifecycle,
+            run_id=run_id,
+            approval_id=approval_id,
+            caller_user_id=caller_user_id,
+            caller_session_id=caller_session_id,
+            access_token=access_token,
+        )
+        approved = kind != ApprovalDecision.DENY
+
+        async def finalize_approval() -> None:
+            await self._approval_manager.finalize(approval_id, approved=approved)
+
+        log(
+            logger,
+            logging.INFO,
+            "resume stream started",
+            run_id=run_id,
+            approval_id=approval_id,
+            decision=kind.value,
+        )
+        command: Command[Any] = Command(resume={"decision": kind.value})
+        execution = cast(
+            AsyncGenerator[RunStreamEvent, None],
+            self._stream_execution(
+                app,
+                lifecycle,
+                ctx,
+                command,
+                after_invoke=finalize_approval,
+                started_event=RunStreamEvent(type="resume_started", run_id=run_id),
+            ),
+        )
+        try:
+            async for event in execution:
+                yield event
+        finally:
+            await execution.aclose()
+
+    async def _activate_approval_resume(
+        self,
+        lifecycle: RunLifecycle,
+        *,
+        run_id: str,
+        approval_id: str,
+        caller_user_id: str | None,
+        caller_session_id: str | None,
+        access_token: str | None = None,
+    ) -> RunContext:
+        """Claim and activate one resume without an interruptible ownership gap.
+
+        The response may be cancelled before its first SSE frame. Shielding this
+        short transition ensures that cancellation observes either an unclaimed
+        approval or an active run that it can terminally cancel, never a claimed
+        approval stranded before graph-task ownership begins.
+        """
+
+        async def activate() -> RunContext:
+            approval = await self._approval_manager.claim(
+                run_id=run_id,
+                approval_id=approval_id,
+                caller_user_id=caller_user_id,
+                caller_auth_ref=caller_session_id,
+            )
+            ctx = RunContext(
+                run_id=run_id,
+                conversation_id=approval.auth_ref,
+                user_id=approval.authorized_user_id,
+                organization_id=approval.organization_id,
+                metadata={"approval_id": approval.approval_id},
+                # The approver's credential as of now, not one captured when the
+                # run started and possibly expired while it waited for a human.
+                auth_context=AuthContext(
+                    user_id=approval.authorized_user_id,
+                    organization_id=approval.organization_id,
+                    inbound_access_token=access_token,
+                ),
+            )
+            await lifecycle.activate_resume(ctx)
+            return ctx
+
+        activation = asyncio.create_task(activate())
+        try:
+            return await asyncio.shield(activation)
+        except asyncio.CancelledError:
+            try:
+                ctx = await asyncio.shield(activation)
+            except Exception:
+                # The claim lost or activation failed, so there is no active
+                # execution owned by this request to terminally cancel.
+                pass
+            else:
+                await asyncio.shield(
+                    lifecycle.cancel(ctx, reason="approval resume request cancelled")
+                )
+            raise
+
+    async def cancel_pending_approval(
+        self,
+        run_id: str,
+        approval_id: str,
+        *,
+        caller_user_id: str | None = None,
+        caller_session_id: str | None = None,
+    ) -> None:
+        """Cancel a suspended HITL run if no approval decision has claimed it."""
+        _, lifecycle = self._require_built("cancelling a pending approval")
+        approval = await self._approval_manager.cancel_pending(
+            run_id=run_id,
+            approval_id=approval_id,
+            caller_user_id=caller_user_id,
+            caller_auth_ref=caller_session_id,
+        )
+        await lifecycle.cancel(
+            RunContext(
+                run_id=run_id,
+                conversation_id=approval.auth_ref,
+                user_id=approval.authorized_user_id,
+                organization_id=approval.organization_id,
+                metadata={"approval_id": approval.approval_id},
+            ),
+            reason="user cancelled pending approval",
+        )
 
     async def stream(
         self,
@@ -560,24 +756,56 @@ class LangGraphEngine(Engine):
         state = _initial_state(
             message, history=history, ctx=ctx, expose_run_context=context is not None
         )
+        execution = cast(
+            AsyncGenerator[RunStreamEvent, None],
+            self._stream_execution(app, lifecycle, ctx, state),
+        )
+        try:
+            async for event in execution:
+                yield event
+        finally:
+            await execution.aclose()
+
+    async def _stream_execution(
+        self,
+        app: RunGraph,
+        lifecycle: RunLifecycle,
+        ctx: RunContext,
+        graph_input: Any,
+        *,
+        after_invoke: Callable[[], Awaitable[None]] | None = None,
+        started_event: RunStreamEvent | None = None,
+    ) -> AsyncIterator[RunStreamEvent]:
+        """Own one active graph leg and cancel it when its consumer leaves."""
         channel = StreamChannel()
         tokens = TokenUsage()
         with self._run_scope(ctx, sinks=channel.sinks(token=tokens.add)):
             task = asyncio.create_task(
-                self._stream_graph(app, lifecycle, ctx, state, channel=channel, tokens=tokens)
+                self._stream_graph(
+                    app,
+                    lifecycle,
+                    ctx,
+                    graph_input,
+                    channel=channel,
+                    tokens=tokens,
+                    after_invoke=after_invoke,
+                )
             )
+            if started_event is not None:
+                channel.emit(started_event)
             try:
                 async for event in channel.events():
                     yield event
                 await task
             finally:
-                await self._stop_abandoned_stream(task, lifecycle, ctx)
+                await self._stop_abandoned_stream(task, lifecycle, ctx, tokens)
 
-    @staticmethod
     async def _stop_abandoned_stream(
+        self,
         task: asyncio.Task[None],
         lifecycle: RunLifecycle,
         ctx: RunContext,
+        tokens: TokenUsage,
     ) -> None:
         """Stop a graph producer when its stream is closed before completion."""
         if task.done():
@@ -585,17 +813,33 @@ class LangGraphEngine(Engine):
         task.cancel()
         with suppress(asyncio.CancelledError):
             await task
-        await asyncio.shield(lifecycle.cancel(ctx))
+        await asyncio.shield(self._cancel_abandoned_run(lifecycle, ctx, tokens))
+
+    async def _cancel_abandoned_run(
+        self,
+        lifecycle: RunLifecycle,
+        ctx: RunContext,
+        tokens: TokenUsage,
+    ) -> None:
+        """Persist reported partial usage, then make cancellation terminal."""
+        try:
+            if tokens.totals() != (None, None):
+                await self._record_token_usage(ctx, tokens)
+        except Exception:
+            logger.exception("failed to record token usage for cancelled run")
+        finally:
+            await lifecycle.cancel(ctx)
 
     async def _stream_graph(
         self,
         app: RunGraph,
         lifecycle: RunLifecycle,
         ctx: RunContext,
-        state: dict[str, Any],
+        graph_input: Any,
         *,
         channel: StreamChannel,
         tokens: TokenUsage,
+        after_invoke: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         """Execute the graph for a streamed run and report the outcome.
 
@@ -605,17 +849,21 @@ class LangGraphEngine(Engine):
         channel: an exception raised here would reach nobody.
         """
         try:
-            result = await self._invoke_graph(app, ctx, state)
-            pending = await self._pending_result(ctx, result)
+            result = await self._invoke_graph(app, ctx, graph_input)
+            token_usage = await self._record_token_usage(ctx, tokens)
+            if after_invoke is not None:
+                await after_invoke()
+            pending = await self._pending_result(ctx, result, token_usage=token_usage)
             if pending is not None:
                 channel.emit(_pending_approval_event(self._system_name, pending))
                 return
-            run_result = self._completed_result(result, tokens=tokens)
-            await lifecycle.succeed(
-                ctx,
-                run_result,
-                on_completed=lambda: channel.emit(_final_event(self._system_name, run_result)),
-            )
+            run_result = await self._completed_result(ctx, result, token_usage=token_usage)
+            terminal = channel.publish_terminal(_final_event(self._system_name, run_result))
+            await terminal.accepted.wait()
+            try:
+                await lifecycle.succeed(ctx, run_result)
+            finally:
+                terminal.finalized.set()
         except Exception as exc:
             await lifecycle.fail(ctx, exc)
             channel.abort(exc)
@@ -630,179 +878,24 @@ class LangGraphEngine(Engine):
                 filters.append(AccessFilter(self._base_dir))
         return filters
 
-    async def _connect_mcps(self, spec: SystemSpec) -> dict[str, list[BaseTool]]:
-        from langchain_mcp_adapters.client import MultiServerMCPClient
-
-        from agent_engine.loaders.mcp_auth_loader import MCPAuthLoader
-        from agent_engine.loaders.mcp_tags import apply_tool_tags, effective_tool_tag_transport
-        from agent_engine.runtime.hooks import HookedMCPAuth
-
-        auth_loader = MCPAuthLoader(self._base_dir)
-        assert self._hook_manager is not None
-        hook_mcp_auth = self._hook_manager.has("before_mcp_request")
-
-        mcp_tools: dict[str, list[BaseTool]] = {}
-        for server_id, mcp_spec in collect_mcp_specs(spec.graph).items():
-            config: dict[str, Any] = {"url": mcp_spec.url, "transport": "streamable_http"}
-            auth = auth_loader.get_auth(server_id)
-            if hook_mcp_auth:
-                auth = HookedMCPAuth(self._hook_manager, server_id, base=auth)
-            if auth is not None:
-                config["auth"] = auth
-
-            if mcp_spec.tool_tags:
-                transport = effective_tool_tag_transport(mcp_spec)
-                config = apply_tool_tags(config, mcp_spec.tool_tags, transport, server_id=server_id)
-                log(
-                    logger,
-                    logging.INFO,
-                    "mcp tool_tags configured",
-                    server=server_id,
-                    tags=len(mcp_spec.tool_tags),
-                    transport=transport.type if transport else "",
-                    default_transport=mcp_spec.tool_tag_transport is None,
-                )
-
-            client = MultiServerMCPClient({server_id: config})  # type: ignore[dict-item]
-            self._mcp_clients[server_id] = client
-            try:
-                log(logger, logging.INFO, "mcp discovery started", server=server_id)
-                mcp_tools[server_id] = await client.get_tools()
-                log(
-                    logger,
-                    logging.INFO,
-                    "mcp connected",
-                    server=server_id,
-                    tools=len(mcp_tools[server_id]),
-                )
-            except Exception as exc:
-                log(
-                    logger,
-                    logging.WARNING,
-                    "mcp unreachable",
-                    server=server_id,
-                    reason=_root_cause(exc),
-                )
-                mcp_tools[server_id] = []
-        return mcp_tools
-
-    # noinspection PyTypeChecker
-    def _compile_graph(self, spec: SystemSpec) -> RunGraph:
-        builder = StateGraph(GraphState)
-        self._wire_node(builder, spec.graph, parent_path=None)
-        builder.add_edge(START, node_id(spec.graph, parent_path=None))
-        assert self._checkpointer is not None
-        return builder.compile(checkpointer=self._checkpointer.saver)
-
-    # noinspection PyTypeChecker
-    def _wire_node(
-        self,
-        builder: RunGraphBuilder,
-        node: GraphNode,
-        parent_path: str | None,
-    ) -> None:
-        path = node_id(node, parent_path)
-
-        if isinstance(node.node, OrchestratorSpec):
-            builder.add_node(path, self._build_orchestrator_node(node, parent_path))
-        else:
-            assert isinstance(node.node, AgentSpec)
-            builder.add_node(path, self._build_agent_node(node.node, path))
-
-        builder.add_edge(path, END)
-
-    def _build_orchestrator_node(
-        self,
-        node: GraphNode,
-        parent_path: str | None,
-    ) -> OrchestratorNode:
-        assert isinstance(node.node, OrchestratorSpec)
-        spec = node.node
-        path = node_id(node, parent_path)
-        model = self._build_model(spec.model)
-        fb = spec.model.fallback
-        fallback_model = self._build_model(fb) if fb is not None else None
-
-        children: list[ChildEntry] = []
-        for child in node.children:
-            callable_node: AgentNode | OrchestratorNode
-            if isinstance(child.node, AgentSpec):
-                callable_node = self._build_agent_node(child.node, node_id(child, path))
-            else:
-                callable_node = self._build_orchestrator_node(child, path)
-            children.append(
-                ChildEntry(
-                    id=child.node.id,
-                    name=child.node.name or child.node.id,
-                    protected=child.node.protected,
-                    callable=callable_node,
-                )
-            )
-
-        return OrchestratorNode(
-            spec=spec,
-            node_path=path,
-            model=model,
-            children=children,
-            filters=self._filters,
-            base_dir=self._base_dir,
-            fallback_model=fallback_model,
-        )
-
-    def _build_agent_node(self, spec: AgentSpec, node_path: str) -> AgentNode:
+    def _build_graph(self, spec: SystemSpec) -> RunGraph:
+        """Delegate startup-only node assembly and compilation to ``GraphBuilder``."""
         assert self._tool_loader is not None
         assert self._resolver_loader is not None
         assert self._hook_manager is not None
-        tools, mcp_names, server_by_tool = self._build_agent_tools(spec)
-        bound_model = self._build_model_runnable(spec.model, tools=tools)
-        return AgentNode(
-            spec=spec,
-            node_path=node_path,
-            bound_model=bound_model,
-            tool_map={t.name: t for t in tools},
-            mcp_tool_names=mcp_names,
-            mcp_server_by_tool=server_by_tool,
+        assert self._checkpointer is not None
+        return GraphBuilder(
+            base_dir=self._base_dir,
+            model_factory=self._model_factory,
+            filters=self._filters,
+            mcp_tools=self._mcp_tools,
+            tool_loader=self._tool_loader,
             resolver_loader=self._resolver_loader,
             hook_manager=self._hook_manager,
-            base_dir=self._base_dir,
+            checkpointer=self._checkpointer,
             execution_manager=self._execution_manager,
             approval_coordinator=self._approval_coordinator,
+            usage_tracker=self._tool_usage_tracker,
+            usage_context=self._tool_usage_context,
             system_namespace=self._system_name,
-        )
-
-    def _build_model(self, model: BaseModelConfig) -> BaseChatModel:
-        return self._model_factory(
-            model.provider,
-            model.name,
-            model.temperature,
-            **_model_factory_kwargs(self._model_factory, model),
-        )
-
-    def _build_model_runnable(
-        self, model: NodeModelConfig, tools: list[BaseTool] | None = None
-    ) -> BaseChatModel | Runnable:
-        primary_model = self._build_model(model)
-        bound_primary = primary_model.bind_tools(tools) if tools else primary_model
-        if model.fallback is not None:
-            fallback_model = self._build_model(model.fallback)
-            bound_fallback = fallback_model.bind_tools(tools) if tools else fallback_model
-            return bound_primary.with_fallbacks([bound_fallback], exceptions_to_handle=(Exception,))
-        return bound_primary
-
-    def _build_agent_tools(
-        self, spec: AgentSpec
-    ) -> tuple[list[BaseTool], set[str], dict[str, str]]:
-        assert self._tool_loader is not None
-        tools: list[BaseTool] = []
-        mcp_names: set[str] = set()
-        server_by_tool: dict[str, str] = {}
-        for t in spec.tools:
-            fn = self._tool_loader.load(t.id)
-            tools.append(StructuredTool.from_function(fn, description=t.description))
-        for mcp in spec.mcps:
-            server_tools = self._mcp_tools.get(mcp.id, [])
-            tools.extend(server_tools)
-            for st in server_tools:
-                mcp_names.add(st.name)
-                server_by_tool[st.name] = mcp.id
-        return tools, mcp_names, server_by_tool
+        ).compile(spec.graph)

@@ -84,6 +84,46 @@ class Repository(ABC):
     ) -> ConversationSnapshot: ...
 
     @abstractmethod
+    async def append_message_if_absent(
+        self,
+        message: ConversationMessage,
+        *,
+        snapshot_ttl_seconds: int | None = None,
+    ) -> bool:
+        """Atomically append by ``message_id`` and report whether it was created.
+
+        A message whose parent is no longer the selected head is retained on
+        that inactive branch without changing the conversation's active head.
+        """
+        ...
+
+    @abstractmethod
+    async def append_message_if_head(
+        self,
+        message: ConversationMessage,
+        expected_head_message_id: str | None,
+        *,
+        snapshot_ttl_seconds: int | None = None,
+    ) -> bool:
+        """Append and select ``message`` only if the active branch head matches.
+
+        The comparison and append are one atomic repository operation. A false
+        result writes nothing and lets the application reject concurrent turns
+        or edits without producing a detached execution.
+        """
+        ...
+
+    @abstractmethod
+    async def get_message(self, message_id: str) -> ConversationMessage | None: ...
+
+    @abstractmethod
+    async def get_user_message_for_run(
+        self, session_id: str, run_id: str
+    ) -> ConversationMessage | None:
+        """Find the run's user message across active and inactive branches."""
+        ...
+
+    @abstractmethod
     async def list_conversation_messages(
         self, session_id: str, limit: int | None = None
     ) -> list[ConversationMessage]:
@@ -106,6 +146,18 @@ class Repository(ABC):
         max_messages: int | None = None,
         max_chars: int | None = None,
     ) -> ConversationContext: ...
+
+    @abstractmethod
+    async def get_context_at(
+        self,
+        session_id: str,
+        head_message_id: str | None,
+        *,
+        max_messages: int | None = None,
+        max_chars: int | None = None,
+    ) -> ConversationContext:
+        """Build context from one immutable ancestry path; ``None`` is empty."""
+        ...
 
     @abstractmethod
     async def get_token_usage(self, conversation_id: str) -> int:

@@ -7,14 +7,14 @@ import asyncio
 import pytest
 
 from agent_engine.approvals.errors import ApprovalNotFound, InvalidStateTransition
+from agent_engine.approvals.in_memory_approval_repository import InMemoryApprovalRepository
+from agent_engine.approvals.in_memory_tool_execution_repository import (
+    InMemoryToolExecutionRepository,
+)
 from agent_engine.approvals.models import (
     ApprovalRecord,
     ApprovalStatus,
     ToolExecutionRecord,
-)
-from agent_engine.approvals.repository import (
-    InMemoryApprovalRepository,
-    InMemoryToolExecutionRepository,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -47,6 +47,24 @@ async def test_claim_is_atomic_single_winner() -> None:
 
     results = await asyncio.gather(*[claim() for _ in range(25)])
     assert sum(results) == 1  # exactly one caller wins the PENDING -> RESUMING move
+
+
+async def test_claim_and_cancel_have_exactly_one_winner() -> None:
+    repo = InMemoryApprovalRepository()
+    await repo.create(_approval())
+
+    async def transition(operation: str) -> str | None:
+        try:
+            if operation == "claim":
+                await repo.claim("ap1")
+            else:
+                await repo.reject_pending("ap1")
+            return operation
+        except InvalidStateTransition:
+            return None
+
+    winners = await asyncio.gather(transition("claim"), transition("cancel"))
+    assert len([winner for winner in winners if winner is not None]) == 1
 
 
 async def test_claim_missing_raises() -> None:

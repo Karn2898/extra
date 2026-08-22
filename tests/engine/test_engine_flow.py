@@ -34,10 +34,16 @@ from agent_engine.core.spec import (
     ToolSpec,
 )
 from agent_engine.engine.langgraph.engine import LangGraphEngine
+from agent_engine.engine.langgraph.execution.node_executor import NodeExecutor
 from agent_engine.engine.langgraph.filters import AccessFilter
+from agent_engine.engine.langgraph.nodes.child_entry import ChildEntry
 from agent_engine.engine.types import RunResult
+from agent_engine.loaders.resolver_loader import ResolverLoader
 from agent_engine.runtime.hooks import AuthContext, RunContext
 from agent_engine.runtime.state import GraphState
+from agent_engine.tool_usage.context_provider import ToolUsageContextProvider
+from agent_engine.tool_usage.in_memory import InMemoryToolUsageRepository
+from agent_engine.tool_usage.tracker import ToolUsageTracker
 from tests.fixtures.utils import fake_model_factory
 
 # ---------------------------------------------------------------------------
@@ -94,6 +100,10 @@ def orchestrator(node_id: str, children: list[GraphNode]) -> GraphNode:
 
 def system(graph: GraphNode) -> SystemSpec:
     return SystemSpec(meta=SystemMeta(name="test-system"), defaults=None, graph=graph)
+
+
+def usage_context() -> ToolUsageContextProvider:
+    return ToolUsageContextProvider(InMemoryToolUsageRepository())
 
 
 def write_tool(base_dir: Path, tool_id: str) -> None:
@@ -314,17 +324,43 @@ async def test_only_root_answer_is_streamed(tmp_path: Path, model_factory: Any) 
 # ---------------------------------------------------------------------------
 
 
+class _UnusedNode(NodeExecutor):
+    async def execute(self, state: GraphState) -> GraphState:
+        return state
+
+
+def _candidate(node_id: str, protected: bool) -> ChildEntry:
+    return ChildEntry(
+        id=node_id,
+        name=node_id,
+        protected=protected,
+        node=_UnusedNode(),
+    )
+
+
 @dataclass(frozen=True)
-class _Candidate:
+class _FilterCandidate:
     id: str
     protected: bool
+
+
+def test_access_filter_accepts_candidates_without_runtime_node_dependency(tmp_path: Path) -> None:
+    write_access(tmp_path, allow=False)
+    route_filter = AccessFilter(tmp_path)
+
+    kept = route_filter.filter(
+        {},
+        [_FilterCandidate("public", False), _FilterCandidate("protected", True)],
+    )
+
+    assert kept == [_FilterCandidate("public", False)]
 
 
 def test_access_filter_drops_denied_protected(tmp_path: Path) -> None:
     write_access(tmp_path, allow=False)
     f = AccessFilter(tmp_path)
 
-    kept = f.filter({}, [_Candidate("pub", False), _Candidate("adm", True)])
+    kept = f.filter({}, [_candidate("pub", False), _candidate("adm", True)])
 
     assert [c.id for c in kept] == ["pub"]
 
@@ -333,7 +369,7 @@ def test_access_filter_keeps_protected_when_allowed(tmp_path: Path) -> None:
     write_access(tmp_path, allow=True)
     f = AccessFilter(tmp_path)
 
-    kept = f.filter({}, [_Candidate("adm", True)])
+    kept = f.filter({}, [_candidate("adm", True)])
 
     assert [c.id for c in kept] == ["adm"]
 
@@ -341,7 +377,6 @@ def test_access_filter_keeps_protected_when_allowed(tmp_path: Path) -> None:
 def test_graph_state_accepts_generic_run_context() -> None:
     state: GraphState = {
         "message": "hello",
-        "used_tools": [],
         "run_context": {"metadata": {"allowed_nodes": ("admin",)}},
     }
 
@@ -432,28 +467,40 @@ async def test_orchestrator_fallback_model_execution(tmp_path: Path, model_facto
     assert result.visited == ["root", "root/child"]
 
 
-async def test_orchestrator_loads_both_prompts(tmp_path: Path) -> None:
-    from langchain_core.messages import AIMessage
+class CapturingModel:
+    """Records the system prompt it was handed, and answers without routing."""
 
+    def __init__(self) -> None:
+        self.captured_prompt: Any = None
+
+    def bind_tools(self, tools: list[Any]) -> Any:
+        return self
+
+    async def ainvoke(self, messages: list[Any]) -> Any:
+        from langchain_core.messages import AIMessage
+
+        self.captured_prompt = messages[0].content
+        return AIMessage(content="done")
+
+
+def write_resolver(base_dir: Path, node_id: str, body: str) -> None:
+    resolvers_dir = base_dir / "plugins" / "resolvers"
+    resolvers_dir.mkdir(parents=True, exist_ok=True)
+    (resolvers_dir / f"{node_id}.py").write_text(body, encoding="utf-8")
+
+
+async def test_orchestrator_loads_both_prompts(tmp_path: Path) -> None:
     from agent_engine.core.spec import OrchestratorPromptSet, OrchestratorSpec
-    from agent_engine.engine.langgraph.nodes import _ORCHESTRATOR_CONTRACT, OrchestratorNode
+    from agent_engine.engine.langgraph.nodes.orchestrator_node import (
+        _ORCHESTRATOR_CONTRACT,
+        OrchestratorNode,
+    )
 
     # Write prompt files
     sys_path = tmp_path / "system.md"
     orch_path = tmp_path / "orchestrator.md"
     sys_path.write_text("System persona content", encoding="utf-8")
     orch_path.write_text("Orchestrator routing content", encoding="utf-8")
-
-    class CapturingModel:
-        def __init__(self) -> None:
-            self.captured_prompt = None
-
-        def bind_tools(self, tools: list[Any]) -> Any:
-            return self
-
-        async def ainvoke(self, messages: list[Any]) -> AIMessage:
-            self.captured_prompt = messages[0].content
-            return AIMessage(content="done")
 
     # 1. Test both prompts loaded
     spec_both = OrchestratorSpec(
@@ -473,9 +520,12 @@ async def test_orchestrator_loads_both_prompts(tmp_path: Path) -> None:
         model=cast(Any, model_both),
         children=[],
         filters=[],
+        resolver_loader=ResolverLoader(tmp_path),
         base_dir=tmp_path,
+        usage_context=usage_context(),
+        usage_tracker=ToolUsageTracker(InMemoryToolUsageRepository()),
     )
-    await node_both({"message": "hi", "visited": [], "used_tools": []})
+    await node_both.execute({"message": "hi", "visited": []})
     expected_both = (
         f"System persona content\n\nOrchestrator routing content\n{_ORCHESTRATOR_CONTRACT}"
     )
@@ -498,9 +548,12 @@ async def test_orchestrator_loads_both_prompts(tmp_path: Path) -> None:
         model=cast(Any, model_sys),
         children=[],
         filters=[],
+        resolver_loader=ResolverLoader(tmp_path),
         base_dir=tmp_path,
+        usage_context=usage_context(),
+        usage_tracker=ToolUsageTracker(InMemoryToolUsageRepository()),
     )
-    await node_sys({"message": "hi", "visited": [], "used_tools": []})
+    await node_sys.execute({"message": "hi", "visited": []})
     expected_sys = f"System persona content\n\n\n{_ORCHESTRATOR_CONTRACT}"
     assert model_sys.captured_prompt == expected_sys
 
@@ -522,9 +575,12 @@ async def test_orchestrator_loads_both_prompts(tmp_path: Path) -> None:
         model=cast(Any, model_orch),
         children=[],
         filters=[],
+        resolver_loader=ResolverLoader(tmp_path),
         base_dir=tmp_path,
+        usage_context=usage_context(),
+        usage_tracker=ToolUsageTracker(InMemoryToolUsageRepository()),
     )
-    await node_orch({"message": "hi", "visited": [], "used_tools": []})
+    await node_orch.execute({"message": "hi", "visited": []})
     expected_orch = f"orch desc\n\nOrchestrator routing content\n{_ORCHESTRATOR_CONTRACT}"
     assert model_orch.captured_prompt == expected_orch
 
@@ -543,8 +599,159 @@ async def test_orchestrator_loads_both_prompts(tmp_path: Path) -> None:
         model=cast(Any, model_desc),
         children=[],
         filters=[],
+        resolver_loader=ResolverLoader(tmp_path),
         base_dir=tmp_path,
+        usage_context=usage_context(),
+        usage_tracker=ToolUsageTracker(InMemoryToolUsageRepository()),
     )
-    await node_desc({"message": "hi", "visited": [], "used_tools": []})
+    await node_desc.execute({"message": "hi", "visited": []})
     expected_desc = f"orch desc\n\n\n{_ORCHESTRATOR_CONTRACT}"
     assert model_desc.captured_prompt == expected_desc
+
+
+async def test_orchestrator_prompts_interpolate_resolver_values(tmp_path: Path) -> None:
+    """A router's prompt can depend on who is asking, not just on the file.
+
+    Both of an orchestrator's prompt files are rendered against the same
+    resolved values, while the engine's own contract text is left alone.
+    """
+    from agent_engine.core.spec import (
+        OrchestratorPromptSet,
+        OrchestratorSpec,
+        ResolverSpec,
+    )
+    from agent_engine.engine.langgraph.nodes.orchestrator_node import (
+        _ORCHESTRATOR_CONTRACT,
+        OrchestratorNode,
+    )
+
+    (tmp_path / "system.md").write_text("Persona for {{audience}}", encoding="utf-8")
+    (tmp_path / "orchestrator.md").write_text("Routing for {{audience}}", encoding="utf-8")
+    write_resolver(
+        tmp_path,
+        "root",
+        "class Resolver:\n    def audience(self, ctx: dict) -> str:\n        return 'an admin'\n",
+    )
+
+    model = CapturingModel()
+    node = OrchestratorNode(
+        spec=OrchestratorSpec(
+            id="root",
+            name="root",
+            description="root desc",
+            model=_MODEL,
+            resolvers=(ResolverSpec(id="audience", scope="agent"),),
+            prompts=OrchestratorPromptSet(system="system.md", orchestrator="orchestrator.md"),
+        ),
+        node_path="root",
+        model=cast(Any, model),
+        children=[],
+        filters=[],
+        resolver_loader=ResolverLoader(tmp_path),
+        base_dir=tmp_path,
+        usage_context=usage_context(),
+        usage_tracker=ToolUsageTracker(InMemoryToolUsageRepository()),
+    )
+
+    await node.execute({"message": "hi", "visited": []})
+
+    assert model.captured_prompt == (
+        f"Persona for an admin\n\nRouting for an admin\n{_ORCHESTRATOR_CONTRACT}"
+    )
+
+
+async def test_orchestrator_resolvers_run_on_every_call(tmp_path: Path) -> None:
+    """Resolved per run, never cached — one caller's value must not be reused
+    for the next, which is the whole point of resolving from the request."""
+    from agent_engine.core.spec import (
+        OrchestratorPromptSet,
+        OrchestratorSpec,
+        ResolverSpec,
+    )
+    from agent_engine.engine.langgraph.nodes.orchestrator_node import OrchestratorNode
+
+    (tmp_path / "orchestrator.md").write_text("caller={{caller}}", encoding="utf-8")
+    write_resolver(
+        tmp_path,
+        "root",
+        "class Resolver:\n"
+        "    def __init__(self) -> None:\n"
+        "        self.calls = 0\n"
+        "    def caller(self, ctx: dict) -> str:\n"
+        "        self.calls += 1\n"
+        "        return f'user-{self.calls}'\n",
+    )
+
+    loader = ResolverLoader(tmp_path)
+    spec = OrchestratorSpec(
+        id="root",
+        name="root",
+        description="root desc",
+        model=_MODEL,
+        resolvers=(ResolverSpec(id="caller", scope="agent"),),
+        prompts=OrchestratorPromptSet(orchestrator="orchestrator.md"),
+    )
+    prompts = []
+    for _ in range(2):
+        model = CapturingModel()
+        node = OrchestratorNode(
+            spec=spec,
+            node_path="root",
+            model=cast(Any, model),
+            children=[],
+            filters=[],
+            resolver_loader=loader,
+            base_dir=tmp_path,
+            usage_context=usage_context(),
+            usage_tracker=ToolUsageTracker(InMemoryToolUsageRepository()),
+        )
+        await node.execute({"message": "hi", "visited": []})
+        prompts.append(model.captured_prompt)
+
+    assert "caller=user-1" in prompts[0]
+    assert "caller=user-2" in prompts[1]
+
+
+async def test_engine_wires_resolvers_into_orchestrator_prompts(tmp_path: Path) -> None:
+    """The same thing through the real engine, so the node's dependency is
+    proven to be wired by `build`, not only by a hand-constructed node."""
+    from agent_engine.core.spec import (
+        OrchestratorPromptSet,
+        OrchestratorSpec,
+        ResolverSpec,
+    )
+
+    (tmp_path / "orchestrator.md").write_text("Routing for {{audience}}", encoding="utf-8")
+    write_resolver(
+        tmp_path,
+        "root",
+        "class Resolver:\n    def audience(self, ctx: dict) -> str:\n        return 'an admin'\n",
+    )
+
+    root = GraphNode(
+        node=OrchestratorSpec(
+            id="root",
+            name="root",
+            description="root desc",
+            model=_MODEL,
+            resolvers=(ResolverSpec(id="audience", scope="agent"),),
+            prompts=OrchestratorPromptSet(orchestrator="orchestrator.md"),
+        ),
+        children=(agent("solo"),),
+    )
+
+    captured: list[str] = []
+
+    def capturing_factory(provider: str, name: str, temperature: float | None) -> Any:
+        model = CapturingModel()
+
+        async def ainvoke(messages: list[Any]) -> Any:
+            captured.append(str(messages[0].content))
+            return await CapturingModel.ainvoke(model, messages)
+
+        model.ainvoke = ainvoke  # type: ignore[method-assign]
+        return model
+
+    await run_message(system(root), tmp_path, capturing_factory, "hi")
+
+    assert any("Routing for an admin" in prompt for prompt in captured)

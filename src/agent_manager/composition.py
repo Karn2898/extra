@@ -10,22 +10,27 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
-from agent_engine.approvals.session_store import (
+from agent_engine.approvals.in_memory_session_approval_repository import (
     InMemorySessionApprovalRepository,
-    SessionApprovalRepository,
 )
+from agent_engine.approvals.session_approval_repository import SessionApprovalRepository
+from agent_engine.runs.in_memory import InMemoryRunRepository
+from agent_engine.runs.repository import RunRepository
+from agent_engine.tool_usage.in_memory import InMemoryToolUsageRepository
+from agent_engine.tool_usage.repository import ToolUsageRepository
 from agent_manager.config import AuthMode, Settings
 from agent_manager.domain import Repository
-from agent_manager.infrastructure.auth.keys import StaticSecretKeySource
-from agent_manager.infrastructure.auth.resolver import (
-    AnonymousIdentitySource,
-    ClaimMapping,
-    HostIdentitySource,
-    IdentityResolver,
-    IdentitySource,
-)
-from agent_manager.infrastructure.auth.tokens import TokenPolicy, TokenVerifier
+from agent_manager.infrastructure.auth.anonymous_identity_source import AnonymousIdentitySource
+from agent_manager.infrastructure.auth.claim_mapping import ClaimMapping
+from agent_manager.infrastructure.auth.host_identity_source import HostIdentitySource
+from agent_manager.infrastructure.auth.identity_resolver import IdentityResolver
+from agent_manager.infrastructure.auth.identity_source import IdentitySource
+from agent_manager.infrastructure.auth.static_secret_key_source import StaticSecretKeySource
+from agent_manager.infrastructure.auth.token_policy import TokenPolicy
+from agent_manager.infrastructure.auth.token_verifier import TokenVerifier
 from agent_manager.infrastructure.persistence.database import create_db_engine, session_factory
+from agent_manager.infrastructure.persistence.memory_repository import MemoryRepository
+from agent_manager.infrastructure.persistence.run_repository import SqlRunRepository
 from agent_manager.infrastructure.persistence.sql_repository import SqlRepository
 
 logger = logging.getLogger(__name__)
@@ -38,11 +43,23 @@ EPHEMERAL_SECRET_BYTES = 32
 class ApplicationRepositories:
     conversations: Repository
     session_approvals: SessionApprovalRepository
+    tool_usage: ToolUsageRepository
+    runs: RunRepository
 
 
 def build_session_approval_repository() -> SessionApprovalRepository:
     """Create the process-lifetime adapter used by the current application."""
     return InMemorySessionApprovalRepository()
+
+
+def build_tool_usage_repository() -> ToolUsageRepository:
+    """Select the tool-usage backend for this deployment.
+
+    The only place the concrete adapter is named: a distributed deployment
+    swaps the implementation here, and no agent, node, or tool-execution code
+    changes with it.
+    """
+    return InMemoryToolUsageRepository()
 
 
 def build_identity_resolver(settings: Settings) -> IdentityResolver:
@@ -107,12 +124,26 @@ async def application_repositories(
     settings: Settings,
 ) -> AsyncIterator[ApplicationRepositories]:
     """Own application repositories for one complete process lifespan."""
-    db_engine = create_db_engine(settings.effective_database_url)
+    database_url = settings.effective_database_url
+    session_approvals = build_session_approval_repository()
+    tool_usage = build_tool_usage_repository()
+    if settings.uses_process_memory:
+        yield ApplicationRepositories(
+            conversations=MemoryRepository(),
+            session_approvals=session_approvals,
+            tool_usage=tool_usage,
+            runs=InMemoryRunRepository(),
+        )
+        return
+
+    db_engine = create_db_engine(database_url)
     sessions = session_factory(db_engine)
     try:
         yield ApplicationRepositories(
             conversations=SqlRepository(sessions),
-            session_approvals=build_session_approval_repository(),
+            session_approvals=session_approvals,
+            tool_usage=tool_usage,
+            runs=SqlRunRepository(sessions),
         )
     finally:
         await db_engine.dispose()

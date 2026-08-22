@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from agent_engine.approvals.approval_policy import ApprovalQuery
+from agent_engine.approvals.default_approval_policy import DefaultApprovalPolicy
 from agent_engine.approvals.invocation import ToolInvocation
-from agent_engine.approvals.policy import ApprovalQuery, DefaultApprovalPolicy
 
 
 def _query(*, auto_mode: bool, session_allowed: bool) -> ApprovalQuery:

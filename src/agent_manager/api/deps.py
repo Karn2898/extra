@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Annotated
 
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
 
 from agent_manager.application import ConversationService
 from agent_manager.domain import Principal
@@ -37,13 +38,14 @@ def get_caller_identity(request: Request) -> CallerIdentity:
 def get_principal(request: Request) -> Principal:
     """The proven caller every conversation route authorizes against.
 
-    A bearer token first, then the host's session cookie. Trusting that cookie is
-    safe because it only reaches us from the host's own origin: cross-site
-    requests cannot read a JSON response, and the widget's `application/json`
-    writes are preflighted against a CORS allowlist that denies by default.
+    A bearer token where the caller supplied one, otherwise the host's session
+    cookie. Trusting that cookie is safe because it only reaches us from the
+    host's own origin: cross-site requests cannot read a JSON response, and the
+    widget's `application/json` writes are preflighted against a CORS allowlist
+    that denies by default.
     """
     identity = get_caller_identity(request)
-    token = _bearer_token(request) or _cookie_token(request, identity.cookie_name)
+    token = _select_token(request, identity)
     if token is None:
         raise HTTPException(status_code=401, detail=UNAUTHENTICATED_DETAIL)
     try:
@@ -51,6 +53,29 @@ def get_principal(request: Request) -> Principal:
     except TokenError as exc:
         logger.warning("token verification failed: %s", exc)
         raise HTTPException(status_code=401, detail=str(exc)) from None
+
+
+Service = Annotated[ConversationService, Depends(get_service)]
+Caller = Annotated[Principal, Depends(get_principal)]
+Identity = Annotated[CallerIdentity, Depends(get_caller_identity)]
+
+
+def _select_token(request: Request, identity: CallerIdentity) -> str | None:
+    """Which of the two places a token can arrive in names the caller.
+
+    A bearer token naming a host user is something the caller sent on purpose,
+    so it wins — asking to run as someone is not overridden by whoever this
+    browser happens to be logged in as. A visitor pass is not deliberate: the
+    widget keeps it from before the user signed in, so letting it outrank the
+    session cookie would hold that user anonymous for as long as the pass
+    lived — across reloads, because nothing on the client knows the cookie
+    appeared.
+    """
+    bearer = _bearer_token(request)
+    cookie = _cookie_token(request, identity.cookie_name)
+    if bearer is None or (cookie is not None and not identity.resolver.names_a_host_user(bearer)):
+        return cookie
+    return bearer
 
 
 def _bearer_token(request: Request) -> str | None:

@@ -48,6 +48,7 @@ class ConversationSession:
     system_name: str | None = None
     config_path: str | None = None
     title: str | None = None
+    head_message_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     created_at: datetime | None = None
     updated_at: datetime | None = None

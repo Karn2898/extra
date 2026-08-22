@@ -247,7 +247,7 @@ async def test_after_tool_call_receives_provider_and_server_id(
         # Inject a fake MCP tool for server "wiki" (as _connect_mcps would).
         engine._mcp_tools["wiki"] = [mcp_tool]
         # Recompile so the agent node picks up the injected MCP tool.
-        engine._app = engine._compile_graph(spec)
+        engine._app = engine._build_graph(spec)
         await engine.run("search please")
 
     call = next(c[1] for c in fixtures.CALLS if c[0] == "after_tool_call")

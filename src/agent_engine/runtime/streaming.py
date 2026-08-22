@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from agent_engine.runtime.tool_models import ToolProviderName, ToolUsageRecord, ToolUsageStatus
 
@@ -59,6 +59,7 @@ RunStreamEventType = Literal[
     "tool_failed",
     "final",
     "pending_approval",
+    "resume_started",
 ]
 
 
@@ -82,3 +83,4 @@ class RunStreamEvent:
     approval_id: str | None = None
     agent_id: str | None = None
     description: str | None = None
+    arguments: dict[str, Any] | None = None

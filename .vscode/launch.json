@@ -1,0 +1,33 @@
+{
+  // No file watcher here, unlike `make dev`: a process that restarts under you
+  // ends the debug session.
+  "version": "0.2.0",
+  "inputs": [
+    {
+      "id": "agents",
+      "type": "promptString",
+      "description": "Path to agents.yaml",
+      "default": "${workspaceFolder}/examples/starter/agents.yaml"
+    }
+  ],
+  "configurations": [
+    {
+      "name": "Debug manager (playground :8100)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "agent_manager.cli",
+      "args": ["--config", "${input:agents}", "--host", "127.0.0.1"],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "Debug engine API (:8090)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "agentctl.main",
+      "args": ["serve", "--config", "${input:agents}", "--host", "127.0.0.1"],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    }
+  ]
+}

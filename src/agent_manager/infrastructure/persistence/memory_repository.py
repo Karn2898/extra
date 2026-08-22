@@ -112,6 +112,7 @@ class MemoryRepository(Repository):
             system_name=system_name,
             config_path=config_path,
             title=title,
+            head_message_id=None,
             metadata=dict(metadata or {}),
             created_at=now,
             updated_at=now,
@@ -169,23 +170,83 @@ class MemoryRepository(Repository):
     ) -> ConversationSnapshot:
         if message.session_id not in self._sessions:
             await self.create_session(message.session_id, user_id=message.user_id)
-        self._messages.setdefault(message.session_id, []).append(message)
         session = self._sessions[message.session_id]
-        self._sessions[message.session_id] = ConversationSession(
-            session_id=session.session_id,
-            user_id=session.user_id,
-            system_name=session.system_name,
-            config_path=session.config_path,
-            title=session.title,
-            metadata=session.metadata,
-            created_at=session.created_at,
+        if message.parent_message_id is None and session.head_message_id is not None:
+            message = replace(message, parent_message_id=session.head_message_id)
+        self._messages.setdefault(message.session_id, []).append(message)
+        self._sessions[message.session_id] = replace(
+            session,
+            head_message_id=message.message_id,
             updated_at=message.created_at,
             last_message_at=message.created_at,
-            expires_at=session.expires_at,
         )
         snapshot = self._build_snapshot(message.session_id, snapshot_ttl_seconds)
         self._snapshots[message.session_id] = snapshot
         return snapshot
+
+    async def append_message_if_absent(
+        self,
+        message: ConversationMessage,
+        *,
+        snapshot_ttl_seconds: int | None = None,
+    ) -> bool:
+        """Append once under the adapter's single-event-loop execution model."""
+        if any(
+            existing.message_id == message.message_id
+            for existing in self._messages.get(message.session_id, [])
+        ):
+            return False
+        session = self._sessions.get(message.session_id)
+        if session is not None and session.head_message_id != message.parent_message_id:
+            self._messages.setdefault(message.session_id, []).append(message)
+            return True
+        await self.append_message(message, snapshot_ttl_seconds=snapshot_ttl_seconds)
+        return True
+
+    async def append_message_if_head(
+        self,
+        message: ConversationMessage,
+        expected_head_message_id: str | None,
+        *,
+        snapshot_ttl_seconds: int | None = None,
+    ) -> bool:
+        session = self._sessions.get(message.session_id)
+        if session is None or session.head_message_id != expected_head_message_id:
+            return False
+        self._messages.setdefault(message.session_id, []).append(message)
+        self._sessions[message.session_id] = replace(
+            session,
+            head_message_id=message.message_id,
+            updated_at=message.created_at,
+            last_message_at=message.created_at,
+        )
+        self._snapshots[message.session_id] = self._build_snapshot(
+            message.session_id, snapshot_ttl_seconds
+        )
+        return True
+
+    async def get_message(self, message_id: str) -> ConversationMessage | None:
+        return next(
+            (
+                message
+                for messages in self._messages.values()
+                for message in messages
+                if message.message_id == message_id
+            ),
+            None,
+        )
+
+    async def get_user_message_for_run(
+        self, session_id: str, run_id: str
+    ) -> ConversationMessage | None:
+        return next(
+            (
+                message
+                for message in self._messages.get(session_id, [])
+                if message.run_id == run_id and message.role == Role.USER
+            ),
+            None,
+        )
 
     async def add_message(self, conversation_id: str, role: Role, content: str) -> None:
         await self.append_message(
@@ -201,8 +262,14 @@ class MemoryRepository(Repository):
     async def list_conversation_messages(
         self, session_id: str, limit: int | None = None
     ) -> list[ConversationMessage]:
-        msgs = self._messages.get(session_id, [])
-        return list(msgs[-limit:] if limit is not None else msgs)
+        session = self._sessions.get(session_id)
+        msgs = _branch_messages(
+            self._messages.get(session_id, []),
+            session.head_message_id if session is not None else None,
+        )
+        if limit is None:
+            return list(msgs)
+        return list(msgs[-limit:]) if limit > 0 else []
 
     async def list_messages(self, conversation_id: str, limit: int | None = None) -> list[Message]:
         msgs = await self.list_conversation_messages(conversation_id, limit)
@@ -238,14 +305,34 @@ class MemoryRepository(Repository):
         if snapshot is None:
             snapshot = await self.rebuild_snapshot(session_id)
             source = "rebuilt"
-        messages = await self.list_messages(session_id)
-        messages = _bound_messages(messages, max_messages=max_messages, max_chars=max_chars)
+        active_messages = await self.list_messages(session_id)
+        messages = _bound_messages(active_messages, max_messages=max_messages, max_chars=max_chars)
         return ConversationContext(
             session_id=session_id,
             messages=messages,
-            message_count=len(self._messages.get(session_id, [])),
+            message_count=len(active_messages),
             source=source if snapshot is not None else "cold",
             snapshot=snapshot,
+        )
+
+    async def get_context_at(
+        self,
+        session_id: str,
+        head_message_id: str | None,
+        *,
+        max_messages: int | None = None,
+        max_chars: int | None = None,
+    ) -> ConversationContext:
+        messages = _branch_messages(self._messages.get(session_id, []), head_message_id)
+        context = [
+            Message(role=m.role, content=m.content, created_at=m.created_at) for m in messages
+        ]
+        bounded = _bound_messages(context, max_messages=max_messages, max_chars=max_chars)
+        return ConversationContext(
+            session_id=session_id,
+            messages=bounded,
+            message_count=len(messages),
+            source="branch",
         )
 
     async def delete_expired_snapshots(self, now: datetime) -> int:
@@ -264,7 +351,8 @@ class MemoryRepository(Repository):
         from datetime import timedelta
 
         now = datetime.now(UTC)
-        messages = self._messages.get(session_id, [])
+        session = self._sessions[session_id]
+        messages = _branch_messages(self._messages.get(session_id, []), session.head_message_id)
         last = messages[-1] if messages else None
         conversation_json: dict[str, Any] = {
             "messages": [
@@ -280,7 +368,6 @@ class MemoryRepository(Repository):
                 for msg in messages
             ]
         }
-        session = self._sessions[session_id]
         expires_at = (
             now + timedelta(seconds=snapshot_ttl_seconds)
             if snapshot_ttl_seconds is not None
@@ -296,6 +383,22 @@ class MemoryRepository(Repository):
             updated_at=now,
             expires_at=expires_at,
         )
+
+
+def _branch_messages(
+    messages: list[ConversationMessage], head_message_id: str | None
+) -> list[ConversationMessage]:
+    """Return the selected immutable root-to-head ancestry path."""
+    if head_message_id is None:
+        return []
+    by_id = {message.message_id: message for message in messages}
+    path: list[ConversationMessage] = []
+    cursor = by_id.get(head_message_id)
+    while cursor is not None:
+        path.append(cursor)
+        cursor = by_id.get(cursor.parent_message_id) if cursor.parent_message_id else None
+    path.reverse()
+    return path
 
 
 def _bound_messages(

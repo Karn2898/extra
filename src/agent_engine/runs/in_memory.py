@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import time
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 
 from agent_engine.approvals.errors import InvalidStateTransition
@@ -13,6 +13,7 @@ from agent_engine.approvals.models import (
     RunRecord,
     RunStatus,
 )
+from agent_engine.runs.repository import RunRepository
 
 DEFAULT_TERMINAL_RUN_TTL_SECONDS = 86_400.0  # 24 hours
 
@@ -33,7 +34,7 @@ class _StoredRun:
     expires_at: float | None = None
 
 
-class InMemoryRunRepository:
+class InMemoryRunRepository(RunRepository):
     """Process-local implementation of :class:`RunRepository`.
 
     This adapter assumes every call for an instance runs on one asyncio event
@@ -84,6 +85,15 @@ class InMemoryRunRepository:
         entry = self._get_unexpired_entry(run_id)
         return None if entry is None else entry.record
 
+    async def get_many(self, run_ids: Collection[str]) -> dict[str, RunRecord]:
+        """Resolve many ids against the same dict, skipping unknown and expired ones."""
+        found: dict[str, RunRecord] = {}
+        for run_id in run_ids:
+            entry = self._get_unexpired_entry(run_id)
+            if entry is not None:
+                found[run_id] = entry.record
+        return found
+
     async def transition_if_allowed(self, run_id: str, target: RunStatus) -> bool:
         now = self._clock()
         entry = self._get_unexpired_entry(run_id, now)
@@ -100,6 +110,24 @@ class InMemoryRunRepository:
                     self._expiration_queue.append((entry.expires_at, run_id))
         self._evict_expired_batch(now)
         return changed
+
+    async def add_token_usage(
+        self,
+        run_id: str,
+        *,
+        input_tokens: int | None,
+        output_tokens: int | None,
+    ) -> RunRecord | None:
+        """Accumulate reported usage without introducing a suspension point."""
+        entry = self._get_unexpired_entry(run_id)
+        if entry is None:
+            return None
+        record = entry.record
+        if input_tokens is not None:
+            record.input_tokens = (record.input_tokens or 0) + input_tokens
+        if output_tokens is not None:
+            record.output_tokens = (record.output_tokens or 0) + output_tokens
+        return record
 
     def _get_unexpired_entry(self, run_id: str, now: float | None = None) -> _StoredRun | None:
         entry = self._runs.get(run_id)

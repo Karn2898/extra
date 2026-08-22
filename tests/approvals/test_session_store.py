@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 
+from agent_engine.approvals.in_memory_session_approval_repository import (
+    InMemorySessionApprovalStore,
+)
 from agent_engine.approvals.invocation import (
     SessionApprovalGrant,
     SessionApprovalKey,
     SessionApprovalScope,
 )
-from agent_engine.approvals.session_store import InMemorySessionApprovalStore
 
 
 def _key(

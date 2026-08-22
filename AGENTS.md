@@ -27,9 +27,10 @@ rendering, and the CLI (`validate`, `inspect`, `generate`, `run`, `serve`,
 Bedrock. Two HTTP API layers exist: a thin `agent_engine` API (`/invoke`,
 `/stream`), started by `agentctl serve` (default port `8090`) — stateless, no
 persistence, no web client — and `agent_manager` — a conversation lifecycle
-service built on top of it with SQLite-backed persistence, SSE streaming, and
-the official React web client, started by the separate `agent-manager`
-console script (default port `8100`). `agentctl chat` is a separate, ephemeral
+service built on top of it with process-local storage by default, opt-in
+SQLite/Postgres persistence, SSE streaming, and the official React web client,
+started by the separate `agent-manager` console script (default port `8100`).
+`agentctl chat` is a separate, ephemeral
 developer console that persists nothing (see `docs/ARCHITECTURE.md` §14 for
 detail). Basic observability
 (structured logging plus a Langfuse callback provider) is wired in. A
@@ -168,7 +169,7 @@ split, not the original plan:
     ├── agent_manager/         ← conversation/session lifecycle service, built on agent_engine
     │   ├── domain/                 conversation/message/session models + repository contract
     │   ├── application/            ConversationService (send/stream, prior-context assembly)
-    │   ├── infrastructure/persistence/  SQLite (default) + Alembic migrations
+    │   ├── infrastructure/persistence/  memory default; optional SQL + Alembic
     │   └── api/                    FastAPI app: `/conversations` endpoints, SSE streaming,
     │                                official React web client (`api/static/widget/`)
     └── agentctl/              ← CLI: validate, inspect, generate, run, serve, chat

@@ -127,6 +127,139 @@ async function mockConversationApi(
   return calls;
 }
 
+async function mockApprovalApi(
+  page: Page,
+  options: {
+    decisionStatus?: number;
+    decisionDetail?: string;
+    failDecision?: boolean;
+    decisionDelayMs?: number;
+    blockResume?: boolean;
+  } = {},
+) {
+  const decisions: string[] = [];
+  const cancellations: string[] = [];
+  const editTargets: Array<string | null> = [];
+  let streamCount = 0;
+  let sessionApproved = false;
+  let cancelled = false;
+
+  await page.route("**/conversations", async (route) => {
+    const body =
+      route.request().method() === "GET"
+        ? []
+        : { conversation_id: "conv-approval", session_id: "conv-approval" };
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  });
+
+  await page.route("**/conversations/*/messages/stream", async (route: Route) => {
+    streamCount += 1;
+    const request = JSON.parse(route.request().postData() || "{}") as {
+      edit_message_id?: string;
+    };
+    editTargets.push(request.edit_message_id ?? null);
+    const runId = `run-${streamCount}`;
+    const messageId = `user-${streamCount}`;
+    if (sessionApproved) {
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: [
+          `event: turn_started\ndata: ${JSON.stringify({ type: "turn_started", run_id: runId, message_id: messageId })}`,
+          `event: final\ndata: ${JSON.stringify({ type: "final", content: "Session approval reused", route: ["writer"], used_tools: [] })}`,
+          "event: done\ndata: [DONE]",
+          "",
+        ].join("\n\n"),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: [
+        `event: turn_started\ndata: ${JSON.stringify({ type: "turn_started", run_id: runId, message_id: messageId })}`,
+        `event: pending_approval\ndata: ${JSON.stringify({
+          type: "pending_approval",
+          route: ["writer"],
+          run_id: runId,
+          approval_id: `approval-${streamCount}`,
+          agent_id: "writer",
+          tool_name: "send_email",
+          description: "Send an email to the selected recipient. This action has not been executed.",
+          provider: "local",
+          used_tools: [],
+        })}`,
+        "event: done\ndata: [DONE]",
+        "",
+      ].join("\n\n"),
+    });
+  });
+
+  if (!options.blockResume) {
+    await page.route(/\/conversations\/[^/]+\/runs\/[^/]+\/approvals\/[^/]+\/decision\/stream$/, async (route) => {
+      const body = JSON.parse(route.request().postData() || "{}") as { decision?: string };
+      decisions.push(body.decision || "");
+      await new Promise((resolve) => setTimeout(resolve, options.decisionDelayMs ?? 25));
+      if (cancelled) {
+        await route.fulfill({
+          status: 409,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: "approval already processed" }),
+        });
+        return;
+      }
+      sessionApproved ||= body.decision === "allow_for_session";
+      if (options.failDecision || options.decisionStatus) {
+        await route.fulfill({
+          status: options.decisionStatus ?? 500,
+          contentType: "application/json",
+          body: JSON.stringify({
+            detail: options.decisionDetail ?? "private approval failure",
+          }),
+        });
+        return;
+      }
+      const answer =
+        body.decision === "deny" ? "The tool request was denied." : "The tool completed.";
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: [
+          `event: resume_started\ndata: ${JSON.stringify({ type: "resume_started", run_id: `run-${streamCount}` })}`,
+          `event: final\ndata: ${JSON.stringify({ type: "final", content: answer, route: ["writer"], used_tools: [] })}`,
+          "event: done\ndata: [DONE]",
+          "",
+        ].join("\n\n"),
+      });
+    });
+  }
+
+  await page.route(/\/conversations\/[^/]+\/runs\/[^/]+\/approvals\/[^/]+\/cancel$/, async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    cancellations.push(path);
+    cancelled = true;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ run_id: `run-${streamCount}`, status: "cancelled" }),
+    });
+  });
+
+  await page.route("**/conversations/*/messages", async (route: Route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+
+  await page.route("**/conversations/*/usage", async (route: Route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ used_tokens: 0, max_tokens: null, percent: 0, severity: "normal" }),
+    });
+  });
+
+  return { decisions, cancellations, editTargets, getStreamCount: () => streamCount };
+}
+
 async function mockConversationApiWithStaleConversation(page: Page, staleStatus = 404) {
   await pinVisitorPass(page);
   const calls: string[] = [];
@@ -285,6 +418,18 @@ async function shadowClickText(page: Page, selector: string, text: string, index
       targets.find((node) => node.textContent?.includes(text))?.click();
     },
     { selector, text },
+  );
+}
+
+async function shadowClickUserAction(page: Page, text: string, label: string) {
+  const handle = await widget(page);
+  await handle.evaluate(
+    (element, { text, label }) => {
+      const messages = Array.from(element.shadowRoot?.querySelectorAll<HTMLElement>(".msg.user") ?? []);
+      const message = messages.find((node) => node.querySelector(".message-content")?.textContent === text);
+      message?.querySelector<HTMLElement>(`[aria-label="${label}"]`)?.click();
+    },
+    { text, label },
   );
 }
 
@@ -450,6 +595,169 @@ test("sending a message calls backend, renders assistant answer, stores conversa
   expect(calls).toContain("GET /conversations/conv-smoke/messages");
 });
 
+test("Stop cancels the active stream while preserving the next draft", async ({ page }) => {
+  const calls = await mockConversationApi(page);
+  let streamCount = 0;
+  let releaseFirst!: () => void;
+  const firstReleased = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+
+  await page.route("**/conversations/conv-smoke/messages/stream", async (route: Route) => {
+    streamCount += 1;
+    if (streamCount === 1) {
+      await firstReleased;
+      try {
+        await route.fulfill({
+          status: 200,
+          contentType: "text/event-stream",
+          body: [
+            `event: final\ndata: ${JSON.stringify({ type: "final", content: "late answer", route: [], used_tools: [] })}`,
+            "event: done\ndata: [DONE]",
+            "",
+          ].join("\n\n"),
+        });
+      } catch {
+        // The browser already abandoned the intercepted request.
+      }
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: [
+        `event: final\ndata: ${JSON.stringify({ type: "final", content: "next answer", route: [], used_tools: [] })}`,
+        "event: done\ndata: [DONE]",
+        "",
+      ].join("\n\n"),
+    });
+  });
+
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "first prompt");
+  await shadowClick(page, ".send");
+
+  await expect.poll(() => streamCount).toBe(1);
+  await expect.poll(() => shadowAttribute(page, ".send", "aria-label")).toBe("Stop generating");
+  await expect.poll(() => shadowExists(page, ".input:disabled")).toBe(false);
+
+  await shadowFill(page, ".input", "next draft");
+  await page.keyboard.press("Enter");
+  expect(streamCount).toBe(1);
+  await expect.poll(() => shadowValue(page, ".input")).toBe("next draft");
+
+  await shadowClick(page, ".send");
+  await expect.poll(() => shadowAttribute(page, ".send", "aria-label")).toBe("Send message");
+  await expect.poll(() => shadowValue(page, ".input")).toBe("next draft");
+  await expect.poll(() => shadowExists(page, ".thinking")).toBe(false);
+  await expect.poll(() => shadowText(page, ".msg-cancelled")).toBe("Generation stopped");
+  expect(await shadowText(page, ".messages")).not.toContain("Something went wrong");
+  expect(calls).not.toContain("POST /conversations/conv-smoke/messages");
+
+  releaseFirst();
+  await page.waitForTimeout(50);
+  expect(await shadowText(page, ".messages")).not.toContain("late answer");
+
+  await shadowClick(page, ".send");
+  await expect.poll(() => streamCount).toBe(2);
+  await expect.poll(() => shadowText(page, ".messages")).toContain("next answer");
+});
+
+test("editing a user message creates a new visible branch and can be cancelled", async ({ page }) => {
+  await mockConversationApi(page);
+  await page.addInitScript(
+    ([key, value]) => localStorage.setItem(key, value),
+    [CONVERSATION_KEY, "conv-edit"],
+  );
+  const original = [
+    { message_id: "u1", run_id: "r1", role: "user", content: "U1", status: "completed", created_at: "2026-01-01T00:00:00Z" },
+    { message_id: "a1", run_id: "r1", role: "assistant", content: "A1", status: "completed", created_at: "2026-01-01T00:00:01Z" },
+    { message_id: "u2", run_id: "r2", role: "user", content: "U2", status: "completed", created_at: "2026-01-01T00:00:02Z" },
+    { message_id: "a2", run_id: "r2", role: "assistant", content: "A2", status: "completed", created_at: "2026-01-01T00:00:03Z" },
+  ];
+  let active = [...original];
+  let editTarget = "";
+  await page.route("**/conversations/conv-edit/messages", async (route: Route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(active) });
+  });
+  await page.route("**/conversations/conv-edit/messages/stream", async (route: Route) => {
+    const body = JSON.parse(route.request().postData() || "{}") as {
+      message: string;
+      edit_message_id?: string;
+    };
+    editTarget = body.edit_message_id || "";
+    active = [
+      ...original.slice(0, 2),
+      { message_id: "u2-edited", run_id: "r3", role: "user", content: body.message, status: "completed", created_at: "2026-01-01T00:00:04Z" },
+      { message_id: "a2-edited", run_id: "r3", role: "assistant", content: "A2 edited", status: "completed", created_at: "2026-01-01T00:00:05Z" },
+    ];
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: [
+        `event: turn_started\ndata: ${JSON.stringify({ type: "turn_started", run_id: "r3", message_id: "u2-edited" })}`,
+        `event: final\ndata: ${JSON.stringify({ type: "final", content: "A2 edited", route: [], used_tools: [] })}`,
+        "event: done\ndata: [DONE]",
+        "",
+      ].join("\n\n"),
+    });
+  });
+
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await expect.poll(() => shadowText(page, ".messages")).toContain("A2");
+  await expect.poll(() => shadowComputedStyle(page, ".user-actions", "opacity")).toBe("1");
+  await shadowFill(page, ".input", "draft in progress");
+
+  await shadowClickUserAction(page, "U2", "Edit message");
+  await expect.poll(() => shadowValue(page, ".input")).toBe("U2");
+  await shadowClick(page, ".edit-cancel");
+  await expect.poll(() => shadowValue(page, ".input")).toBe("draft in progress");
+  expect(await shadowText(page, ".messages")).toContain("A2");
+
+  await shadowClickUserAction(page, "U2", "Edit message");
+  await shadowFill(page, ".input", "U2 edited");
+  await shadowClick(page, ".send");
+
+  await expect.poll(() => editTarget).toBe("u2");
+  await expect.poll(() => shadowText(page, ".messages")).toContain("U2 edited");
+  await expect.poll(() => shadowText(page, ".messages")).toContain("A2 edited");
+  expect(await shadowText(page, ".messages")).not.toContain("A2A2 edited");
+  expect(original.map((message) => message.content)).toEqual(["U1", "A1", "U2", "A2"]);
+});
+
+test("cancelled history renders lifecycle state without persisted assistant text", async ({ page }) => {
+  await mockConversationApi(page);
+  await page.addInitScript(
+    ([key, value]) => localStorage.setItem(key, value),
+    [CONVERSATION_KEY, "conv-cancelled"],
+  );
+  await page.route("**/conversations/conv-cancelled/messages", async (route: Route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        {
+          message_id: "cancelled-user",
+          run_id: "cancelled-run",
+          role: "user",
+          content: "Explain RocksDB",
+          status: "cancelled",
+          created_at: "2026-01-01T00:00:00Z",
+        },
+      ]),
+    });
+  });
+
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await expect.poll(() => shadowText(page, ".msg-cancelled")).toBe("Generation stopped");
+  await expect.poll(() => shadowText(page, ".messages")).toContain("Explain RocksDB");
+  await expect.poll(() => shadowExists(page, '[aria-label="Edit message"]')).toBe(true);
+  await expect.poll(() => shadowComputedStyle(page, ".user-actions", "opacity")).toBe("1");
+});
+
 test("tool activity shows the tool name without its internal provider", async ({ page }) => {
   await mockConversationApi(page, {
     usedTools: [{ name: "search_docs", provider: "mcp", status: "succeeded" }],
@@ -462,6 +770,188 @@ test("tool activity shows the tool name without its internal provider", async ({
   await expect.poll(() => shadowText(page, ".messages")).toContain("Echo: find the docs");
   await expect.poll(() => shadowText(page, ".tool-title")).toBe("search_docs");
   await expect.poll(() => shadowText(page, ".tool-title")).not.toContain("mcp");
+});
+
+for (const action of [
+  { label: "Approve", decision: "allow_once", answer: "The tool completed." },
+  { label: "Deny", decision: "deny", answer: "The tool request was denied." },
+  {
+    label: "Approve for this session",
+    decision: "allow_for_session",
+    answer: "The tool completed.",
+  },
+]) {
+  test(`${action.label} resolves a pending tool request exactly once`, async ({ page }) => {
+    const approval = await mockApprovalApi(page);
+    await page.goto("/widget-demo.html");
+    await shadowClick(page, ".launcher");
+    await shadowFill(page, ".input", "send the email");
+    await shadowClick(page, ".send");
+
+    await expect.poll(() => shadowText(page, ".approval-card")).toContain("Approval required");
+    await expect
+      .poll(() => shadowText(page, ".approval-description"))
+      .toBe("Send an email to the selected recipient. This action has not been executed.");
+    await expect.poll(() => shadowText(page, ".approval-tool")).toBe("Tool: send_email");
+    expect(await shadowText(page, ".approval-card")).not.toContain("writer");
+    expect(await shadowText(page, ".approval-card")).not.toContain("mail-prod");
+    expect(await shadowText(page, ".approval-card")).not.toContain("provider");
+    await expect.poll(() => shadowText(page, ".approval-actions")).toContain("Approve");
+    await expect.poll(() => shadowText(page, ".approval-actions")).toContain("Deny");
+    await expect
+      .poll(() => shadowText(page, ".approval-actions"))
+      .toContain("Approve for this session");
+    await expect.poll(() => shadowExists(page, ".input:disabled")).toBe(true);
+
+    await shadowClickText(page, ".approval-button", action.label);
+    await shadowClickText(page, ".approval-button", action.label);
+
+    await expect.poll(() => approval.decisions).toEqual([action.decision]);
+    await expect.poll(() => shadowExists(page, ".approval-card")).toBe(false);
+    await expect.poll(() => shadowText(page, ".messages")).toContain(action.answer);
+    await expect.poll(() => shadowExists(page, ".input:disabled")).toBe(false);
+    await expect.poll(() => shadowExists(page, ".approval-status")).toBe(false);
+  });
+}
+
+test("a pending approval can be cancelled even while a decision is applying", async ({ page }) => {
+  const approval = await mockApprovalApi(page, { decisionDelayMs: 500 });
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "send the email");
+  await shadowClick(page, ".send");
+
+  await expect.poll(() => shadowText(page, ".approval-actions")).toContain("Cancel run");
+  await shadowClickText(page, ".approval-button", "Approve");
+  await expect.poll(() => shadowText(page, ".approval-status")).toBe("Applying decision…");
+  await shadowClickText(page, ".approval-button", "Cancel run");
+
+  await expect.poll(() => approval.cancellations).toHaveLength(1);
+  await expect.poll(() => shadowExists(page, ".approval-card")).toBe(false);
+  await expect.poll(() => shadowText(page, ".msg-cancelled")).toBe("Generation stopped");
+  await expect.poll(() => shadowExists(page, ".input:disabled")).toBe(false);
+  expect(approval.decisions).toEqual(["allow_once"]);
+});
+
+test("resumed approval keeps draft and Edit available and Stop cancels it", async ({ page }) => {
+  const approval = await mockApprovalApi(page, { blockResume: true });
+  const nonStreamingDecisions: string[] = [];
+  page.on("request", (request) => {
+    if (/\/approvals\/[^/]+\/decision$/.test(new URL(request.url()).pathname)) {
+      nonStreamingDecisions.push(request.url());
+    }
+  });
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "send the email");
+  await shadowClick(page, ".send");
+  await expect.poll(() => shadowExists(page, ".approval-card")).toBe(true);
+
+  await shadowClickText(page, ".approval-button", "Approve");
+  await expect.poll(() => shadowAttribute(page, ".send", "aria-label")).toBe("Stop generating");
+  await expect.poll(() => shadowExists(page, ".approval-card")).toBe(false);
+  await expect.poll(() => shadowExists(page, ".input:disabled")).toBe(false);
+  await expect.poll(() => shadowExists(page, '[aria-label="Edit message"]')).toBe(true);
+
+  await shadowFill(page, ".input", "next prompt draft");
+  await shadowClickUserAction(page, "send the email", "Edit message");
+  await shadowFill(page, ".input", "edited prompt draft");
+  await page.keyboard.press("Enter");
+  await expect.poll(() => shadowValue(page, ".input")).toBe("edited prompt draft");
+  expect(approval.getStreamCount()).toBe(1);
+
+  await shadowClick(page, ".send");
+  await expect.poll(() => shadowText(page, ".msg-cancelled")).toBe("Generation stopped");
+  await expect.poll(() => shadowAttribute(page, ".send", "aria-label")).toBe("Send message");
+  await expect.poll(() => shadowValue(page, ".input")).toBe("edited prompt draft");
+  expect(await shadowText(page, ".messages")).not.toContain("Something went wrong");
+  expect(nonStreamingDecisions).toEqual([]);
+});
+
+test("session approval prevents another prompt for the same session tool", async ({ page }) => {
+  const approval = await mockApprovalApi(page);
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "first email");
+  await shadowClick(page, ".send");
+  await expect.poll(() => shadowExists(page, ".approval-card")).toBe(true);
+
+  await shadowClickText(page, ".approval-button", "Approve for this session");
+  await expect.poll(() => shadowExists(page, ".approval-card")).toBe(false);
+
+  await shadowFill(page, ".input", "second email");
+  await shadowClick(page, ".send");
+
+  await expect.poll(() => shadowText(page, ".messages")).toContain("Session approval reused");
+  await expect.poll(() => approval.getStreamCount()).toBe(2);
+  expect(approval.decisions).toEqual(["allow_for_session"]);
+  await expect.poll(() => shadowExists(page, ".approval-card")).toBe(false);
+});
+
+test("editing a pending-approval prompt creates a branch without resuming it", async ({ page }) => {
+  const approval = await mockApprovalApi(page);
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "original request");
+  await shadowClick(page, ".send");
+  await expect.poll(() => shadowExists(page, ".approval-card")).toBe(true);
+
+  await shadowClickUserAction(page, "original request", "Edit message");
+  await expect.poll(() => shadowExists(page, ".input:disabled")).toBe(false);
+  await shadowFill(page, ".input", "revised request");
+  await shadowClick(page, ".send");
+
+  await expect.poll(() => approval.getStreamCount()).toBe(2);
+  expect(approval.editTargets).toEqual([null, "user-1"]);
+  expect(approval.decisions).toEqual([]);
+  await expect.poll(() => shadowText(page, ".messages")).toContain("revised request");
+  await expect.poll(() => shadowExists(page, ".approval-card")).toBe(true);
+});
+
+test("a failed approval decision restores the controls without leaking details", async ({ page }) => {
+  const approval = await mockApprovalApi(page, { decisionStatus: 500 });
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "send the email");
+  await shadowClick(page, ".send");
+  await expect.poll(() => shadowExists(page, ".approval-card")).toBe(true);
+
+  await shadowClickText(page, ".approval-button", "Approve");
+
+  await expect.poll(() => approval.decisions).toEqual(["allow_once"]);
+  await expect.poll(() => shadowExists(page, ".approval-card")).toBe(true);
+  await expect.poll(() => shadowText(page, ".approval-error")).toBe(
+    "Something went wrong. Please try again.",
+  );
+  await expect.poll(() => shadowExists(page, ".approval-status")).toBe(false);
+  await expect.poll(() => shadowExists(page, ".approval-button:disabled")).toBe(false);
+  await expect.poll(() => shadowExists(page, ".input:disabled")).toBe(true);
+  expect(await shadowText(page, ".approval-card")).not.toContain("private approval failure");
+});
+
+test("a terminal approval failure releases the composer and leaves a safe error", async ({
+  page,
+}) => {
+  const approval = await mockApprovalApi(page, {
+    decisionStatus: 404,
+    decisionDetail: "approval not found",
+  });
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowFill(page, ".input", "send the email");
+  await shadowClick(page, ".send");
+  await expect.poll(() => shadowExists(page, ".approval-card")).toBe(true);
+
+  await shadowClickText(page, ".approval-button", "Approve");
+
+  await expect.poll(() => approval.decisions).toEqual(["allow_once"]);
+  await expect.poll(() => shadowExists(page, ".approval-card")).toBe(false);
+  await expect
+    .poll(() => shadowText(page, ".msg-error"))
+    .toBe("This approval is no longer available. You can continue chatting.");
+  await expect.poll(() => shadowExists(page, ".input:disabled")).toBe(false);
+  await shadowFill(page, ".input", "continue chatting");
+  await expect.poll(() => shadowValue(page, ".input")).toBe("continue chatting");
 });
 
 test("Shift+Enter inserts a newline and Enter sends", async ({ page }) => {
@@ -485,13 +975,14 @@ test("Shift+Enter inserts a newline and Enter sends", async ({ page }) => {
 });
 
 test("backend error renders a user-friendly message", async ({ page }) => {
-  await mockConversationApi(page, { failSend: true });
+  const calls = await mockConversationApi(page, { failSend: true });
   await page.goto("/widget-demo.html");
   await shadowClick(page, ".launcher");
   await shadowFill(page, ".input", "please fail");
   await shadowClick(page, ".send");
 
   await expect.poll(() => shadowText(page, ".messages")).toContain("Something went wrong. Please try again.");
+  expect(calls).not.toContain("POST /conversations/conv-smoke/messages");
 });
 
 test("budget meter shows cumulative token usage against the budget after a turn", async ({ page }) => {
@@ -622,9 +1113,7 @@ test("thinking dots persist when switching away from an in-flight thread and bac
   await expect.poll(() => shadowExists(page, ".thinking")).toBe(false);
 });
 
-test("a turn stays on its own conversation when the user switches threads mid-request", async ({
-  page,
-}) => {
+test("a failed stream is not replayed after switching threads", async ({ page }) => {
   let release!: () => void;
   const pending = new Promise<void>((resolve) => {
     release = resolve;
@@ -645,9 +1134,8 @@ test("a turn stays on its own conversation when the user switches threads mid-re
       body: JSON.stringify({ used_tokens: 0, max_tokens: null, percent: 0, severity: "normal" }),
     });
   });
-  // Hold the stream open until the user has switched away, then fail it: the
-  // widget retries the turn without streaming, and that retry must still go to
-  // the conversation the turn started in.
+  // Hold the stream open until the user has switched away, then fail it. The
+  // mutation must not be replayed because delivery failure is ambiguous.
   await page.route("**/conversations/conv-smoke/messages/stream", async (route: Route) => {
     await pending;
     await route.fulfill({
@@ -673,11 +1161,17 @@ test("a turn stays on its own conversation when the user switches threads mid-re
 
   release();
 
-  await expect.poll(() => calls).toContain("POST /conversations/conv-smoke/messages");
-  expect(calls).not.toContain("POST /conversations/conv-other/messages");
   await expect
     .poll(() => usageCalls[usageCalls.length - 1])
     .toBe("/conversations/conv-smoke/usage");
+  expect(calls).not.toContain("POST /conversations/conv-smoke/messages");
+  expect(calls).not.toContain("POST /conversations/conv-other/messages");
+
+  await shadowClick(page, '.header-btn[aria-label="Conversations"]');
+  await shadowClickText(page, ".thread-item", "Current chat");
+  await expect.poll(() => shadowText(page, ".messages")).toContain(
+    "Something went wrong. Please try again.",
+  );
 });
 
 async function mockConversationApiWithTokenBudgetExceeded(page: Page) {
@@ -798,6 +1292,101 @@ test("stale stored conversation is replaced before sending to the agent", async 
   expect(calls).toContain("GET /conversations/conv-stale/messages");
   expect(calls).toContain("POST /conversations");
   expect(calls).toContain("POST /conversations/conv-fresh/messages/stream");
+});
+
+test("editing after an in-memory restart starts a fresh root instead of reusing a stale message id", async ({
+  page,
+}) => {
+  await pinVisitorPass(page);
+  await page.addInitScript(
+    ([key, value]) => localStorage.setItem(key, value),
+    [CONVERSATION_KEY, "conv-stale-edit"],
+  );
+  let restarted = false;
+  const streamBodies: Array<{ message?: string; edit_message_id?: string }> = [];
+  const usageConversationIds: string[] = [];
+
+  await page.route("**/conversations", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ conversation_id: "conv-fresh-edit", session_id: "conv-fresh-edit" }),
+    });
+  });
+  await page.route("**/conversations/*/messages", async (route: Route) => {
+    const conversationId = new URL(route.request().url()).pathname.split("/")[2];
+    if (conversationId === "conv-stale-edit" && !restarted) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          {
+            message_id: "stale-user-message",
+            run_id: "stale-run",
+            role: "user",
+            content: "original text",
+            status: "completed",
+            created_at: "2026-01-01T00:00:00Z",
+          },
+        ]),
+      });
+      return;
+    }
+    await route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
+  });
+  await page.route("**/conversations/*/messages/stream", async (route: Route) => {
+    const conversationId = new URL(route.request().url()).pathname.split("/")[2];
+    const body = JSON.parse(route.request().postData() || "{}") as {
+      message?: string;
+      edit_message_id?: string;
+    };
+    streamBodies.push(body);
+    if (conversationId === "conv-stale-edit") {
+      await route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
+      return;
+    }
+    if (body.edit_message_id) {
+      await route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: [
+        `event: turn_started\ndata: ${JSON.stringify({ type: "turn_started", run_id: "fresh-run", message_id: "fresh-user-message" })}`,
+        `event: final\ndata: ${JSON.stringify({ type: "final", content: "Recovered edited answer", route: [], used_tools: [] })}`,
+        "event: done\ndata: [DONE]",
+        "",
+      ].join("\n\n"),
+    });
+  });
+  await page.route("**/conversations/*/usage", async (route: Route) => {
+    usageConversationIds.push(new URL(route.request().url()).pathname.split("/")[2] || "");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ used_tokens: 0, max_tokens: null, percent: 0, severity: "normal" }),
+    });
+  });
+
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await expect.poll(() => shadowText(page, ".messages")).toContain("original text");
+  restarted = true;
+
+  await shadowClickUserAction(page, "original text", "Edit message");
+  await shadowFill(page, ".input", "edited after restart");
+  await shadowClick(page, ".send");
+
+  await expect.poll(() => shadowText(page, ".messages")).toContain("Recovered edited answer");
+  expect(streamBodies).toEqual([
+    { message: "edited after restart", edit_message_id: "stale-user-message" },
+    { message: "edited after restart" },
+  ]);
+  await expect.poll(() => usageConversationIds[usageConversationIds.length - 1]).toBe("conv-fresh-edit");
+  await expect
+    .poll(() => page.evaluate((key) => localStorage.getItem(key), CONVERSATION_KEY))
+    .toBe("conv-fresh-edit");
 });
 
 test("script-only auto-mount creates one configured widget", async ({ page }) => {

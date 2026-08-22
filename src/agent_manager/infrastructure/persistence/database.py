@@ -24,11 +24,17 @@ def session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
-def upgrade_database() -> None:
-    """Bring the configured database to the latest schema via Alembic."""
+def upgrade_database() -> bool:
+    """Upgrade explicit persistent storage; do nothing for process memory."""
+    from agent_manager.config import Settings
+
+    if Settings().uses_process_memory:
+        return False
+
     from alembic import command
     from alembic.config import Config
 
     cfg = Config(str(_MIGRATIONS / "alembic.ini"))
     cfg.set_main_option("script_location", str(_MIGRATIONS))
     command.upgrade(cfg, "head")
+    return True

@@ -17,11 +17,13 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.messages.tool import ToolCall
 
+from agent_engine.approvals.approval_provider import ApprovalProvider, ApprovalRequest
 from agent_engine.approvals.coordinator import ApprovalCoordinator
 from agent_engine.approvals.decision import ApprovalDecision
+from agent_engine.approvals.in_memory_session_approval_repository import (
+    InMemorySessionApprovalRepository,
+)
 from agent_engine.approvals.invocation import ToolInvocation
-from agent_engine.approvals.provider import ApprovalRequest
-from agent_engine.approvals.session_store import InMemorySessionApprovalRepository
 from agent_engine.core.spec import AgentSpec
 from agent_engine.engine.langgraph.engine import LangGraphEngine
 from agent_engine.engine.types import ChatMessage, RunResult
@@ -83,6 +85,9 @@ class ContextAwareSearchModel:
         if latest_user == self.follow_up:
             expected = [
                 (SystemMessage, None),
+                # The conversation's prior tool usage, supplied privately to the
+                # model — never as a conversation turn.
+                (SystemMessage, None),
                 (
                     HumanMessage,
                     "Find internal documents about the session approval security policy "
@@ -97,11 +102,12 @@ class ContextAwareSearchModel:
                 (HumanMessage, self.follow_up),
             ]
             for message, (expected_type, expected_content) in zip(
-                messages[:4], expected, strict=True
+                messages[:5], expected, strict=True
             ):
                 assert isinstance(message, expected_type)
                 if expected_content is not None:
                     assert message.content == expected_content
+            assert "Execution record for this conversation" in str(messages[1].content)
             self.saw_follow_up_context = True
             if latest_is_tool_result:
                 self.saw_follow_up_tool_result = True
@@ -200,7 +206,7 @@ async def _complete_conversation_turn(
     return result, prompted
 
 
-class ScriptedApprovalProvider:
+class ScriptedApprovalProvider(ApprovalProvider):
     def __init__(self, decisions: list[ApprovalDecision]) -> None:
         self._decisions = iter(decisions)
         self.requests: list[ApprovalRequest] = []

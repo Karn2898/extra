@@ -157,7 +157,7 @@ Responsibilities:
   loads prior messages in order, passes them through the engine's typed history
   boundary, and exposes
   `/conversations` endpoints and SSE streaming
-  (see `src/agent_manager/application/service.py`).
+  (see `src/agent_manager/application/conversation_service.py`).
 - **Create** a fresh `ExecutionContext` for this request.
 - **Build `ctx`** from request headers and request data.
 - **Resolve identity/context/permissions** via the extension layer (in-process
@@ -166,7 +166,7 @@ Responsibilities:
 - **Security / context gate**: filter `protected` nodes via the access plugin so
   an orchestrator never exposes a child the caller may not reach.
 - **Execute the root node as a supervisor agent**: the orchestrator's children
-  (agents or nested orchestrators) are exposed to it as callable tools; it
+  (agents or nested orchestrators) are exposed to it as child-node delegations; it
   decides which child tool(s) to call, collects their answers, and synthesises a
   final response. The whole tree runs inside the root invocation.
 - **Resolve dynamic prompt values** by calling each node's declared resolvers.
@@ -175,8 +175,12 @@ Responsibilities:
 - **Enforce tool/data policy**: expose only the agent's declared tools; pass
   trusted, runtime-controlled context to tools (see §11).
 - **Call tools / MCP servers** through runtime-managed adapters.
+- **Record** every tool call in the tool-usage repository — the source of truth
+  for execution metadata, keyed by run and conversation, and the seam through
+  which a later agent or turn learns what has already been run.
 - **Return** the response plus a structured trace (`visited` = call-chain;
-  `used_tools` = real tool/MCP calls, merged up from nested agents).
+  `used_tools` = real tool/MCP calls, projected from the usage repository and so
+  including nested agents).
 
 ---
 
@@ -544,15 +548,37 @@ Orchestrators are **supervisor agents** — children are exposed as tools and th
 orchestrator synthesises the answer; the compiled graph is flat
 (`START → root → END`). Both orchestrators and agents run a tool-call loop until
 the model stops.
+
+The LangGraph adapter is organized by runtime responsibility:
+
+```text
+agent_engine/engine/langgraph/
+├── engine.py              # high-level build/run/resume/stream coordination
+├── graph/                 # graph traversal plus node assembly/compilation
+├── nodes/                 # agent, orchestrator, and child node objects
+├── execution/             # model loop, run lifecycle, and stream mechanics
+├── tools/                 # binding, gating, invoking, and reporting tools
+├── prompting.py           # request-time prompt loading/rendering
+├── checkpointing.py       # standalone checkpointer selection
+├── approval_provider.py   # standalone LangGraph approval integration
+└── filters.py             # standalone route/access filtering
+```
+
+`GraphBuilder` is startup-only: it receives validated typed nodes and
+long-lived collaborators, wires explicit `node.execute` methods into a
+`StateGraph`, and returns the compiled graph. `LangGraphEngine` owns the
+long-lived services and per-run coordination but does not assemble node trees.
+
 Per-run **execution-limit** guardrails (`ExecutionPolicy` in
-`agent_engine/core/execution.py`, enforced by `agent_engine/runtime/execution.py`)
+`agent_engine/core/execution.py`, enforced by
+`agent_engine/runtime/execution_limiter.py`)
 cap iterations, tool calls, and child-agent calls — see
 [`EXECUTION_LIMITS.md`](EXECUTION_LIMITS.md).
 
 **Prompt rendering (0005 — 🔶 partial):**
-Prompt files are loaded from disk and `{{ variable }}` placeholders are
-substituted with resolver values per request. No dedicated `prompts/` module,
-parsed-template cache, or strict missing-variable errors yet.
+`agent_engine/engine/langgraph/prompting.py` loads prompt files and substitutes
+`{{ variable }}` placeholders with resolver values per request. A parsed-template
+cache, strict missing-variable errors, and a formal renderer interface remain.
 
 **Resolver plugins & access (0006 — 🔶 partial, resolver side done):**
 Full resolver plugin system: TOML-configured `SharedResolver` + per-agent
@@ -581,6 +607,18 @@ model) — for auth, policy, audit, and context enrichment, distinct from
 LLM-invoked tools. Per-tool `input_policy` (trusted parameter injection) is
 still not implemented — see §11.
 
+**Shared tool usage (✅ done, not in the original task list):**
+`agent_engine/tool_usage/` owns execution metadata: a `ToolUsageRepository` port
+(process-local adapter shipped, distributed adapters injected at the composition
+root), a `ToolUsageTracker` that records outcomes on the single tool-execution
+path, and a `ToolUsageContextProvider` that projects a conversation's usage into a private
+system-role block for the model, refreshed before every model turn, plus a
+read-only `list_executed_tools` tool so an orchestrator can answer questions about
+past execution from data rather than from its own tool bindings. `GraphState` carries no tool usage: the
+repository is the source of truth, and both the model context and
+`RunResult.used_tools` are projections of it. See
+[`MCP_AND_TOOLS.md`](MCP_AND_TOOLS.md).
+
 **Model providers (✅ done, not in the original task list):**
 `agent_engine/models/factory.py` builds chat models via `init_chat_model` for
 both **Anthropic** and **Amazon Bedrock** (`ChatBedrockConverse`), with clear
@@ -600,9 +638,13 @@ the engine (`GET /health`, `POST /invoke`, `POST /stream`), started by
 (`POST /conversations`, `GET/POST .../messages`, `POST .../messages/stream` as
 SSE) backed by `agent_manager`'s persistence layer (see next), started by the
 separate **`agent-manager`** console script (default port `8100`) — this is
-also what serves the embeddable chat widget. `agentctl chat` talks to neither
-server by default; in `--url` mode it talks to `agentctl serve`'s stateless
-`/invoke`/`/stream` API and does not persist anything.
+also what serves the embeddable chat widget. Its `api/routes/` package groups
+authentication, conversation/message, and conversation-scoped approval
+endpoints behind a small router aggregator; shared dependency injection,
+error translation, and response projection remain explicit API-layer modules.
+`agentctl chat` talks to neither server by default; in `--url` mode it talks to
+`agentctl serve`'s stateless `/invoke`/`/stream` API and does not persist
+anything.
 
 **Conversation persistence (✅ done, not in the original task list):**
 `agent_manager` is a DDD-style service (`domain/`, `application/`,

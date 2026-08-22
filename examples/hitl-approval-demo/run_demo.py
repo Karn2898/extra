@@ -16,8 +16,10 @@ from langchain_core.messages.tool import ToolCall
 
 from agent_engine.approvals.decision import ApprovalDecision
 from agent_engine.approvals.identity import tool_identity
+from agent_engine.approvals.in_memory_session_approval_repository import (
+    InMemorySessionApprovalRepository,
+)
 from agent_engine.approvals.invocation import SessionApprovalKey
-from agent_engine.approvals.session_store import InMemorySessionApprovalRepository
 from agent_engine.core.validator import SystemSpecValidator
 from agent_engine.engine.langgraph.engine import LangGraphEngine
 from agent_engine.models.factory import build_chat_model
@@ -166,6 +168,7 @@ class DemoRunner:
                 pending.approval_id,
                 decision,
                 caller_user_id=USER_ID,
+                caller_session_id=session_id,
             )
         else:
             print(f"model_tool_request_observed: {bool(result.used_tools)}")

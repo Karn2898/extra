@@ -16,8 +16,9 @@ from agent_engine.runtime.hooks.errors import (
     HookLoadError,
     HookValidationError,
 )
+from agent_engine.runtime.hooks.loaded_hook import LoadedHook
 from agent_engine.runtime.hooks.loader import HookLoader
-from agent_engine.runtime.hooks.manager import HookManager, LoadedHook
+from agent_engine.runtime.hooks.manager import HookManager
 from agent_engine.runtime.hooks.mcp import HookedMCPAuth
 from agent_engine.runtime.hooks.models import (
     HOOK_POINTS,

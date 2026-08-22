@@ -21,7 +21,7 @@ class ManualClock:
     def __init__(self) -> None:
         self.now = 0.0
 
-    def __call__(self) -> float:
+    def read(self) -> float:
         return self.now
 
     def advance(self, seconds: float) -> None:
@@ -55,6 +55,38 @@ async def test_run_repository_registers_new_run(run_repository: RunRepository) -
 
     assert created is True
     assert await run_repository.get("r1") == record
+
+
+async def test_run_repository_resolves_many_ids_at_once(run_repository: RunRepository) -> None:
+    await run_repository.create_if_absent(_run("r1"))
+    await run_repository.create_if_absent(_run("r2", status=RunStatus.COMPLETED))
+
+    found = await run_repository.get_many(["r1", "r2", "unknown"])
+
+    assert set(found) == {"r1", "r2"}
+    assert found["r2"].status is RunStatus.COMPLETED
+    assert await run_repository.get_many([]) == {}
+
+
+async def test_run_repository_accumulates_reported_token_usage(
+    run_repository: RunRepository,
+) -> None:
+    record = _run("r1")
+    await run_repository.create_if_absent(record)
+
+    first = await run_repository.add_token_usage("r1", input_tokens=10, output_tokens=None)
+    second = await run_repository.add_token_usage("r1", input_tokens=5, output_tokens=3)
+
+    assert first is record
+    assert second is record
+    assert record.input_tokens == 15
+    assert record.output_tokens == 3
+
+
+async def test_run_repository_token_usage_does_not_create_an_unknown_run(
+    run_repository: RunRepository,
+) -> None:
+    assert await run_repository.add_token_usage("missing", input_tokens=1, output_tokens=1) is None
 
 
 async def test_run_repository_does_not_overwrite_existing_run(
@@ -161,7 +193,7 @@ async def test_transition_if_allowed_leaves_missing_or_terminal_runs_unchanged()
 )
 async def test_terminal_runs_expire_after_configured_ttl(terminal_status: RunStatus) -> None:
     clock = ManualClock()
-    repository = InMemoryRunRepository(terminal_ttl_seconds=60, clock=clock)
+    repository = InMemoryRunRepository(terminal_ttl_seconds=60, clock=clock.read)
     record = _run("finished")
     await repository.create_if_absent(record)
     assert await repository.transition_if_allowed("finished", terminal_status) is True
@@ -179,7 +211,7 @@ async def test_terminal_runs_expire_after_configured_ttl(terminal_status: RunSta
 )
 async def test_active_runs_do_not_expire(active_status: RunStatus) -> None:
     clock = ManualClock()
-    repository = InMemoryRunRepository(terminal_ttl_seconds=1, clock=clock)
+    repository = InMemoryRunRepository(terminal_ttl_seconds=1, clock=clock.read)
     record = RunRecord(
         run_id="active",
         thread_id="active",
@@ -195,7 +227,7 @@ async def test_active_runs_do_not_expire(active_status: RunStatus) -> None:
 
 async def test_expired_run_id_can_be_registered_again() -> None:
     clock = ManualClock()
-    repository = InMemoryRunRepository(terminal_ttl_seconds=1, clock=clock)
+    repository = InMemoryRunRepository(terminal_ttl_seconds=1, clock=clock.read)
     original = _run("reused", system_name="original")
     await repository.create_if_absent(original)
     await repository.transition_if_allowed("reused", RunStatus.COMPLETED)
@@ -210,7 +242,7 @@ async def test_expired_run_id_can_be_registered_again() -> None:
 
 async def test_existing_run_registration_preserves_original_expiration() -> None:
     clock = ManualClock()
-    repository = InMemoryRunRepository(terminal_ttl_seconds=10, clock=clock)
+    repository = InMemoryRunRepository(terminal_ttl_seconds=10, clock=clock.read)
     original = _run("finished", system_name="original")
     await repository.create_if_absent(original)
     await repository.transition_if_allowed("finished", RunStatus.COMPLETED)
@@ -233,7 +265,7 @@ async def test_existing_run_registration_preserves_original_expiration() -> None
 
 async def test_create_if_absent_does_not_evict_expired_records() -> None:
     clock = ManualClock()
-    repository = InMemoryRunRepository(terminal_ttl_seconds=1, clock=clock)
+    repository = InMemoryRunRepository(terminal_ttl_seconds=1, clock=clock.read)
     expired = _run("expired")
     await repository.create_if_absent(expired)
     await repository.transition_if_allowed("expired", RunStatus.COMPLETED)
@@ -248,7 +280,7 @@ async def test_create_if_absent_does_not_evict_expired_records() -> None:
 
 async def test_stale_expiration_cannot_delete_newer_record() -> None:
     clock = ManualClock()
-    repository = InMemoryRunRepository(terminal_ttl_seconds=1, clock=clock)
+    repository = InMemoryRunRepository(terminal_ttl_seconds=1, clock=clock.read)
     original = _run("reused", status=RunStatus.COMPLETED)
     await repository.create_if_absent(original)
     clock.advance(1)
@@ -263,7 +295,7 @@ async def test_stale_expiration_cannot_delete_newer_record() -> None:
 
 async def test_expiration_cleanup_work_is_bounded_per_transition() -> None:
     clock = ManualClock()
-    repository = InMemoryRunRepository(terminal_ttl_seconds=1, clock=clock)
+    repository = InMemoryRunRepository(terminal_ttl_seconds=1, clock=clock.read)
     expired_count = 100
     for index in range(expired_count):
         await repository.create_if_absent(_run(f"expired-{index}", status=RunStatus.COMPLETED))

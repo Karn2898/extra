@@ -9,7 +9,11 @@ import pytest
 from agent_engine.core.execution import ExecutionPolicy
 from agent_engine.parsers.errors import ParseError
 from agent_engine.parsers.yaml.parser import YAMLParser
-from agent_engine.runtime.execution import ExecutionLimiter, ExecutionLimitExceeded
+from agent_engine.runtime.execution_limiter import (
+    ExecutionLimiter,
+    ExecutionLimitExceeded,
+    current_invocation,
+)
 
 _BASE = "system: {name: t}\nagents: {a: {description: d}}\ngraph: {a: }\n"
 
@@ -111,6 +115,26 @@ def test_duplicate_tool_call_blocked_and_not_counted() -> None:
         lim.register_tool_call("a", "t", {"x": 1})  # identical
     assert e.value.limit_name == "duplicate_tool_call"
     assert lim.state.total_tool_calls == 1  # blocked call was not counted
+
+
+def test_duplicate_tool_call_is_scoped_to_one_node_invocation() -> None:
+    lim = ExecutionLimiter(ExecutionPolicy(allow_duplicate_tool_calls=False, max_tool_calls=99))
+    first = current_invocation.set("activation-1")
+    try:
+        lim.register_tool_call("a", "t", {"x": 1})
+        with pytest.raises(ExecutionLimitExceeded) as error:
+            lim.register_tool_call("a", "t", {"x": 1})
+        assert error.value.limit_name == "duplicate_tool_call"
+    finally:
+        current_invocation.reset(first)
+
+    second = current_invocation.set("activation-2")
+    try:
+        lim.register_tool_call("a", "t", {"x": 1})
+    finally:
+        current_invocation.reset(second)
+
+    assert lim.state.total_tool_calls == 2
 
 
 def test_duplicates_allowed_when_policy_permits() -> None:

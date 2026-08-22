@@ -9,23 +9,32 @@ current session.
 Responsibilities are split into small, single-purpose pieces:
 
 * :mod:`decision` — the typed :class:`ApprovalDecision` and the one parsing boundary.
-* :mod:`policy` — the pure "does this need approval?" rule (the future extension
+* :mod:`approval_policy` — the pure "does this need approval?" rule (the future extension
   point for a risk-classification policy).
 * :mod:`invocation` — value objects describing a concrete pending tool call.
 * :mod:`identity` — a stable, collision-safe tool identity.
-* :mod:`session_store` — where "allow for this session" permissions live.
-* :mod:`provider` — the frontend-agnostic approval-provider protocol.
+* :mod:`session_approval_repository` — where session permissions live.
+* :mod:`approval_provider` — the frontend-agnostic approval-provider abstraction.
 * :mod:`coordinator` — wires policy + session store + provider together.
 * :mod:`sanitization` — masks sensitive arguments before display/persistence.
 
-The :mod:`manager`/:mod:`models`/:mod:`repository` modules carry the run/approval
-resume lifecycle and execution idempotency; they hold no classification logic.
+The manager, model, and repository modules carry the run/approval resume
+lifecycle and execution idempotency; they hold no classification logic.
 """
 
 from __future__ import annotations
 
+from agent_engine.approvals.approval_manager import ApprovalManager
+from agent_engine.approvals.approval_policy import ApprovalPolicy, ApprovalQuery
+from agent_engine.approvals.approval_provider import (
+    ApprovalOutcome,
+    ApprovalProvider,
+    ApprovalRequest,
+)
+from agent_engine.approvals.approval_repository import ApprovalRepository
 from agent_engine.approvals.coordinator import ApprovalCoordinator
 from agent_engine.approvals.decision import ApprovalDecision, parse_decision
+from agent_engine.approvals.default_approval_policy import DefaultApprovalPolicy
 from agent_engine.approvals.errors import (
     ApprovalAlreadyProcessed,
     ApprovalError,
@@ -39,16 +48,19 @@ from agent_engine.approvals.errors import (
     UnauthorizedApprover,
 )
 from agent_engine.approvals.identity import tool_identity
+from agent_engine.approvals.in_memory_approval_repository import InMemoryApprovalRepository
+from agent_engine.approvals.in_memory_session_approval_repository import (
+    InMemorySessionApprovalRepository,
+    InMemorySessionApprovalStore,
+)
+from agent_engine.approvals.in_memory_tool_execution_repository import (
+    InMemoryToolExecutionRepository,
+)
 from agent_engine.approvals.invocation import (
     SessionApprovalGrant,
     SessionApprovalKey,
     SessionApprovalScope,
     ToolInvocation,
-)
-from agent_engine.approvals.manager import (
-    ApprovalManager,
-    ToolExecutionManager,
-    execution_id_for,
 )
 from agent_engine.approvals.models import (
     ApprovalRecord,
@@ -57,29 +69,14 @@ from agent_engine.approvals.models import (
     RunStatus,
     ToolExecutionRecord,
 )
-from agent_engine.approvals.policy import (
-    ApprovalPolicy,
-    ApprovalQuery,
-    DefaultApprovalPolicy,
-)
-from agent_engine.approvals.provider import (
-    ApprovalOutcome,
-    ApprovalProvider,
-    ApprovalRequest,
-)
-from agent_engine.approvals.repository import (
-    ApprovalRepository,
-    InMemoryApprovalRepository,
-    InMemoryToolExecutionRepository,
-    ToolExecutionRepository,
-)
 from agent_engine.approvals.sanitization import mask_arguments, mask_sensitive
-from agent_engine.approvals.session_store import (
-    InMemorySessionApprovalRepository,
-    InMemorySessionApprovalStore,
-    SessionApprovalRepository,
-    SessionApprovalStore,
+from agent_engine.approvals.session_approval_repository import SessionApprovalRepository
+from agent_engine.approvals.session_approval_store import SessionApprovalStore
+from agent_engine.approvals.tool_execution_manager import (
+    ToolExecutionManager,
+    execution_id_for,
 )
+from agent_engine.approvals.tool_execution_repository import ToolExecutionRepository
 
 __all__ = [
     "ApprovalAlreadyProcessed",

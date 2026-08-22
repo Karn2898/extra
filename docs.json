@@ -57,6 +57,7 @@
       {
         "group": "Reference",
         "pages": [
+          "docs/development",
           "docs/cli",
           "docs/api",
           "docs/roadmap"

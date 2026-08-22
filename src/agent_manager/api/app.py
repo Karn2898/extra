@@ -46,6 +46,8 @@ def create_app(config_path: str, settings: Settings | None = None) -> FastAPI:
             LangGraphEngine(
                 base_dir,
                 session_approval_repository=repositories.session_approvals,
+                tool_usage_repository=repositories.tool_usage,
+                run_repository=repositories.runs,
             ) as engine,
         ):
             await engine.build(spec)
@@ -58,6 +60,7 @@ def create_app(config_path: str, settings: Settings | None = None) -> FastAPI:
                 snapshot_ttl_seconds=settings.snapshot_ttl_seconds,
                 system_name=spec.meta.name,
                 config_path=str(Path(config_path).resolve()),
+                run_repository=repositories.runs,
             )
             yield
 

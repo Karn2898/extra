@@ -16,12 +16,14 @@ from langchain_core.language_models import BaseChatModel
 
 from agent_engine.approvals.decision import ApprovalDecision
 from agent_engine.approvals.identity import tool_identity
+from agent_engine.approvals.in_memory_session_approval_repository import (
+    InMemorySessionApprovalRepository,
+)
 from agent_engine.approvals.invocation import (
     SessionApprovalGrant,
     SessionApprovalKey,
     SessionApprovalScope,
 )
-from agent_engine.approvals.session_store import InMemorySessionApprovalRepository
 from agent_engine.core.spec import AgentSpec, GraphNode, SystemSpec
 from agent_engine.core.validator import SystemSpecValidator
 from agent_engine.engine.langgraph.engine import LangGraphEngine
@@ -234,6 +236,7 @@ class ApprovalDemo:
                 pending.approval_id,
                 decision,
                 caller_user_id=CALLER.user_id,
+                caller_session_id=self.session_id,
             )
 
         await self._complete_turn(turn, result)

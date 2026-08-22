@@ -69,13 +69,25 @@ engine never stores that history on `RuntimeEngine`.
 `agent_manager` owns conversation history through its repository. Before a
 turn, `ConversationService` loads prior messages for the session and appends the
 new user message. It passes the prior turns through the engine's structured
-history argument, then appends any emitted final assistant response when stream
-consumption ends, including after a later cleanup failure or client disconnect.
+history argument. For streaming runs, it persists a final assistant response
+before exposing that terminal event to the HTTP consumer. Disconnecting before
+a terminal event instead closes the engine stream, cancels the graph producer,
+and retains only the user message plus authoritative cancelled-run metadata.
 During a model tool loop, the tool-call message and matching tool result remain
 structured and ordered for the provider. A run paused for tool
 approval stores its continuation in the LangGraph checkpoint keyed by `run_id`;
 session-wide approval grants live in a separate approval repository keyed by
-session and tool identity.
+session and tool identity. Normal stream completion does not cancel a suspended
+approval. An explicit owner cancellation atomically rejects the pending
+approval, transitions the run to terminal `CANCELLED`, and prevents later
+resume.
+
+After a decision claims an approval, the same run transitions
+`PENDING_APPROVAL → RESUMING → RUNNING`. Streamed resume and initial execution
+both use the engine's owned graph-task channel. Closing either consumer cancels
+and awaits that task, records available partial token usage, and atomically
+transitions the run to `CANCELLED`; only an observed finalized event is
+persisted as a successful assistant response.
 
 Starting a new session therefore selects both an empty conversation history and
 an empty approval scope without putting either kind of request state on the
@@ -111,6 +123,14 @@ async with LangGraphEngine(base_dir) as engine:
 `agentctl run --stream` uses this flow and writes `answer_delta` content to
 stdout as chunks arrive. It does not print the completed answer again after the
 final event.
+
+The engine holds a terminal event until its consumer accepts it and lifecycle
+finalization succeeds. This prevents a completed producer with a queued final
+answer from racing a disconnect into conversation history that has neither an
+assistant response nor a cancelled run. On cancellation, token usage already
+reported by the provider is persisted before the run transitions to
+`CANCELLED`; usage that a provider reports only at normal completion is not
+available after an early abort.
 
 ---
 

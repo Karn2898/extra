@@ -16,10 +16,12 @@ import { getStoredConversationId } from "../storage/conversationStorage";
 import type {
   AgentChatAnswerDetail,
   AgentChatConfig,
+  ApprovalDecision,
   ChatMessage,
-  TokenBudget,
   MessageEntry,
+  PendingApproval,
   ThreadSummary,
+  TokenBudget,
   ToolRecord,
 } from "../types";
 import {
@@ -45,13 +47,38 @@ const DEFAULT_GREETING = "How can I help you today?";
 const GENERIC_ERROR = "Something went wrong. Please try again.";
 const COPIED_RESET_MS = 2000;
 
+const isTerminalApprovalError = (error: unknown): error is AgentChatHttpError =>
+  error instanceof AgentChatHttpError &&
+  error.status >= 400 &&
+  error.status < 500 &&
+  ![408, 425, 429].includes(error.status);
+
+const terminalApprovalMessage = (status: number): string => {
+  if (status === 403) return "You are not authorized to decide this approval.";
+  if (status === 409) return "This approval was already processed. You can continue chatting.";
+  return "This approval is no longer available. You can continue chatting.";
+};
+
 const newId = randomId;
 
-const toEntry = (message: ChatMessage): MessageEntry => ({
-  id: newId(),
-  role: message.role === "user" ? "user" : "ai",
-  text: message.content,
-});
+const toEntries = (message: ChatMessage): MessageEntry[] => {
+  const entry: MessageEntry = {
+    id: newId(),
+    messageId: message.message_id,
+    runId: message.run_id ?? undefined,
+    role: message.role === "user" ? "user" : "ai",
+    text: message.content,
+  };
+  return message.role === "user" && message.status === "cancelled"
+    ? [entry, { id: newId(), role: "ai", text: "", status: "cancelled" }]
+    : [entry];
+};
+
+interface ActiveExecution {
+  controller: AbortController;
+  runId?: string;
+  source: "prompt" | "approval";
+}
 
 export interface AgentChatAppProps {
   client: AgentChatClient;
@@ -71,13 +98,20 @@ export function AgentChatApp({
   const inline = config.mode === "inline";
   const [open, setOpen] = useState(inline);
   const [loaded, setLoaded] = useState(false);
-  const [sending, setSending] = useState(false);
+  const [activeExecution, setActiveExecution] = useState<ActiveExecution | null>(null);
   const [budgetExceeded, setBudgetExceeded] = useState(false);
   const [entriesById, setEntriesById] = useState<Record<string, MessageEntry[]>>({});
   const [usageById, setUsageById] = useState<Record<string, TokenBudget | null>>({});
   const [activeId, setActiveId] = useState("");
+  const [editing, setEditing] = useState<{ messageId: string; previousDraft: string } | null>(null);
   const entries = entriesById[activeId] ?? [];
   const usage = usageById[activeId] ?? null;
+  const isExecutionActive = activeExecution !== null;
+  const awaitingApproval = entries.some((entry) => entry.approval !== undefined);
+  const approvalBlocksComposer = awaitingApproval && editing === null && !isExecutionActive;
+  const canEdit = true;
+  const canSubmit = !isExecutionActive && !budgetExceeded && !approvalBlocksComposer;
+  const canStop = isExecutionActive;
 
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -86,15 +120,48 @@ export function AgentChatApp({
   const [threadsOpen, setThreadsOpen] = useState(false);
   const launcherRef = useRef<HTMLButtonElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const approvalRequestsRef = useRef(new Set<string>());
+  const approvalCancellationRequestsRef = useRef(new Set<string>());
+  const activeExecutionRef = useRef<ActiveExecution | null>(null);
+  const replacementIdsRef = useRef(new Map<string, string>());
+
+  const resolveConversationId = useCallback((conversationId: string) => {
+    let resolved = conversationId;
+    while (replacementIdsRef.current.has(resolved)) {
+      resolved = replacementIdsRef.current.get(resolved) as string;
+    }
+    return resolved;
+  }, []);
 
   // A vanished conversation is replaced mid-turn; carry its messages onto the
   // id the turn actually ran under so the view does not go blank.
   const onReplaced = useCallback((staleId: string, freshId: string) => {
+    replacementIdsRef.current.set(staleId, freshId);
     setEntriesById(({ [staleId]: moved = [], ...rest }) => ({ ...rest, [freshId]: moved }));
     setActiveId((current) => (current === staleId ? freshId : current));
   }, []);
 
   const conversation = useConversation(client, config.endpoint, onReplaced);
+
+  useEffect(
+    () => () => {
+      activeExecutionRef.current?.controller.abort();
+    },
+    [],
+  );
+
+  const beginExecution = useCallback((execution: ActiveExecution): boolean => {
+    if (activeExecutionRef.current !== null) return false;
+    activeExecutionRef.current = execution;
+    setActiveExecution(execution);
+    return true;
+  }, []);
+
+  const finishExecution = useCallback((controller: AbortController) => {
+    if (activeExecutionRef.current?.controller !== controller) return;
+    activeExecutionRef.current = null;
+    setActiveExecution(null);
+  }, []);
 
   const refreshUsage = useCallback(
     async (cid: string) => {
@@ -113,7 +180,7 @@ export function AgentChatApp({
   const loadThread = useCallback(
     async (cid: string) => {
       const history = await conversation.loadHistory(cid);
-      putEntries(cid, () => history.map(toEntry));
+      putEntries(cid, () => history.flatMap(toEntries));
     },
     [conversation, putEntries],
   );
@@ -133,8 +200,8 @@ export function AgentChatApp({
   }, [inline, loadHistory]);
 
   useEffect(() => {
-    if (open) inputRef.current?.focus({ preventScroll: true });
-  }, [open, loaded, sending]);
+    if (open && !approvalBlocksComposer) inputRef.current?.focus({ preventScroll: true });
+  }, [open, loaded, isExecutionActive, approvalBlocksComposer]);
 
   const openChat = useCallback(async () => {
     if (inline) return;
@@ -193,67 +260,305 @@ export function AgentChatApp({
   }, [conversation]);
 
   const replaceEntry = useCallback(
-    (cid: string, id: string, entry: MessageEntry) =>
-      putEntries(cid, (prev) => prev.map((current) => (current.id === id ? entry : current))),
-    [putEntries],
-  );
-
-
-  const sendWithoutStreaming = useCallback(
-    async (cid: string, text: string, entryId: string) => {
-      try {
-        const answer = await conversation.send(cid, text);
-        replaceEntry(cid, entryId, {
-          id: entryId,
-          role: "ai",
-          text: answer.answer,
-          route: answer.visited,
-          tools: answer.used_tools,
-        });
-        onAnswer({ visited: answer.visited ?? [], used_tools: answer.used_tools ?? [] });
-      } catch (error) {
-        const is4xx = error instanceof AgentChatHttpError && error.status >= 400 && error.status < 500;
-        if (error instanceof AgentChatHttpError && error.errorType === "context_limit_exceeded") {
-          setBudgetExceeded(true);
-        }
-        const errorMessage = is4xx ? error.message : GENERIC_ERROR;
-        replaceEntry(cid, entryId, { id: entryId, role: "ai", text: errorMessage, error: true });
-      }
+    (cid: string, id: string, entry: MessageEntry) => {
+      const resolvedId = resolveConversationId(cid);
+      putEntries(resolvedId, (prev) =>
+        prev.map((current) => (current.id === id ? entry : current)),
+      );
     },
-    [conversation, onAnswer, replaceEntry],
+    [putEntries, resolveConversationId],
   );
 
-  const submit = useCallback(
-    async (text: string) => {
-      const cid = await conversation.ensureId();
-      setActiveId(cid);
-      const pending: MessageEntry = { id: newId(), role: "ai", text: "", typing: true };
-      putEntries(cid, (prev) => [...prev, { id: newId(), role: "user", text }, pending]);
-      setSending(true);
+  const stop = useCallback(() => {
+    activeExecution?.controller.abort();
+  }, [activeExecution]);
+
+  const editMessage = useCallback((entry: MessageEntry) => {
+    if (!entry.messageId || !inputRef.current) return;
+    setEditing({ messageId: entry.messageId, previousDraft: inputRef.current.value });
+    inputRef.current.value = entry.text;
+    inputRef.current.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    inputRef.current.focus({ preventScroll: true });
+  }, []);
+
+  const cancelEditing = useCallback(() => {
+    if (inputRef.current && editing) {
+      inputRef.current.value = editing.previousDraft;
+      inputRef.current.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      inputRef.current.focus({ preventScroll: true });
+    }
+    setEditing(null);
+  }, [editing]);
+  const decideApproval = useCallback(
+    async (
+      cid: string,
+      initialEntry: MessageEntry,
+      approval: PendingApproval,
+      decision: ApprovalDecision,
+    ) => {
+      if (
+        approvalRequestsRef.current.has(approval.approval_id) ||
+        activeExecutionRef.current !== null
+      ) {
+        return;
+      }
+      const controller = new AbortController();
+      if (
+        !beginExecution({
+          controller,
+          runId: approval.run_id,
+          source: "approval",
+        })
+      ) {
+        return;
+      }
+      approvalRequestsRef.current.add(approval.approval_id);
+      putEntries(cid, (prev) =>
+        prev.map((entry) =>
+          entry.id === initialEntry.id
+            ? { ...entry, approvalSubmitting: true, approvalError: undefined }
+            : entry,
+        ),
+      );
+      let entry = initialEntry;
+      let completed = false;
+      let resumeStarted = false;
       try {
-        let entry = pending;
-        for await (const event of conversation.stream(cid, text)) {
+        for await (const event of conversation.streamApproval(
+          cid,
+          approval.run_id,
+          approval.approval_id,
+          decision,
+          controller.signal,
+        )) {
+          if (controller.signal.aborted && event.type !== "final") break;
+          resumeStarted ||= event.type === "resume_started";
+          completed ||= event.type === "final";
           entry = reduceStreamEvent(entry, event);
-          replaceEntry(cid, pending.id, entry);
+          replaceEntry(cid, initialEntry.id, entry);
         }
-        replaceEntry(cid, pending.id, { ...entry, typing: false });
-        onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
+        if (controller.signal.aborted && !completed) {
+          if (!resumeStarted) {
+            await conversation
+              .cancelApproval(cid, approval.run_id, approval.approval_id)
+              .catch(() => {});
+          }
+          replaceEntry(cid, initialEntry.id, {
+            id: initialEntry.id,
+            role: "ai",
+            text: "",
+            status: "cancelled",
+          });
+          return;
+        }
+        replaceEntry(cid, initialEntry.id, { ...entry, typing: false });
+        if (completed && !entry.approval) {
+          onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
+        }
       } catch (error) {
-        const is4xx = error instanceof AgentChatHttpError && error.status >= 400 && error.status < 500;
-        if (error instanceof AgentChatHttpError && error.errorType === "context_limit_exceeded") {
-          setBudgetExceeded(true);
+        if (controller.signal.aborted && !completed) {
+          if (!resumeStarted) {
+            await conversation
+              .cancelApproval(cid, approval.run_id, approval.approval_id)
+              .catch(() => {});
+          }
+          replaceEntry(cid, initialEntry.id, {
+            id: initialEntry.id,
+            role: "ai",
+            text: "",
+            status: "cancelled",
+          });
+          return;
         }
-        if (is4xx) {
-          replaceEntry(cid, pending.id, { id: pending.id, role: "ai", text: error.message, error: true });
-        } else {
-          await sendWithoutStreaming(cid, text, pending.id);
+        if (completed) {
+          replaceEntry(cid, initialEntry.id, { ...entry, typing: false });
+          onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
+          return;
         }
+        if (resumeStarted) {
+          replaceEntry(cid, initialEntry.id, {
+            id: initialEntry.id,
+            role: "ai",
+            text: GENERIC_ERROR,
+            error: true,
+          });
+          return;
+        }
+        const terminal = isTerminalApprovalError(error);
+        putEntries(cid, (prev) =>
+          prev.map((entry) =>
+            entry.id === initialEntry.id &&
+            entry.approval?.approval_id === approval.approval_id &&
+            !entry.approvalCancelling
+              ? {
+                  ...entry,
+                  ...(terminal
+                    ? {
+                        text: terminalApprovalMessage(error.status),
+                        error: true,
+                        approval: undefined,
+                      }
+                    : {}),
+                  approvalSubmitting: false,
+                  approvalError: terminal ? undefined : GENERIC_ERROR,
+                }
+              : entry,
+          ),
+        );
       } finally {
-        setSending(false);
+        approvalRequestsRef.current.delete(approval.approval_id);
+        finishExecution(controller);
         void refreshUsage(cid);
       }
     },
-    [conversation, onAnswer, putEntries, refreshUsage, replaceEntry, sendWithoutStreaming],
+    [
+      beginExecution,
+      conversation,
+      finishExecution,
+      onAnswer,
+      putEntries,
+      refreshUsage,
+      replaceEntry,
+    ],
+  );
+
+  const cancelApproval = useCallback(
+    async (cid: string, entryId: string, approval: PendingApproval) => {
+      if (approvalCancellationRequestsRef.current.has(approval.approval_id)) return;
+      approvalCancellationRequestsRef.current.add(approval.approval_id);
+      putEntries(cid, (prev) =>
+        prev.map((entry) =>
+          entry.id === entryId
+            ? { ...entry, approvalCancelling: true, approvalError: undefined }
+            : entry,
+        ),
+      );
+      try {
+        await conversation.cancelApproval(cid, approval.run_id, approval.approval_id);
+        putEntries(cid, (prev) =>
+          prev.map((entry) =>
+            entry.id === entryId
+              ? { id: entry.id, role: "ai", text: "", status: "cancelled" }
+              : entry,
+          ),
+        );
+      } catch (error) {
+        const terminal = isTerminalApprovalError(error);
+        putEntries(cid, (prev) =>
+          prev.map((entry) =>
+            entry.id === entryId && entry.approval?.approval_id === approval.approval_id
+              ? {
+                  ...entry,
+                  ...(terminal
+                    ? {
+                        text: terminalApprovalMessage(error.status),
+                        error: true,
+                        approval: undefined,
+                      }
+                    : {}),
+                  approvalCancelling: false,
+                  approvalError: terminal ? undefined : GENERIC_ERROR,
+                }
+              : entry,
+          ),
+        );
+      } finally {
+        approvalCancellationRequestsRef.current.delete(approval.approval_id);
+        void refreshUsage(cid);
+      }
+    },
+    [conversation, putEntries, refreshUsage],
+  );
+
+  const submit = useCallback(
+    async (text: string, editMessageId?: string) => {
+      if (activeExecutionRef.current !== null) return;
+      const cid = await conversation.ensureId();
+      setActiveId(cid);
+      let userEntry: MessageEntry = { id: newId(), role: "user", text };
+      const pending: MessageEntry = { id: newId(), role: "ai", text: "", typing: true };
+      const controller = new AbortController();
+      if (!beginExecution({ controller, source: "prompt" })) return;
+      putEntries(cid, (prev) => {
+        if (!editMessageId) return [...prev, userEntry, pending];
+        const branchPoint = prev.findIndex((entry) => entry.messageId === editMessageId);
+        return [...(branchPoint < 0 ? prev : prev.slice(0, branchPoint)), userEntry, pending];
+      });
+      setEditing(null);
+      let entry = pending;
+      let completed = false;
+      try {
+        for await (const event of conversation.stream(
+          cid,
+          text,
+          controller.signal,
+          editMessageId,
+        )) {
+          if (controller.signal.aborted && event.type !== "final") break;
+          if (event.type === "turn_started") {
+            userEntry = {
+              ...userEntry,
+              messageId: event.message_id,
+              runId: event.run_id,
+            };
+            replaceEntry(cid, userEntry.id, userEntry);
+            continue;
+          }
+          completed ||= event.type === "final";
+          entry = reduceStreamEvent(entry, event);
+          replaceEntry(cid, pending.id, entry);
+        }
+        if (controller.signal.aborted && !completed) {
+          replaceEntry(cid, pending.id, {
+            id: pending.id,
+            role: "ai",
+            text: "",
+            status: "cancelled",
+          });
+          return;
+        }
+        replaceEntry(cid, pending.id, { ...entry, typing: false });
+        if (!entry.approval) {
+          onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
+        }
+      } catch (error) {
+        if (controller.signal.aborted && !completed) {
+          replaceEntry(cid, pending.id, {
+            id: pending.id,
+            role: "ai",
+            text: "",
+            status: "cancelled",
+          });
+          return;
+        }
+        const is4xx = error instanceof AgentChatHttpError && error.status >= 400 && error.status < 500;
+        if (error instanceof AgentChatHttpError && error.errorType === "context_limit_exceeded") {
+          setBudgetExceeded(true);
+        }
+        if (completed) {
+          replaceEntry(cid, pending.id, { ...entry, typing: false });
+          onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
+        } else if (entry.approval) {
+          replaceEntry(cid, pending.id, { ...entry, typing: false });
+        } else {
+          const message = is4xx ? error.message : GENERIC_ERROR;
+          replaceEntry(cid, pending.id, { id: pending.id, role: "ai", text: message, error: true });
+        }
+      } finally {
+        finishExecution(controller);
+        void refreshUsage(resolveConversationId(cid));
+      }
+    },
+    [
+      conversation,
+      beginExecution,
+      finishExecution,
+      onAnswer,
+      putEntries,
+      refreshUsage,
+      replaceEntry,
+      resolveConversationId,
+    ],
   );
 
   const toggle = () => void (open ? closeChat() : openChat());
@@ -327,24 +632,53 @@ export function AgentChatApp({
                 <Welcome title={config.greeting || DEFAULT_GREETING} />
               ) : null}
               {entries.map((entry) => (
-                <ChatMessage key={entry.id} entry={entry} />
+                <ChatMessage
+                  key={entry.id}
+                  entry={entry}
+                  onApproval={(approval, decision) =>
+                    void decideApproval(activeId, entry, approval, decision)
+                  }
+                  onCancelApproval={(approval) =>
+                    void cancelApproval(activeId, entry.id, approval)
+                  }
+                  onEdit={() => editMessage(entry)}
+                  editable={canEdit}
+                />
               ))}
             </ConversationContent>
           </Conversation>
-          <PromptInput onSubmit={(message) => void submit(message.text)}>
+          <PromptInput
+            submitEnabled={canSubmit}
+            onSubmit={(message) => void submit(message.text, editing?.messageId)}
+          >
             <PromptInputTextarea
               aria-label="Message"
-              disabled={sending || budgetExceeded}
+              disabled={budgetExceeded || approvalBlocksComposer}
               inputRef={inputRef}
               onSubmit={() => inputRef.current?.form?.requestSubmit()}
-              placeholder={budgetExceeded ? "Context limit reached." : "Message..."}
+              placeholder={
+                budgetExceeded
+                  ? "Context limit reached."
+                  : approvalBlocksComposer
+                    ? "Respond to the approval request above."
+                    : "Message..."
+              }
             />
             <PromptInputFooter>
               <div className="footer-start">
                 {usage ? <BudgetMeter usage={usage} /> : null}
+                {editing ? (
+                  <button className="edit-cancel" onClick={cancelEditing} type="button">
+                    Cancel edit
+                  </button>
+                ) : null}
                 <span className="prompt-hint">Enter to send · Shift+Enter for a new line</span>
               </div>
-              <PromptInputSubmit disabled={sending || budgetExceeded} />
+              <PromptInputSubmit
+                disabled={!canSubmit && !canStop}
+                running={canStop}
+                onStop={stop}
+              />
             </PromptInputFooter>
           </PromptInput>
           <div className="powered">Powered by Extra</div>
@@ -387,7 +721,19 @@ function Launcher({
   );
 }
 
-function ChatMessage({ entry }: { entry: MessageEntry }) {
+function ChatMessage({
+  entry,
+  onApproval,
+  onCancelApproval,
+  onEdit,
+  editable,
+}: {
+  entry: MessageEntry;
+  onApproval: (approval: PendingApproval, decision: ApprovalDecision) => void;
+  onCancelApproval: (approval: PendingApproval) => void;
+  onEdit: () => void;
+  editable: boolean;
+}) {
   const from = entry.role === "user" ? "user" : "assistant";
 
   if (entry.error) {
@@ -400,10 +746,27 @@ function ChatMessage({ entry }: { entry: MessageEntry }) {
     );
   }
 
+  if (entry.status === "cancelled") {
+    return (
+      <Message from="assistant">
+        <div className="msg-cancelled" role="status">
+          Generation stopped
+        </div>
+      </Message>
+    );
+  }
+
   if (entry.role === "user") {
     return (
       <Message from="user">
         <MessageContent>{entry.text}</MessageContent>
+        {editable && entry.messageId ? (
+          <div className="msg-actions user-actions">
+            <button aria-label="Edit message" className="user-edit" onClick={onEdit} type="button">
+              Edit
+            </button>
+          </div>
+        ) : null}
       </Message>
     );
   }
@@ -417,13 +780,96 @@ function ChatMessage({ entry }: { entry: MessageEntry }) {
         <ThinkingDots />
       ) : (
         <>
-          <MessageContent>
-            <MessageResponse>{entry.text}</MessageResponse>
-          </MessageContent>
+          {entry.approval ? (
+            <ApprovalRequest
+              approval={entry.approval}
+              error={entry.approvalError}
+              cancelling={Boolean(entry.approvalCancelling)}
+              submitting={Boolean(entry.approvalSubmitting)}
+              onDecision={(decision) => onApproval(entry.approval as PendingApproval, decision)}
+              onCancel={() => onCancelApproval(entry.approval as PendingApproval)}
+            />
+          ) : null}
+          {entry.text.trim() ? (
+            <MessageContent>
+              <MessageResponse>{entry.text}</MessageResponse>
+            </MessageContent>
+          ) : null}
           {entry.text.trim() ? <MessageActions text={entry.text} /> : null}
         </>
       )}
     </Message>
+  );
+}
+
+function ApprovalRequest({
+  approval,
+  submitting,
+  cancelling,
+  error,
+  onDecision,
+  onCancel,
+}: {
+  approval: PendingApproval;
+  submitting: boolean;
+  cancelling: boolean;
+  error?: string;
+  onDecision: (decision: ApprovalDecision) => void;
+  onCancel: () => void;
+}) {
+  return (
+    <section
+      className="approval-card"
+      aria-busy={submitting || cancelling}
+      aria-label="Tool approval request"
+    >
+      <p className="approval-title">Approval required</p>
+      <p className="approval-description">{approval.description}</p>
+      <p className="approval-tool">Tool: {approval.tool_name}</p>
+      {error ? (
+        <p className="approval-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <div className="approval-actions">
+        <button
+          className="approval-button primary"
+          disabled={submitting || cancelling}
+          onClick={() => onDecision("allow_once")}
+          type="button"
+        >
+          Approve
+        </button>
+        <button
+          className="approval-button danger"
+          disabled={submitting || cancelling}
+          onClick={() => onDecision("deny")}
+          type="button"
+        >
+          Deny
+        </button>
+        <button
+          className="approval-button"
+          disabled={submitting || cancelling}
+          onClick={() => onDecision("allow_for_session")}
+          type="button"
+        >
+          Approve for this session
+        </button>
+        <button
+          className="approval-button cancel-run"
+          disabled={cancelling}
+          onClick={onCancel}
+          type="button"
+        >
+          Cancel run
+        </button>
+      </div>
+      {cancelling ? <span className="approval-status">Cancelling run…</span> : null}
+      {!cancelling && submitting ? (
+        <span className="approval-status">Applying decision…</span>
+      ) : null}
+    </section>
   );
 }
 

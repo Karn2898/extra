@@ -50,14 +50,18 @@ T = TypeVar("T")
 class AuthContext:
     """Identity and authorization facts resolved by the embedding application.
 
-    The platform never populates ``inbound_access_token`` itself — the host app
-    passes it in. Hooks may use it (e.g. to exchange it for an MCP-scoped token)
-    but must never log it.
+    ``inbound_access_token`` is never verified or interpreted by the platform —
+    only forwarded from whatever the caller sent (an HTTP ``Authorization``
+    header, or a value the embedding application chose to pass directly).
+    Hooks may use it (e.g. to exchange it for an MCP-scoped token) but must
+    never log it.
     """
 
     user_id: str | None = None
     organization_id: str | None = None
-    inbound_access_token: str | None = None
+    #: `repr=False` keeps this out of logs and tracebacks — the same
+    #: protection `Principal.access_token` already has on the manager side.
+    inbound_access_token: str | None = field(default=None, repr=False)
     scopes: tuple[str, ...] = ()
     roles: tuple[str, ...] = ()
     metadata: dict[str, object] = field(default_factory=dict)

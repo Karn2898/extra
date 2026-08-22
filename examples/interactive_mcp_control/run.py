@@ -105,6 +105,7 @@ class InteractiveApp:
                     pending.approval_id,
                     decision,
                     caller_user_id=USER_ID,
+                    caller_session_id=self.session_id,
                 )
                 if decision == ApprovalDecision.DENY:
                     print(

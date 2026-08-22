@@ -52061,7 +52061,8 @@ var DEFAULT_CONFIG = {
   position: "bottom-right",
   avatar: "",
   mode: "floating",
-  tokenUrl: ""
+  tokenUrl: "",
+  requireIdentity: false
 };
 var HEX_COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 function normalizeEndpoint(value) {
@@ -52086,17 +52087,25 @@ function parseConfig(element7, scriptBaseUrl) {
     position: safePosition(element7.getAttribute("position")),
     avatar: element7.getAttribute("avatar") || DEFAULT_CONFIG.avatar,
     mode: safeMode(element7.getAttribute("mode")),
-    tokenUrl: element7.getAttribute("token-url") || DEFAULT_CONFIG.tokenUrl
+    tokenUrl: element7.getAttribute("token-url") || DEFAULT_CONFIG.tokenUrl,
+    requireIdentity: flag(element7, "require-identity")
   };
+}
+function flag(element7, name2) {
+  const value = element7.getAttribute(name2);
+  return value !== null && value.toLowerCase() !== "false";
 }
 function attributeName(configKey) {
   return configKey.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
 }
 function applyConfigAttributes(element7, config) {
   for (const [key, value] of Object.entries(config)) {
-    if (value !== void 0 && value !== null) {
-      element7.setAttribute(attributeName(key), String(value));
+    if (value === void 0 || value === null) continue;
+    if (value === false) {
+      element7.removeAttribute(attributeName(key));
+      continue;
     }
+    element7.setAttribute(attributeName(key), value === true ? "" : String(value));
   }
 }
 
@@ -52168,17 +52177,40 @@ var AgentChatClient = class {
     const response = await this.request(`/conversations/${conversationId}/messages`);
     return await response.json();
   }
-  async sendMessage(conversationId, message) {
+  async sendMessage(conversationId, message, signal, editMessageId) {
     const response = await this.request(`/conversations/${conversationId}/messages`, {
       method: "POST",
-      body: JSON.stringify({ message })
+      body: JSON.stringify({ message, edit_message_id: editMessageId }),
+      signal
     });
-    const data = await response.json();
-    return {
-      answer: String(data.answer || ""),
-      visited: Array.isArray(data.visited) ? data.visited : void 0,
-      used_tools: Array.isArray(data.used_tools) ? data.used_tools : void 0
-    };
+    return parseRunResponse(await response.json());
+  }
+  async decideApproval(conversationId, runId, approvalId, decision) {
+    const response = await this.request(
+      `/conversations/${conversationId}/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approvalId)}/decision`,
+      {
+        method: "POST",
+        body: JSON.stringify({ decision })
+      }
+    );
+    return parseRunResponse(await response.json());
+  }
+  async *streamApproval(conversationId, runId, approvalId, decision, signal) {
+    const response = await this.request(
+      `/conversations/${conversationId}/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approvalId)}/decision/stream`,
+      {
+        method: "POST",
+        body: JSON.stringify({ decision }),
+        signal
+      }
+    );
+    yield* readSseResponse(response);
+  }
+  async cancelApproval(conversationId, runId, approvalId) {
+    await this.request(
+      `/conversations/${conversationId}/runs/${encodeURIComponent(runId)}/approvals/${encodeURIComponent(approvalId)}/cancel`,
+      { method: "POST", body: "{}" }
+    );
   }
   async getUsage(conversationId) {
     const response = await this.request(`/conversations/${conversationId}/usage`);
@@ -52190,37 +52222,55 @@ var AgentChatClient = class {
       severity: data.severity ?? "normal"
     };
   }
-  async *streamMessage(conversationId, message) {
+  async *streamMessage(conversationId, message, signal, editMessageId) {
     const response = await this.request(`/conversations/${conversationId}/messages/stream`, {
       method: "POST",
-      body: JSON.stringify({ message })
+      body: JSON.stringify({ message, edit_message_id: editMessageId }),
+      signal
     });
-    if (!response.body) {
-      throw new Error("Streaming response has no body");
-    }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const frames = buffer.split(/\n\n/);
-        buffer = frames.pop() ?? "";
-        for (const frame of frames) {
-          const event2 = parseSseFrame(frame);
-          if (event2) yield event2;
-        }
-      }
-      buffer += decoder.decode();
-      const event = parseSseFrame(buffer);
-      if (event) yield event;
-    } finally {
-      reader.releaseLock();
-    }
+    yield* readSseResponse(response);
   }
 };
+async function* readSseResponse(response) {
+  if (!response.body) {
+    throw new Error("Streaming response has no body");
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const frames = buffer.split(/\r?\n\r?\n/);
+      buffer = frames.pop() ?? "";
+      for (const frame of frames) {
+        const event2 = parseSseFrame(frame);
+        if (event2) yield event2;
+      }
+    }
+    buffer += decoder.decode();
+    const event = parseSseFrame(buffer);
+    if (event) yield event;
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+    }
+    reader.releaseLock();
+  }
+}
+function parseRunResponse(data) {
+  return {
+    answer: String(data.answer || ""),
+    visited: Array.isArray(data.visited) ? data.visited : void 0,
+    used_tools: Array.isArray(data.used_tools) ? data.used_tools : void 0,
+    status: data.status === "pending_approval" ? "pending_approval" : "completed",
+    run_id: data.run_id == null ? null : String(data.run_id),
+    pending_approval: typeof data.pending_approval === "object" && data.pending_approval !== null ? data.pending_approval : null
+  };
+}
 function parseSseFrame(frame) {
   const dataLines = frame.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice("data:".length).trimStart());
   if (!dataLines.length) return null;
@@ -52236,13 +52286,19 @@ function visitorPassKey(endpoint) {
   return `agent-chat:pass:${endpoint}`;
 }
 var TokenSource = class {
-  constructor(endpoint, tokenUrl = "", provider = null, storage = localStorage) {
+  constructor(endpoint, options = {}) {
     this.endpoint = endpoint;
-    this.tokenUrl = tokenUrl;
-    this.provider = provider;
-    this.storage = storage;
     this.cached = null;
     this.pending = null;
+    /** Bumped by `reset()` so a resolution already in flight, once it lands, can
+     *  tell it is answering a question nobody is asking anymore. */
+    this.generation = 0;
+    this.tokenUrl = options.tokenUrl ?? "";
+    this.provider = options.provider ?? null;
+    this.storage = options.storage ?? localStorage;
+    this.requireIdentity = options.requireIdentity ?? false;
+    this.onIdentityFailure = options.onIdentityFailure ?? (() => {
+    });
   }
   async current() {
     if (!this.cached) await this.resolve(() => this.storedPass());
@@ -52252,20 +52308,32 @@ var TokenSource = class {
   async renew() {
     return this.resolve(() => this.issuePass());
   }
-  /** Drop this browser's identity — a host app signing its user out. */
-  forget() {
+  /** Forget the token in hand, so the next request works out who the caller is
+   *  again. Keeps the visitor pass: that pass is what the sign-in merge hands
+   *  over, and dropping it here would strand whatever this browser chatted
+   *  about before logging in. */
+  reset() {
+    this.generation += 1;
     this.cached = null;
+    this.pending = null;
+  }
+  /** Drop this browser's identity entirely — a host app signing its user out. */
+  forget() {
+    this.reset();
     this.clearPass();
   }
   /** Concurrent callers share one resolution. Without this, parallel requests
    *  each fetch a token and each hand over the visitor pass. */
   resolve(fallback) {
+    const generation = this.generation;
     this.pending ?? (this.pending = (async () => {
       try {
-        this.cached = await this.hostToken() ?? await fallback();
-        return this.cached;
+        const host = await this.hostToken();
+        const result = host ?? (this.requireIdentity ? null : await fallback());
+        if (generation === this.generation) this.cached = result;
+        return result;
       } finally {
-        this.pending = null;
+        if (generation === this.generation) this.pending = null;
       }
     })());
     return this.pending;
@@ -52299,17 +52367,31 @@ var TokenSource = class {
   async fromHost() {
     if (this.provider) return this.provider();
     if (!this.tokenUrl) return null;
+    let response;
     try {
-      const response = await fetch(this.tokenUrl, {
+      response = await fetch(this.tokenUrl, {
         credentials: "include",
         headers: { Accept: "application/json" }
       });
-      if (!response.ok) return null;
-      const token = (await response.json())?.token;
-      return typeof token === "string" && token ? token : null;
     } catch {
-      return null;
+      return this.failed({ reason: "unreachable", url: this.tokenUrl });
     }
+    if (!response.ok) {
+      const reason = response.status === 401 || response.status === 403 ? "unauthorized" : "unreachable";
+      return this.failed({ reason, status: response.status, url: this.tokenUrl });
+    }
+    const token = await response.json().then((body) => body?.token).catch(() => null);
+    if (typeof token !== "string" || !token) {
+      return this.failed({ reason: "malformed", status: response.status, url: this.tokenUrl });
+    }
+    return token;
+  }
+  /** Report and degrade. A configured identity that cannot be obtained is worth
+   *  saying out loud — silence here is what makes a broken `token-url` look
+   *  like a working anonymous chat. */
+  failed(failure) {
+    this.onIdentityFailure(failure);
+    return null;
   }
   storedPass() {
     try {
@@ -52515,8 +52597,14 @@ var __iconNode10 = [
 ];
 var SquarePen = createLucideIcon("square-pen", __iconNode10);
 
-// node_modules/lucide-react/dist/esm/icons/wrench.mjs
+// node_modules/lucide-react/dist/esm/icons/square.mjs
 var __iconNode11 = [
+  ["rect", { width: "18", height: "18", x: "3", y: "3", rx: "2", key: "afitv7" }]
+];
+var Square = createLucideIcon("square", __iconNode11);
+
+// node_modules/lucide-react/dist/esm/icons/wrench.mjs
+var __iconNode12 = [
   [
     "path",
     {
@@ -52525,14 +52613,14 @@ var __iconNode11 = [
     }
   ]
 ];
-var Wrench = createLucideIcon("wrench", __iconNode11);
+var Wrench = createLucideIcon("wrench", __iconNode12);
 
 // node_modules/lucide-react/dist/esm/icons/x.mjs
-var __iconNode12 = [
+var __iconNode13 = [
   ["path", { d: "M18 6 6 18", key: "1bl5f8" }],
   ["path", { d: "m6 6 12 12", key: "d8bk6v" }]
 ];
-var X = createLucideIcon("x", __iconNode12);
+var X = createLucideIcon("x", __iconNode13);
 
 // src/agent_manager/api/static/widget/react/AgentChatApp.tsx
 var import_react10 = __toESM(require_react(), 1);
@@ -53049,9 +53137,11 @@ var MessageResponse = (0, import_react8.memo)(function MessageResponse2({
 function PromptInput({
   children: children2,
   className,
+  submitEnabled = true,
   onSubmit
 }) {
   function submit(form) {
+    if (!submitEnabled) return;
     const input = form.elements.namedItem("message");
     const text10 = input?.value.trim() ?? "";
     if (!text10) return;
@@ -53101,8 +53191,22 @@ function PromptInputTextarea({
 function PromptInputFooter({ children: children2 }) {
   return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { className: "prompt-footer", children: children2 });
 }
-function PromptInputSubmit({ disabled }) {
-  return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("button", { "aria-label": "Send message", className: "send", disabled, type: "submit", children: /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Send, { "aria-hidden": "true" }) });
+function PromptInputSubmit({
+  disabled,
+  running = false,
+  onStop
+}) {
+  return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+    "button",
+    {
+      "aria-label": running ? "Stop generating" : "Send message",
+      className: "send",
+      disabled,
+      onClick: running ? onStop : void 0,
+      type: running ? "button" : "submit",
+      children: running ? /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Square, { "aria-hidden": "true" }) : /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(Send, { "aria-hidden": "true" })
+    }
+  );
 }
 function Tool({ children: children2, defaultOpen = false }) {
   return /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("details", { className: "tool", open: defaultOpen, children: children2 });
@@ -53142,6 +53246,16 @@ var TOOL_STATUS = {
 };
 function reduceStreamEvent(entry, event) {
   switch (event.type) {
+    case "turn_started":
+      return entry;
+    case "resume_started":
+      return {
+        ...entry,
+        typing: true,
+        approval: void 0,
+        approvalSubmitting: false,
+        approvalError: void 0
+      };
     case "answer_delta":
       return { ...entry, text: entry.text + (event.content ?? "") };
     case "route":
@@ -53156,6 +53270,26 @@ function reduceStreamEvent(entry, event) {
         text: event.content ?? entry.text,
         route: event.route ?? entry.route,
         tools: event.used_tools ?? entry.tools
+      };
+    case "pending_approval":
+      if (!event.run_id || !event.approval_id || !event.agent_id || !event.tool_name) {
+        throw new Error("invalid pending approval event");
+      }
+      return {
+        ...entry,
+        typing: false,
+        route: event.route ?? entry.route,
+        tools: event.used_tools ?? entry.tools,
+        approval: {
+          run_id: event.run_id,
+          approval_id: event.approval_id,
+          agent_id: event.agent_id,
+          tool_name: event.tool_name,
+          description: event.description ?? `${event.agent_id} wants to use ${event.tool_name}.`,
+          provider: event.provider,
+          server_id: event.server_id,
+          arguments: event.arguments
+        }
       };
     case "error":
       throw new Error(event.error || "stream failed");
@@ -53202,26 +53336,38 @@ function useConversation(client, endpoint, onReplaced) {
     [endpoint, startConversation, onReplaced]
   );
   const send = (0, import_react9.useCallback)(
-    async (conversationId, text10) => {
+    async (conversationId, text10, signal, editMessageId) => {
       try {
-        return await client.sendMessage(conversationId, text10);
+        return await client.sendMessage(conversationId, text10, signal, editMessageId);
       } catch (error) {
         if (!isUnusableConversation(error)) throw error;
-        return client.sendMessage(await replace2(conversationId), text10);
+        return client.sendMessage(await replace2(conversationId), text10, signal);
       }
     },
     [client, replace2]
   );
   const stream = (0, import_react9.useCallback)(
-    async function* (conversationId, text10) {
+    async function* (conversationId, text10, signal, editMessageId) {
       try {
-        yield* client.streamMessage(conversationId, text10);
+        yield* client.streamMessage(conversationId, text10, signal, editMessageId);
       } catch (error) {
         if (!isUnusableConversation(error)) throw error;
-        yield* client.streamMessage(await replace2(conversationId), text10);
+        yield* client.streamMessage(await replace2(conversationId), text10, signal);
       }
     },
     [client, replace2]
+  );
+  const decideApproval = (0, import_react9.useCallback)(
+    (conversationId, runId, approvalId, decision) => client.decideApproval(conversationId, runId, approvalId, decision),
+    [client]
+  );
+  const streamApproval = (0, import_react9.useCallback)(
+    (conversationId, runId, approvalId, decision, signal) => client.streamApproval(conversationId, runId, approvalId, decision, signal),
+    [client]
+  );
+  const cancelApproval = (0, import_react9.useCallback)(
+    (conversationId, runId, approvalId) => client.cancelApproval(conversationId, runId, approvalId),
+    [client]
   );
   const loadHistory = (0, import_react9.useCallback)(
     async (conversationId) => {
@@ -53261,13 +53407,29 @@ function useConversation(client, endpoint, onReplaced) {
       ensureId,
       send,
       stream,
+      decideApproval,
+      streamApproval,
+      cancelApproval,
       loadHistory,
       loadUsage,
       listThreads,
       switchTo,
       startNew
     }),
-    [peekId, ensureId, send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew]
+    [
+      peekId,
+      ensureId,
+      send,
+      stream,
+      decideApproval,
+      streamApproval,
+      cancelApproval,
+      loadHistory,
+      loadUsage,
+      listThreads,
+      switchTo,
+      startNew
+    ]
   );
 }
 
@@ -53276,12 +53438,23 @@ var import_jsx_runtime4 = __toESM(require_jsx_runtime(), 1);
 var DEFAULT_GREETING = "How can I help you today?";
 var GENERIC_ERROR = "Something went wrong. Please try again.";
 var COPIED_RESET_MS = 2e3;
+var isTerminalApprovalError = (error) => error instanceof AgentChatHttpError && error.status >= 400 && error.status < 500 && ![408, 425, 429].includes(error.status);
+var terminalApprovalMessage = (status) => {
+  if (status === 403) return "You are not authorized to decide this approval.";
+  if (status === 409) return "This approval was already processed. You can continue chatting.";
+  return "This approval is no longer available. You can continue chatting.";
+};
 var newId = randomId;
-var toEntry = (message) => ({
-  id: newId(),
-  role: message.role === "user" ? "user" : "ai",
-  text: message.content
-});
+var toEntries = (message) => {
+  const entry = {
+    id: newId(),
+    messageId: message.message_id,
+    runId: message.run_id ?? void 0,
+    role: message.role === "user" ? "user" : "ai",
+    text: message.content
+  };
+  return message.role === "user" && message.status === "cancelled" ? [entry, { id: newId(), role: "ai", text: "", status: "cancelled" }] : [entry];
+};
 function AgentChatApp({
   client,
   config,
@@ -53292,22 +53465,58 @@ function AgentChatApp({
   const inline = config.mode === "inline";
   const [open, setOpen] = (0, import_react10.useState)(inline);
   const [loaded, setLoaded] = (0, import_react10.useState)(false);
-  const [sending, setSending] = (0, import_react10.useState)(false);
+  const [activeExecution, setActiveExecution] = (0, import_react10.useState)(null);
   const [budgetExceeded, setBudgetExceeded] = (0, import_react10.useState)(false);
   const [entriesById, setEntriesById] = (0, import_react10.useState)({});
   const [usageById, setUsageById] = (0, import_react10.useState)({});
   const [activeId, setActiveId] = (0, import_react10.useState)("");
+  const [editing, setEditing] = (0, import_react10.useState)(null);
   const entries = entriesById[activeId] ?? [];
   const usage = usageById[activeId] ?? null;
+  const isExecutionActive = activeExecution !== null;
+  const awaitingApproval = entries.some((entry) => entry.approval !== void 0);
+  const approvalBlocksComposer = awaitingApproval && editing === null && !isExecutionActive;
+  const canEdit = true;
+  const canSubmit = !isExecutionActive && !budgetExceeded && !approvalBlocksComposer;
+  const canStop = isExecutionActive;
   const [threads, setThreads] = (0, import_react10.useState)([]);
   const [threadsOpen, setThreadsOpen] = (0, import_react10.useState)(false);
   const launcherRef = (0, import_react10.useRef)(null);
   const inputRef = (0, import_react10.useRef)(null);
+  const approvalRequestsRef = (0, import_react10.useRef)(/* @__PURE__ */ new Set());
+  const approvalCancellationRequestsRef = (0, import_react10.useRef)(/* @__PURE__ */ new Set());
+  const activeExecutionRef = (0, import_react10.useRef)(null);
+  const replacementIdsRef = (0, import_react10.useRef)(/* @__PURE__ */ new Map());
+  const resolveConversationId = (0, import_react10.useCallback)((conversationId) => {
+    let resolved = conversationId;
+    while (replacementIdsRef.current.has(resolved)) {
+      resolved = replacementIdsRef.current.get(resolved);
+    }
+    return resolved;
+  }, []);
   const onReplaced = (0, import_react10.useCallback)((staleId, freshId) => {
+    replacementIdsRef.current.set(staleId, freshId);
     setEntriesById(({ [staleId]: moved = [], ...rest }) => ({ ...rest, [freshId]: moved }));
     setActiveId((current) => current === staleId ? freshId : current);
   }, []);
   const conversation = useConversation(client, config.endpoint, onReplaced);
+  (0, import_react10.useEffect)(
+    () => () => {
+      activeExecutionRef.current?.controller.abort();
+    },
+    []
+  );
+  const beginExecution = (0, import_react10.useCallback)((execution) => {
+    if (activeExecutionRef.current !== null) return false;
+    activeExecutionRef.current = execution;
+    setActiveExecution(execution);
+    return true;
+  }, []);
+  const finishExecution = (0, import_react10.useCallback)((controller) => {
+    if (activeExecutionRef.current?.controller !== controller) return;
+    activeExecutionRef.current = null;
+    setActiveExecution(null);
+  }, []);
   const refreshUsage = (0, import_react10.useCallback)(
     async (cid) => {
       const next2 = await conversation.loadUsage(cid);
@@ -53322,7 +53531,7 @@ function AgentChatApp({
   const loadThread = (0, import_react10.useCallback)(
     async (cid) => {
       const history = await conversation.loadHistory(cid);
-      putEntries(cid, () => history.map(toEntry));
+      putEntries(cid, () => history.flatMap(toEntries));
     },
     [conversation, putEntries]
   );
@@ -53339,8 +53548,8 @@ function AgentChatApp({
     if (inline) void loadHistory();
   }, [inline, loadHistory]);
   (0, import_react10.useEffect)(() => {
-    if (open) inputRef.current?.focus({ preventScroll: true });
-  }, [open, loaded, sending]);
+    if (open && !approvalBlocksComposer) inputRef.current?.focus({ preventScroll: true });
+  }, [open, loaded, isExecutionActive, approvalBlocksComposer]);
   const openChat = (0, import_react10.useCallback)(async () => {
     if (inline) return;
     setOpen(true);
@@ -53373,63 +53582,278 @@ function AgentChatApp({
     inputRef.current?.focus({ preventScroll: true });
   }, [conversation]);
   const replaceEntry = (0, import_react10.useCallback)(
-    (cid, id, entry) => putEntries(cid, (prev) => prev.map((current) => current.id === id ? entry : current)),
-    [putEntries]
-  );
-  const sendWithoutStreaming = (0, import_react10.useCallback)(
-    async (cid, text10, entryId) => {
-      try {
-        const answer = await conversation.send(cid, text10);
-        replaceEntry(cid, entryId, {
-          id: entryId,
-          role: "ai",
-          text: answer.answer,
-          route: answer.visited,
-          tools: answer.used_tools
-        });
-        onAnswer({ visited: answer.visited ?? [], used_tools: answer.used_tools ?? [] });
-      } catch (error) {
-        const is4xx = error instanceof AgentChatHttpError && error.status >= 400 && error.status < 500;
-        if (error instanceof AgentChatHttpError && error.errorType === "context_limit_exceeded") {
-          setBudgetExceeded(true);
-        }
-        const errorMessage = is4xx ? error.message : GENERIC_ERROR;
-        replaceEntry(cid, entryId, { id: entryId, role: "ai", text: errorMessage, error: true });
-      }
+    (cid, id, entry) => {
+      const resolvedId = resolveConversationId(cid);
+      putEntries(
+        resolvedId,
+        (prev) => prev.map((current) => current.id === id ? entry : current)
+      );
     },
-    [conversation, onAnswer, replaceEntry]
+    [putEntries, resolveConversationId]
   );
-  const submit = (0, import_react10.useCallback)(
-    async (text10) => {
-      const cid = await conversation.ensureId();
-      setActiveId(cid);
-      const pending = { id: newId(), role: "ai", text: "", typing: true };
-      putEntries(cid, (prev) => [...prev, { id: newId(), role: "user", text: text10 }, pending]);
-      setSending(true);
+  const stop = (0, import_react10.useCallback)(() => {
+    activeExecution?.controller.abort();
+  }, [activeExecution]);
+  const editMessage = (0, import_react10.useCallback)((entry) => {
+    if (!entry.messageId || !inputRef.current) return;
+    setEditing({ messageId: entry.messageId, previousDraft: inputRef.current.value });
+    inputRef.current.value = entry.text;
+    inputRef.current.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    inputRef.current.focus({ preventScroll: true });
+  }, []);
+  const cancelEditing = (0, import_react10.useCallback)(() => {
+    if (inputRef.current && editing) {
+      inputRef.current.value = editing.previousDraft;
+      inputRef.current.dispatchEvent(new InputEvent("input", { bubbles: true }));
+      inputRef.current.focus({ preventScroll: true });
+    }
+    setEditing(null);
+  }, [editing]);
+  const decideApproval = (0, import_react10.useCallback)(
+    async (cid, initialEntry, approval, decision) => {
+      if (approvalRequestsRef.current.has(approval.approval_id) || activeExecutionRef.current !== null) {
+        return;
+      }
+      const controller = new AbortController();
+      if (!beginExecution({
+        controller,
+        runId: approval.run_id,
+        source: "approval"
+      })) {
+        return;
+      }
+      approvalRequestsRef.current.add(approval.approval_id);
+      putEntries(
+        cid,
+        (prev) => prev.map(
+          (entry2) => entry2.id === initialEntry.id ? { ...entry2, approvalSubmitting: true, approvalError: void 0 } : entry2
+        )
+      );
+      let entry = initialEntry;
+      let completed = false;
+      let resumeStarted = false;
       try {
-        let entry = pending;
-        for await (const event of conversation.stream(cid, text10)) {
+        for await (const event of conversation.streamApproval(
+          cid,
+          approval.run_id,
+          approval.approval_id,
+          decision,
+          controller.signal
+        )) {
+          if (controller.signal.aborted && event.type !== "final") break;
+          resumeStarted || (resumeStarted = event.type === "resume_started");
+          completed || (completed = event.type === "final");
           entry = reduceStreamEvent(entry, event);
-          replaceEntry(cid, pending.id, entry);
+          replaceEntry(cid, initialEntry.id, entry);
         }
-        replaceEntry(cid, pending.id, { ...entry, typing: false });
-        onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
+        if (controller.signal.aborted && !completed) {
+          if (!resumeStarted) {
+            await conversation.cancelApproval(cid, approval.run_id, approval.approval_id).catch(() => {
+            });
+          }
+          replaceEntry(cid, initialEntry.id, {
+            id: initialEntry.id,
+            role: "ai",
+            text: "",
+            status: "cancelled"
+          });
+          return;
+        }
+        replaceEntry(cid, initialEntry.id, { ...entry, typing: false });
+        if (completed && !entry.approval) {
+          onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
+        }
       } catch (error) {
-        const is4xx = error instanceof AgentChatHttpError && error.status >= 400 && error.status < 500;
-        if (error instanceof AgentChatHttpError && error.errorType === "context_limit_exceeded") {
-          setBudgetExceeded(true);
+        if (controller.signal.aborted && !completed) {
+          if (!resumeStarted) {
+            await conversation.cancelApproval(cid, approval.run_id, approval.approval_id).catch(() => {
+            });
+          }
+          replaceEntry(cid, initialEntry.id, {
+            id: initialEntry.id,
+            role: "ai",
+            text: "",
+            status: "cancelled"
+          });
+          return;
         }
-        if (is4xx) {
-          replaceEntry(cid, pending.id, { id: pending.id, role: "ai", text: error.message, error: true });
-        } else {
-          await sendWithoutStreaming(cid, text10, pending.id);
+        if (completed) {
+          replaceEntry(cid, initialEntry.id, { ...entry, typing: false });
+          onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
+          return;
         }
+        if (resumeStarted) {
+          replaceEntry(cid, initialEntry.id, {
+            id: initialEntry.id,
+            role: "ai",
+            text: GENERIC_ERROR,
+            error: true
+          });
+          return;
+        }
+        const terminal = isTerminalApprovalError(error);
+        putEntries(
+          cid,
+          (prev) => prev.map(
+            (entry2) => entry2.id === initialEntry.id && entry2.approval?.approval_id === approval.approval_id && !entry2.approvalCancelling ? {
+              ...entry2,
+              ...terminal ? {
+                text: terminalApprovalMessage(error.status),
+                error: true,
+                approval: void 0
+              } : {},
+              approvalSubmitting: false,
+              approvalError: terminal ? void 0 : GENERIC_ERROR
+            } : entry2
+          )
+        );
       } finally {
-        setSending(false);
+        approvalRequestsRef.current.delete(approval.approval_id);
+        finishExecution(controller);
         void refreshUsage(cid);
       }
     },
-    [conversation, onAnswer, putEntries, refreshUsage, replaceEntry, sendWithoutStreaming]
+    [
+      beginExecution,
+      conversation,
+      finishExecution,
+      onAnswer,
+      putEntries,
+      refreshUsage,
+      replaceEntry
+    ]
+  );
+  const cancelApproval = (0, import_react10.useCallback)(
+    async (cid, entryId, approval) => {
+      if (approvalCancellationRequestsRef.current.has(approval.approval_id)) return;
+      approvalCancellationRequestsRef.current.add(approval.approval_id);
+      putEntries(
+        cid,
+        (prev) => prev.map(
+          (entry) => entry.id === entryId ? { ...entry, approvalCancelling: true, approvalError: void 0 } : entry
+        )
+      );
+      try {
+        await conversation.cancelApproval(cid, approval.run_id, approval.approval_id);
+        putEntries(
+          cid,
+          (prev) => prev.map(
+            (entry) => entry.id === entryId ? { id: entry.id, role: "ai", text: "", status: "cancelled" } : entry
+          )
+        );
+      } catch (error) {
+        const terminal = isTerminalApprovalError(error);
+        putEntries(
+          cid,
+          (prev) => prev.map(
+            (entry) => entry.id === entryId && entry.approval?.approval_id === approval.approval_id ? {
+              ...entry,
+              ...terminal ? {
+                text: terminalApprovalMessage(error.status),
+                error: true,
+                approval: void 0
+              } : {},
+              approvalCancelling: false,
+              approvalError: terminal ? void 0 : GENERIC_ERROR
+            } : entry
+          )
+        );
+      } finally {
+        approvalCancellationRequestsRef.current.delete(approval.approval_id);
+        void refreshUsage(cid);
+      }
+    },
+    [conversation, putEntries, refreshUsage]
+  );
+  const submit = (0, import_react10.useCallback)(
+    async (text10, editMessageId) => {
+      if (activeExecutionRef.current !== null) return;
+      const cid = await conversation.ensureId();
+      setActiveId(cid);
+      let userEntry = { id: newId(), role: "user", text: text10 };
+      const pending = { id: newId(), role: "ai", text: "", typing: true };
+      const controller = new AbortController();
+      if (!beginExecution({ controller, source: "prompt" })) return;
+      putEntries(cid, (prev) => {
+        if (!editMessageId) return [...prev, userEntry, pending];
+        const branchPoint = prev.findIndex((entry2) => entry2.messageId === editMessageId);
+        return [...branchPoint < 0 ? prev : prev.slice(0, branchPoint), userEntry, pending];
+      });
+      setEditing(null);
+      let entry = pending;
+      let completed = false;
+      try {
+        for await (const event of conversation.stream(
+          cid,
+          text10,
+          controller.signal,
+          editMessageId
+        )) {
+          if (controller.signal.aborted && event.type !== "final") break;
+          if (event.type === "turn_started") {
+            userEntry = {
+              ...userEntry,
+              messageId: event.message_id,
+              runId: event.run_id
+            };
+            replaceEntry(cid, userEntry.id, userEntry);
+            continue;
+          }
+          completed || (completed = event.type === "final");
+          entry = reduceStreamEvent(entry, event);
+          replaceEntry(cid, pending.id, entry);
+        }
+        if (controller.signal.aborted && !completed) {
+          replaceEntry(cid, pending.id, {
+            id: pending.id,
+            role: "ai",
+            text: "",
+            status: "cancelled"
+          });
+          return;
+        }
+        replaceEntry(cid, pending.id, { ...entry, typing: false });
+        if (!entry.approval) {
+          onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
+        }
+      } catch (error) {
+        if (controller.signal.aborted && !completed) {
+          replaceEntry(cid, pending.id, {
+            id: pending.id,
+            role: "ai",
+            text: "",
+            status: "cancelled"
+          });
+          return;
+        }
+        const is4xx = error instanceof AgentChatHttpError && error.status >= 400 && error.status < 500;
+        if (error instanceof AgentChatHttpError && error.errorType === "context_limit_exceeded") {
+          setBudgetExceeded(true);
+        }
+        if (completed) {
+          replaceEntry(cid, pending.id, { ...entry, typing: false });
+          onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
+        } else if (entry.approval) {
+          replaceEntry(cid, pending.id, { ...entry, typing: false });
+        } else {
+          const message = is4xx ? error.message : GENERIC_ERROR;
+          replaceEntry(cid, pending.id, { id: pending.id, role: "ai", text: message, error: true });
+        }
+      } finally {
+        finishExecution(controller);
+        void refreshUsage(resolveConversationId(cid));
+      }
+    },
+    [
+      conversation,
+      beginExecution,
+      finishExecution,
+      onAnswer,
+      putEntries,
+      refreshUsage,
+      replaceEntry,
+      resolveConversationId
+    ]
   );
   const toggle = () => void (open ? closeChat() : openChat());
   return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
@@ -53494,27 +53918,52 @@ function AgentChatApp({
                 ),
                 /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Conversation, { children: /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(ConversationContent, { children: [
                   entries.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Welcome, { title: config.greeting || DEFAULT_GREETING }) : null,
-                  entries.map((entry) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(ChatMessage, { entry }, entry.id))
-                ] }) }),
-                /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(PromptInput, { onSubmit: (message) => void submit(message.text), children: [
-                  /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
-                    PromptInputTextarea,
+                  entries.map((entry) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+                    ChatMessage,
                     {
-                      "aria-label": "Message",
-                      disabled: sending || budgetExceeded,
-                      inputRef,
-                      onSubmit: () => inputRef.current?.form?.requestSubmit(),
-                      placeholder: budgetExceeded ? "Context limit reached." : "Message..."
-                    }
-                  ),
-                  /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(PromptInputFooter, { children: [
-                    /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "footer-start", children: [
-                      usage ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(BudgetMeter, { usage }) : null,
-                      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "prompt-hint", children: "Enter to send \xB7 Shift+Enter for a new line" })
-                    ] }),
-                    /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(PromptInputSubmit, { disabled: sending || budgetExceeded })
-                  ] })
-                ] }),
+                      entry,
+                      onApproval: (approval, decision) => void decideApproval(activeId, entry, approval, decision),
+                      onCancelApproval: (approval) => void cancelApproval(activeId, entry.id, approval),
+                      onEdit: () => editMessage(entry),
+                      editable: canEdit
+                    },
+                    entry.id
+                  ))
+                ] }) }),
+                /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
+                  PromptInput,
+                  {
+                    submitEnabled: canSubmit,
+                    onSubmit: (message) => void submit(message.text, editing?.messageId),
+                    children: [
+                      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+                        PromptInputTextarea,
+                        {
+                          "aria-label": "Message",
+                          disabled: budgetExceeded || approvalBlocksComposer,
+                          inputRef,
+                          onSubmit: () => inputRef.current?.form?.requestSubmit(),
+                          placeholder: budgetExceeded ? "Context limit reached." : approvalBlocksComposer ? "Respond to the approval request above." : "Message..."
+                        }
+                      ),
+                      /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(PromptInputFooter, { children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "footer-start", children: [
+                          usage ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(BudgetMeter, { usage }) : null,
+                          editing ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("button", { className: "edit-cancel", onClick: cancelEditing, type: "button", children: "Cancel edit" }) : null,
+                          /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "prompt-hint", children: "Enter to send \xB7 Shift+Enter for a new line" })
+                        ] }),
+                        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+                          PromptInputSubmit,
+                          {
+                            disabled: !canSubmit && !canStop,
+                            running: canStop,
+                            onStop: stop
+                          }
+                        )
+                      ] })
+                    ]
+                  }
+                ),
                 /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { className: "powered", children: "Powered by Extra" })
               ] })
             ]
@@ -53553,22 +54002,115 @@ function Launcher({
     }
   );
 }
-function ChatMessage({ entry }) {
+function ChatMessage({
+  entry,
+  onApproval,
+  onCancelApproval,
+  onEdit,
+  editable
+}) {
   const from = entry.role === "user" ? "user" : "assistant";
   if (entry.error) {
     return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Message, { from, children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { className: "msg-error", role: "alert", children: entry.text }) });
   }
+  if (entry.status === "cancelled") {
+    return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Message, { from: "assistant", children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { className: "msg-cancelled", role: "status", children: "Generation stopped" }) });
+  }
   if (entry.role === "user") {
-    return /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(Message, { from: "user", children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageContent, { children: entry.text }) });
+    return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(Message, { from: "user", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageContent, { children: entry.text }),
+      editable && entry.messageId ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { className: "msg-actions user-actions", children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("button", { "aria-label": "Edit message", className: "user-edit", onClick: onEdit, type: "button", children: "Edit" }) }) : null
+    ] });
   }
   const thinking = Boolean(entry.typing) && !entry.text.trim();
   return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(Message, { from: "assistant", typing: thinking, children: [
     /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(AgentActivity, { route: entry.route, tools: entry.tools }),
     thinking ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(ThinkingDots, {}) : /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(import_jsx_runtime4.Fragment, { children: [
-      /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageContent, { children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageResponse, { children: entry.text }) }),
+      entry.approval ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+        ApprovalRequest,
+        {
+          approval: entry.approval,
+          error: entry.approvalError,
+          cancelling: Boolean(entry.approvalCancelling),
+          submitting: Boolean(entry.approvalSubmitting),
+          onDecision: (decision) => onApproval(entry.approval, decision),
+          onCancel: () => onCancelApproval(entry.approval)
+        }
+      ) : null,
+      entry.text.trim() ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageContent, { children: /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageResponse, { children: entry.text }) }) : null,
       entry.text.trim() ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(MessageActions, { text: entry.text }) : null
     ] })
   ] });
+}
+function ApprovalRequest({
+  approval,
+  submitting,
+  cancelling,
+  error,
+  onDecision,
+  onCancel
+}) {
+  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
+    "section",
+    {
+      className: "approval-card",
+      "aria-busy": submitting || cancelling,
+      "aria-label": "Tool approval request",
+      children: [
+        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { className: "approval-title", children: "Approval required" }),
+        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { className: "approval-description", children: approval.description }),
+        /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("p", { className: "approval-tool", children: [
+          "Tool: ",
+          approval.tool_name
+        ] }),
+        error ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { className: "approval-error", role: "alert", children: error }) : null,
+        /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "approval-actions", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+            "button",
+            {
+              className: "approval-button primary",
+              disabled: submitting || cancelling,
+              onClick: () => onDecision("allow_once"),
+              type: "button",
+              children: "Approve"
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+            "button",
+            {
+              className: "approval-button danger",
+              disabled: submitting || cancelling,
+              onClick: () => onDecision("deny"),
+              type: "button",
+              children: "Deny"
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+            "button",
+            {
+              className: "approval-button",
+              disabled: submitting || cancelling,
+              onClick: () => onDecision("allow_for_session"),
+              type: "button",
+              children: "Approve for this session"
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+            "button",
+            {
+              className: "approval-button cancel-run",
+              disabled: cancelling,
+              onClick: onCancel,
+              type: "button",
+              children: "Cancel run"
+            }
+          )
+        ] }),
+        cancelling ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "approval-status", children: "Cancelling run\u2026" }) : null,
+        !cancelling && submitting ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { className: "approval-status", children: "Applying decision\u2026" }) : null
+      ]
+    }
+  );
 }
 function ThinkingDots() {
   return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("span", { className: "thinking", "aria-hidden": true, children: [
@@ -53836,12 +54378,17 @@ function styles(config) {
     .msg pre code { background: none; padding: 0; white-space: pre-wrap; }
     .msg-actions { display: flex; gap: 4px; margin-top: 6px;
       opacity: 0; transition: opacity .15s ease; }
-    .msg.ai:hover .msg-actions, .msg-actions:focus-within { opacity: 1; }
+    .msg.ai:hover .msg-actions, .msg.user:hover .msg-actions, .msg-actions:focus-within { opacity: 1; }
     .msg-action { display: inline-flex; align-items: center; justify-content: center;
       width: 26px; height: 26px; border: 0; border-radius: 7px; background: transparent;
       color: #71717a; cursor: pointer; transition: background .12s, color .12s; }
     .msg-action:hover { background: #f4f4f5; color: #18181b; }
     .msg-action svg { width: 15px; height: 15px; animation: aui-icon-in .15s ease; }
+    .user-actions { justify-content: flex-end; margin-bottom: -4px; opacity: 1; }
+    .user-edit, .edit-cancel { border: 0; background: transparent; color: #71717a;
+      cursor: pointer; font: inherit; padding: 2px 4px; }
+    .user-edit:hover, .edit-cancel:hover { color: #18181b; text-decoration: underline; }
+    .msg-cancelled { color: #71717a; font-style: italic; }
     @keyframes aui-icon-in { from { opacity: 0; transform: scale(.75); } }
     .tool-list { margin-bottom: 10px; display: flex; flex-direction: column; gap: 8px; }
     .agent-meta { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; color: #71717a;
@@ -53861,6 +54408,33 @@ function styles(config) {
     .tool-badge.output-error { color: #991b1b; background: #fee2e2; }
     .tool-content { border-top: 1px solid #e4e4e7; padding: 8px 10px; }
     .tool-error { color: #991b1b; font-size: 12px; white-space: pre-wrap; }
+    .approval-card { border: 1px solid #e4e4e7; border-radius: 10px; background: #fafafa;
+      padding: 10px 11px; white-space: normal; box-shadow: 0 1px 2px rgba(0,0,0,.03); }
+    .approval-title { margin: 0; color: #3f3f46; font-size: 12.5px; font-weight: 600;
+      display: flex; align-items: center; gap: 7px; }
+    .approval-title::before { width: 6px; height: 6px; border-radius: 50%; background: #f59e0b;
+      content: ""; flex: 0 0 auto; }
+    .approval-tool { display: inline-block; margin: 6px 0 0; border: 1px solid #e4e4e7;
+      border-radius: 6px; background: #fff; color: #27272a; padding: 2px 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px; font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; }
+    .approval-description { margin: 7px 0 0; color: #71717a; font-size: 12.5px;
+      line-height: 1.45; }
+    .approval-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+      margin-top: 10px; }
+    .approval-button { min-height: 30px; border: 1px solid #d4d4d8; border-radius: 7px;
+      background: #fff; color: #52525b; cursor: pointer; font-family: inherit; font-size: 12px;
+      font-weight: 500; padding: 5px 9px; transition: background .12s, color .12s, opacity .12s; }
+    .approval-button:hover:not(:disabled) { background: #f4f4f5; }
+    .approval-button.primary { border-color: ${config.color}; background: ${config.color}; color: #fff; }
+    .approval-button.primary:hover:not(:disabled) { opacity: .88; }
+    .approval-button.danger { border-color: transparent; background: transparent; color: #71717a; }
+    .approval-button.danger:hover:not(:disabled) { background: #f4f4f5; color: #18181b; }
+    .approval-button.cancel-run { border-color: #fca5a5; color: #b91c1c; }
+    .approval-button.cancel-run:hover:not(:disabled) { background: #fef2f2; }
+    .approval-button:disabled { cursor: default; opacity: .55; }
+    .approval-error { margin: 8px 0 0; color: #b91c1c; font-size: 12px; }
+    .approval-status { display: block; margin-top: 8px; color: #71717a; font-size: 12px; }
     .msg-error { margin-top: 2px; border: 1px solid #fecaca; background: #fef2f2;
       color: #b91c1c; border-radius: 8px; padding: 10px 12px; font-size: 13.5px;
       line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2;
@@ -53934,6 +54508,7 @@ function styles(config) {
       .launcher svg,
       .close,
       .send,
+      .approval-button,
       .panel {
         transition: none;
       }
@@ -53970,7 +54545,17 @@ var AgentChatElement = class extends HTMLElement {
     this.titleId = `${this.widgetId}-title`;
   }
   static get observedAttributes() {
-    return ["endpoint", "title", "color", "greeting", "position", "avatar", "mode", "token-url"];
+    return [
+      "endpoint",
+      "title",
+      "color",
+      "greeting",
+      "position",
+      "avatar",
+      "mode",
+      "token-url",
+      "require-identity"
+    ];
   }
   connectedCallback() {
     if (this.connected) return;
@@ -53990,8 +54575,21 @@ var AgentChatElement = class extends HTMLElement {
     if (previousEndpoint && previousEndpoint !== this.config.endpoint) this.instanceKey += 1;
     this.render();
   }
+  /** Work out who the caller is again — for a single-page app that signs a user
+   *  in, or switches user, without reloading the page.
+   *
+   *  Deliberately not `logout()`: that discards the visitor pass, which is what
+   *  the sign-in merge hands over, so using it here would throw away the
+   *  conversations the visitor had before logging in. The open thread is kept
+   *  too — the merge re-owns it, so the user carries straight on in it. */
+  refreshIdentity() {
+    if (!this.connected) return;
+    this.configure();
+    this.instanceKey += 1;
+    this.render();
+  }
   /** Forget this browser's identity and its open thread, so the next person on
-   *  this machine starts clean. Call it when the host signs a user in or out. */
+   *  this machine starts clean. Call it when the host signs a user out. */
   logout() {
     this.tokens?.forget();
     if (this.config) removeStoredConversationId(this.config.endpoint);
@@ -54000,8 +54598,35 @@ var AgentChatElement = class extends HTMLElement {
   }
   configure() {
     this.config = parseConfig(this, this.scriptBaseUrl);
-    this.tokens = new TokenSource(this.config.endpoint, this.config.tokenUrl, this.tokenProvider);
+    this.tokens = new TokenSource(this.config.endpoint, {
+      tokenUrl: this.config.tokenUrl,
+      provider: this.tokenProvider,
+      requireIdentity: this.config.requireIdentity,
+      onIdentityFailure: (failure) => this.emitIdentityFailure(failure)
+    });
     this.client = new AgentChatClient(this.config.endpoint, this.tokens);
+  }
+  /** A configured identity that could not be obtained is reported, never
+   *  swallowed: an unreachable `token-url` otherwise looks exactly like a
+   *  working anonymous chat, which is how a broken integration ships. */
+  emitIdentityFailure(failure) {
+    const anonymousFallbackEnabled = !this.config.requireIdentity;
+    const detail = { ...failure, anonymousFallbackEnabled };
+    if (failure.reason !== "unauthorized") {
+      console.warn(
+        `[agent-chat] could not obtain an identity from ${failure.url}${failure.status ? ` (HTTP ${failure.status})` : ""}: ${failure.reason}.${anonymousFallbackEnabled ? " May fall back to an anonymous visitor." : ""}`
+      );
+    }
+    try {
+      this.dispatchEvent(
+        new CustomEvent("agent-chat:identity-error", {
+          detail,
+          bubbles: true,
+          composed: true
+        })
+      );
+    } catch {
+    }
   }
   render() {
     const root7 = this.shadowRoot || this.attachShadow({ mode: "open" });
@@ -54320,6 +54945,14 @@ lucide-react/dist/esm/icons/send.mjs:
    *)
 
 lucide-react/dist/esm/icons/square-pen.mjs:
+  (**
+   * @license lucide-react v1.22.0 - ISC
+   *
+   * This source code is licensed under the ISC license.
+   * See the LICENSE file in the root directory of this source tree.
+   *)
+
+lucide-react/dist/esm/icons/square.mjs:
   (**
    * @license lucide-react v1.22.0 - ISC
    *

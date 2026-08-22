@@ -123,11 +123,145 @@ async def test_messages_in_insertion_order(repo: Repository) -> None:
     ]
 
 
+async def test_append_message_if_absent_is_idempotent(repo: Repository) -> None:
+    await repo.create_session("sess-1")
+    message = ConversationMessage(
+        message_id="stable-message",
+        session_id="sess-1",
+        run_id="run-1",
+        role=Role.ASSISTANT,
+        content="done",
+        created_at=datetime.now(UTC),
+    )
+
+    created = await repo.append_message_if_absent(message)
+    duplicate = await repo.append_message_if_absent(message)
+
+    assert created is True
+    assert duplicate is False
+    stored = await repo.list_conversation_messages("sess-1")
+    assert stored == [message]
+
+
+async def test_branch_head_selects_one_immutable_ancestry(repo: Repository) -> None:
+    await repo.create_session("branch")
+    now = datetime.now(UTC)
+    root = ConversationMessage("root", "branch", Role.USER, "U1", now)
+    answer = ConversationMessage(
+        "answer",
+        "branch",
+        Role.ASSISTANT,
+        "A1",
+        now + timedelta(microseconds=1),
+        parent_message_id="root",
+    )
+    original = ConversationMessage(
+        "original",
+        "branch",
+        Role.USER,
+        "U2",
+        now + timedelta(microseconds=2),
+        run_id="run-original",
+        parent_message_id="answer",
+    )
+    for message in (root, answer, original):
+        await repo.append_message(message)
+
+    edited = ConversationMessage(
+        "edited",
+        "branch",
+        Role.USER,
+        "U2 edited",
+        now + timedelta(microseconds=3),
+        parent_message_id="answer",
+    )
+    assert await repo.append_message_if_head(edited, "original") is True
+    assert (
+        await repo.append_message_if_head(
+            ConversationMessage("racer", "branch", Role.USER, "racer", now),
+            "original",
+        )
+        is False
+    )
+
+    assert [message.message_id for message in await repo.list_conversation_messages("branch")] == [
+        "root",
+        "answer",
+        "edited",
+    ]
+    assert await repo.get_message("original") == original
+    assert await repo.get_user_message_for_run("branch", "run-original") == original
+
+    late_original_answer = ConversationMessage(
+        "late-answer",
+        "branch",
+        Role.ASSISTANT,
+        "late A2",
+        now + timedelta(microseconds=4),
+        parent_message_id="original",
+    )
+    assert await repo.append_message_if_absent(late_original_answer) is True
+    assert [message.message_id for message in await repo.list_conversation_messages("branch")] == [
+        "root",
+        "answer",
+        "edited",
+    ]
+    assert await repo.get_message("late-answer") == late_original_answer
+
+
 async def test_limit_returns_most_recent_oldest_first(repo: Repository) -> None:
     cid = await repo.create_conversation()
     for i in range(5):
         await repo.add_message(cid, Role.USER, f"m{i}")
     assert [m.content for m in await repo.list_messages(cid, limit=2)] == ["m3", "m4"]
+    assert await repo.list_messages(cid, limit=0) == []
+
+
+async def test_limit_counts_only_the_active_branch(repo: Repository) -> None:
+    """A limited read walks the selected ancestry, not whatever else the session stores."""
+    now = datetime.now(UTC)
+    await repo.create_session("branch", user_id="u1")
+    await repo.append_message_if_head(
+        ConversationMessage("root", "branch", Role.USER, "Q1", now), None
+    )
+    await repo.append_message_if_head(
+        ConversationMessage(
+            "answer",
+            "branch",
+            Role.ASSISTANT,
+            "A1",
+            now + timedelta(microseconds=1),
+            parent_message_id="root",
+        ),
+        "root",
+    )
+    await repo.append_message_if_head(
+        ConversationMessage(
+            "abandoned",
+            "branch",
+            Role.USER,
+            "Q2",
+            now + timedelta(microseconds=2),
+            parent_message_id="answer",
+        ),
+        "answer",
+    )
+    # Edit Q2: a sibling of `abandoned` becomes the head, leaving it stored but inactive.
+    await repo.append_message_if_head(
+        ConversationMessage(
+            "edited",
+            "branch",
+            Role.USER,
+            "Q2 edited",
+            now + timedelta(microseconds=3),
+            parent_message_id="answer",
+        ),
+        "abandoned",
+    )
+
+    limited = await repo.list_conversation_messages("branch", limit=2)
+
+    assert [message.message_id for message in limited] == ["answer", "edited"]
 
 
 async def test_same_turn_keeps_order(repo: Repository) -> None:

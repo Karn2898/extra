@@ -28,6 +28,8 @@ implemented, so protected-node access control is not actually enforced today.
 11. [CLAUDE_CODE_WORKFLOW.md](CLAUDE_CODE_WORKFLOW.md) — using Claude Code in this repo.
 12. [DEVELOPMENT_WORKFLOW.md](DEVELOPMENT_WORKFLOW.md) — how to work in this repo.
 13. [ROADMAP.md](ROADMAP.md) — phased plan.
+14. [adr/](adr/) — architecture decision records for contract-level changes,
+    including [immutable conversation branches](adr/0002-conversation-lifecycle-and-immutable-branches.md).
 
 ## Relationship to other directories
 

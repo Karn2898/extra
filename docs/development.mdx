@@ -1,0 +1,110 @@
+---
+title: Development
+description: Run Extra from source — backend, frontend, and a debugger.
+---
+
+Run Extra from source: the servers restart on save and any IDE debugs them.
+
+## Setup (once)
+
+Python 3.11+ and Node 18+. Docker is only needed for `make up`.
+
+```bash
+make install   # editable install + dev tools
+npm install    # widget toolchain
+```
+
+The starter example defaults to local [Ollama](https://ollama.com)
+(`ollama pull qwen2.5:14b`), so no paid API key is needed, and its `.env` is
+created on first run.
+
+## Backend
+
+One terminal each:
+
+```bash
+make dev-mcp   # the MCP server the starter example calls   :8765
+make dev       # agent-manager: playground, API, engine    :8100
+```
+
+The API is at http://localhost:8100 — `/health`, `/conversations`, and the rest
+of the [HTTP API](/docs/api). The playground at
+http://localhost:8100/playground serves the widget against it, which is the
+quickest way to exercise the backend by hand.
+
+## Frontend
+
+```bash
+make dev-widget   # esbuild --watch on the chat widget
+```
+
+The widget (`src/agent_manager/api/static/widget/`, TypeScript + React) bundles
+into `widget.js`, which `agent-manager` serves — so `make dev` must be running.
+No dev server, no HMR: save, then refresh http://localhost:8100/playground.
+
+| Command                    | Does                                    |
+| -------------------------- | --------------------------------------- |
+| `npm run build:widget`     | One-off bundle — run it before opening a PR |
+| `npm run typecheck:widget` | Type-check                              |
+| `npm run test:widget`      | Unit tests (node)                       |
+| `npm run test:widget:e2e`  | Playwright end-to-end tests             |
+
+`widget-demo.html`, `widget-demo-inline.html`, and the other demo pages exercise
+the embed modes without the playground: http://localhost:8100/widget-demo.html.
+
+## Debugging
+
+- **VS Code / Cursor**: <kbd>F5</kbd> → *Debug manager* or *Debug engine API*.
+  It asks for the spec path and defaults to the starter example.
+- **PyCharm**: a plain Python run configuration — see below.
+
+Both run without the file watcher, so a code change needs a restart. Free the
+port first: stop `make dev`, and `make down` if the Docker stack is up.
+
+### PyCharm run configuration
+
+*Run → Edit Configurations → + → Python*:
+
+| Field             | Value                                                        |
+| ----------------- | ------------------------------------------------------------ |
+| Script path       | `src/agent_manager/cli.py` — check the dropdown says *Script path*, not *Module name* (as a module it's `agent_manager.cli`) |
+| Parameters        | `--config examples/starter/agents.yaml --host 127.0.0.1`      |
+| Working directory | the repository root — `.env` and any explicitly configured relative database path resolve against it |
+
+Debug it, open http://localhost:8100/playground, send a message — breakpoints
+hit.
+
+For the engine, the script is `src/agentctl/main.py` and the parameters start
+with the subcommand: `serve --config examples/starter/agents.yaml --host
+127.0.0.1`.
+
+For your own system, put its spec path in Parameters. Its `.env`, plugins, and
+tools load into the same process, so you can break in your code too; start its
+MCP servers yourself.
+
+## Before a PR
+
+```bash
+make check   # format, lint, mypy, pytest, stale-stub check
+```
+
+Touched `.ai/`? Run `make generate-ai` and commit the regenerated adapters.
+
+## Notes
+
+- **Port already in use** — `make up`'s Docker stack binds 8090/8100 too. Stop
+  it with `make down`, or move the dev server: `PORT=8200 make dev`. Both
+  servers read `PORT` (shell or `.env`).
+- **Tool calls fail** — `make dev-mcp` isn't running. The example's
+  `agents.yaml` declares it as `bank_core: http://127.0.0.1:8765/mcp`.
+- **Engine only, no UI** — `make dev-engine` serves the stateless API on `:8090`.
+- **Run your own `agents.yaml`, not the example** — point `AGENTS` at any path:
+
+  ```bash
+  make dev AGENTS=~/work/my-system/agents.yaml
+  ```
+
+  The `.env`, plugins, and tools beside it load, and edits there restart the
+  server — so you can debug another project's system from this checkout. Start
+  its MCP servers yourself; `make dev-mcp` only knows the bundled examples.
+- **An `.env` somewhere else** — `make dev ENV_FILE=~/secrets/dev.env`.

@@ -44,7 +44,7 @@ DENY                do not run it; store nothing
 Agent / LangGraph node
         │  requests a concrete tool call
         ▼
-AgentNode._invoke_tool           (the single choke point for local + MCP tools)
+ToolInvoker.invoke               (the single choke point for local + MCP tools)
         │
         ▼
 ApprovalCoordinator.resolve()    (centralized; no tool-specific logic)
@@ -54,12 +54,22 @@ ApprovalCoordinator.resolve()    (centralized; no tool-specific logic)
         ▼
    execute=True  ──► idempotency guard ─► provider (LocalTool / MCP tools/call)
    execute=False ──► structured "[denied]" tool result (no execution)
+        │
+        ▼
+ToolUsageTracker                 (records the outcome; never decides anything)
 ```
 
 There is **no** path that reaches a provider without passing through
 `ApprovalCoordinator.resolve()`. The engine uses a custom tool loop
 (`run_tool_loop`), not a bypassing LangGraph `ToolNode`, and both local and MCP
-tools are invoked from the same `_invoke_tool`.
+tools are invoked from the same `ToolInvoker.invoke`.
+
+Approval and tool-usage tracking are separate subsystems that share identifiers
+(`run_id`, `tool_call_id`, agent, tool) but no responsibilities: approval decides
+*whether* an invocation may run, tracking records *what happened to it*. See
+[MCP_AND_TOOLS.md](MCP_AND_TOOLS.md) for the tracking side; a suspended
+invocation is recorded only once it is decided, and a resumed one keeps the
+approval's `tool_call_id`, so approve/resume never produces a second record.
 
 Components (all small, single-responsibility):
 
@@ -74,6 +84,7 @@ Components (all small, single-responsibility):
 | `RunRepository` | Abstract run-persistence contract; owns idempotent registration semantics |
 | `ApprovalManager` | Pending-approval lifecycle + atomic resume claim |
 | `ToolExecutionManager` | Execution idempotency ledger |
+| `ToolInvoker` | Coordinates one tool call: identity, limits, gate, execution, recording |
 | `CheckpointProviderFactory` | Selects the checkpointer once at startup |
 
 The policy, session repository, and provider are all injected behind interfaces
@@ -186,11 +197,18 @@ When a call requires approval, the `ApprovalProvider` for this runtime
    `status="pending_approval"` and a sanitized `pending_approval` payload. **No
    tool ran; for MCP, no `tools/call` was sent.**
 
-To resume, `Engine.resume(run_id, approval_id, decision)`:
+To resume, `Engine.resume(run_id, approval_id, decision)` or the streamed
+`Engine.resume_stream(...)` capability:
+
+> **Compatibility note:** Session-bound approvals now fail closed. Callers of
+> `resume(...)` and the approval HTTP endpoints must propagate the same session
+> identity used when the approval was created (for the engine API, via
+> `caller_session_id` / `X-Session-ID`). Omitting or changing it returns 403.
 
 1. **Atomically claims** the approval (`PENDING → RESUMING`) — exactly one caller
    wins (see §7).
-2. Resumes the **same** LangGraph thread from its checkpoint via
+2. Moves the run through `RESUMING → RUNNING` and resumes the **same** LangGraph
+   thread from its checkpoint via
    `Command(resume={"decision": ...})`. The graph is not restarted, the agent is
    not re-selected, and intent/planning are not re-run.
 3. The node re-executes, the coordinator interprets the typed decision, and:
@@ -218,14 +236,19 @@ tool_call_id  the agent's requested tool call
 execution_id  one actual execution attempt (idempotency key)
 ```
 
-Run states: `RUNNING → PENDING_APPROVAL → RESUMING → COMPLETED | FAILED`, with
-validated transitions (no `COMPLETED → RESUMING`, no `REJECTED → APPROVED`).
+Run states normally follow
+`RUNNING → PENDING_APPROVAL → RESUMING → RUNNING → COMPLETED | FAILED`, with
+validated transitions (no `COMPLETED → RESUMING`, no `REJECTED → APPROVED`). An
+explicit user cancellation also permits active `RUNNING → CANCELLED` and
+pending `PENDING_APPROVAL → CANCELLED` transitions.
 
-`CANCELLED` is also terminal and is reachable only from `RUNNING` or `RESUMING`.
-It records that a streaming consumer disconnected or stopped iteration, so the
-engine cancelled the graph instead of continuing model calls for an abandoned
-stream. Losing a stream after the run reaches `PENDING_APPROVAL` does not cancel
-the run: its durable checkpoint remains valid for a later human decision.
+`CANCELLED` is terminal. For an executing run, it records that a streaming
+consumer disconnected or stopped iteration, so the engine cancelled the graph
+instead of continuing model calls. Losing a stream after the run reaches
+`PENDING_APPROVAL` does not itself cancel the run: its durable checkpoint remains
+valid for a later human decision. The owner can instead explicitly cancel that
+pending run; its approval is atomically rejected and the checkpoint becomes
+unreachable through resume.
 
 ## 6. Checkpointer selection
 
@@ -260,10 +283,11 @@ future work behind their existing repository contracts.
 
 ## 7. Concurrency and idempotency
 
-**Run registration.** `RunRepository` is a runtime-checkable structural protocol,
+**Run registration.** `RunRepository` is an explicit abstract base class,
 with `InMemoryRunRepository` as its current process-local implementation. The
 contract lives in `agent_engine.runs.repository`; the adapter lives separately in
-`agent_engine.runs.in_memory`, leaving `agent_engine.approvals.repository`
+`agent_engine.runs.in_memory`, leaving the approval repositories under
+`agent_engine.approvals`
 focused on approval and execution-ledger persistence.
 `RunLifecycle` sends the abstraction one intent:
 create the run if its `run_id` is not already registered. The repository returns
@@ -292,7 +316,7 @@ therefore bounded and never scans or drains all expired runs on a request path.
 cannot invalidate an active execution or resumable approval. After a terminal
 record expires, its `run_id` is unknown and may be registered again; the TTL is
 therefore also the in-memory adapter's idempotency and status-query retention
-window. This policy does not change the `RunRepository` protocol: applications
+window. This policy does not change the `RunRepository` contract: applications
 that need different retention inject another configured or persistent adapter.
 
 `create_if_absent` deliberately performs no eviction. Its existence check and
@@ -317,6 +341,11 @@ atomic `PENDING → RESUMING` compare-and-set. Only one concurrent request wins;
 others get a stable `ApprovalAlreadyProcessed`. In-memory this is a locked
 transition; the shared-DB implementation maps it to a conditional
 `UPDATE ... WHERE status = 'pending'`.
+
+**Cancellation race.** Pending-run cancellation performs the competing atomic
+`PENDING → REJECTED` approval transition. Exactly one of cancellation or resume
+can win. If resume has already claimed the approval, cancellation returns a
+conflict and does not imply that an external side effect can be rolled back.
 
 **Session-repository safety.** The in-memory adapter guards lookup, grant,
 revocation, expiry removal, and session cleanup with one async lock. Repeated
@@ -365,14 +394,67 @@ The `/decision` endpoint accepts a free-text `decision` (`allow`,
 single boundary; an unrecognized value returns 400. `/approve` and `/reject` are
 convenience routes for the two most common typed decisions. To grant
 `ALLOW_FOR_SESSION`, use `/decision` with `"allow for this session"`.
+If `/invoke` or `/stream` supplied `X-Session-ID`, every later decision request
+for that run must supply the same header. Omitting or changing it fails closed
+with 403 before the approval is claimed.
+
+The conversation approval router
+(`agent_manager/api/routes/approvals.py`) exposes the same engine capability
+inside the conversation ownership boundary:
+
+```text
+POST /conversations/{conversation_id}/runs/{run_id}/approvals/{approval_id}/decision
+POST /conversations/{conversation_id}/runs/{run_id}/approvals/{approval_id}/decision/stream
+POST /conversations/{conversation_id}/runs/{run_id}/approvals/{approval_id}/cancel
+```
+
+Its body carries one typed value: `allow_once`, `deny`, or
+`allow_for_session`. The route authorizes the conversation owner before resume,
+and the engine checks the stored approval session reference before atomically
+claiming it. A completed resume is persisted as the assistant turn; if resume
+reaches another approval, that new pending request is returned instead.
+Assistant persistence uses a deterministic per-run message id. If execution
+completed but the response or first database write failed, retrying the same
+decision recovers the result from the completed graph checkpoint and does not
+duplicate the assistant turn or tool execution.
+
+The widget uses `/decision/stream`. Its first lifecycle event is
+`resume_started` with the original `run_id`; later route, token, approval, and
+final events come from the same graph thread. Aborting this response closes the
+engine-owned resume stream, cancels its LangGraph task, and atomically moves the
+same run to `CANCELLED`. Partial assistant output is not persisted as a completed
+assistant message.
+
+The `/cancel` route is a separate terminal lifecycle action, not a fourth
+approval decision and not an alias for `DENY`. It is allowed only while the
+approval remains pending. A successful response returns
+`{"run_id": "...", "status": "cancelled"}`; a decision that already won the
+atomic race returns 409.
+
+The bundled widget renders these decisions as **Approve**, **Deny**, and
+**Approve for this session**, plus a separate **Cancel run** action. Cancel
+remains available while a decision request is in flight so the two requests can
+race at the authoritative backend. After `resume_started`, the ordinary active
+execution **Stop** control replaces pending cancellation. The textarea and Edit
+remain available for drafting, while submit stays blocked until the active run
+finishes. The last approval option reuses the existing session permission key,
+so later calls to the same provider-qualified tool by the same agent in the same
+conversation do not prompt again.
 
 A pending-approval payload contains `run_id`, `approval_id`, `agent_id`,
 `tool_name`, a human-readable `description` (stating the tool has **not** run
-yet), `provider`, and **masked** `arguments`. Approval endpoints validate that the
-run and approval exist, the approval belongs to the run, the caller is authorized,
-the approval is still pending, and the run is resumable. Errors map to stable
-status codes (404 / 403 / 409 / 400) without leaking internals. Secrets, tokens,
-and unmasked arguments are never persisted or returned.
+yet), `provider`, optional `server_id`, and **masked** `arguments`. The streaming
+and non-streaming forms expose the same safe identity fields. Approval endpoints
+validate that the run and approval exist, the approval belongs to the run, the
+caller is authorized, the approval is still pending, and the run is resumable.
+Errors map to stable status codes (404 / 403 / 409 / 400) without leaking
+internals. Secrets, tokens, and unmasked arguments are never persisted or
+returned.
+
+Token usage is accumulated on the run across every execution leg: the initial
+leg that reaches an interrupt and each later resume. A completed conversation
+turn therefore persists the full reported usage and remains subject to the same
+conversation-budget accounting as a run that never paused.
 
 ## 9. Security notes
 

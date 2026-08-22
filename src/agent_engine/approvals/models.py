@@ -50,7 +50,9 @@ _RUN_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
             RunStatus.CANCELLED,
         }
     ),
-    RunStatus.PENDING_APPROVAL: frozenset({RunStatus.RESUMING, RunStatus.FAILED}),
+    RunStatus.PENDING_APPROVAL: frozenset(
+        {RunStatus.RESUMING, RunStatus.FAILED, RunStatus.CANCELLED}
+    ),
     RunStatus.RESUMING: frozenset(
         {
             RunStatus.RUNNING,
@@ -74,8 +76,13 @@ _APPROVAL_TRANSITIONS: dict[ApprovalStatus, frozenset[ApprovalStatus]] = {
 
 
 def ensure_run_transition(current: RunStatus, target: RunStatus) -> None:
-    if target not in _RUN_TRANSITIONS[current]:
+    if not can_transition_run(current, target):
         raise InvalidStateTransition("run", current.value, target.value)
+
+
+def can_transition_run(current: RunStatus, target: RunStatus) -> bool:
+    """Return whether the canonical run state machine allows this edge."""
+    return target in _RUN_TRANSITIONS[current]
 
 
 def ensure_approval_transition(current: ApprovalStatus, target: ApprovalStatus) -> None:
@@ -91,6 +98,8 @@ class RunRecord:
     thread_id: str
     system_name: str
     status: RunStatus = RunStatus.RUNNING
+    input_tokens: int | None = None
+    output_tokens: int | None = None
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 

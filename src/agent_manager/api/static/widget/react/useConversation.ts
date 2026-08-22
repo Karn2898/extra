@@ -7,6 +7,7 @@ import {
   setStoredConversationId,
 } from "../storage/conversationStorage";
 import type {
+  ApprovalDecision,
   ChatMessage,
   PaginatedThreads,
   TokenBudget,
@@ -24,8 +25,32 @@ import type {
 export interface Conversation {
   peekId(): string | null;
   ensureId(): Promise<string>;
-  send(conversationId: string, text: string): Promise<SendMessageResponse>;
-  stream(conversationId: string, text: string): AsyncGenerator<StreamEvent>;
+  send(
+    conversationId: string,
+    text: string,
+    signal?: AbortSignal,
+    editMessageId?: string,
+  ): Promise<SendMessageResponse>;
+  stream(
+    conversationId: string,
+    text: string,
+    signal?: AbortSignal,
+    editMessageId?: string,
+  ): AsyncGenerator<StreamEvent>;
+  decideApproval(
+    conversationId: string,
+    runId: string,
+    approvalId: string,
+    decision: ApprovalDecision,
+  ): Promise<SendMessageResponse>;
+  streamApproval(
+    conversationId: string,
+    runId: string,
+    approvalId: string,
+    decision: ApprovalDecision,
+    signal?: AbortSignal,
+  ): AsyncGenerator<StreamEvent>;
+  cancelApproval(conversationId: string, runId: string, approvalId: string): Promise<void>;
   loadHistory(conversationId: string): Promise<ChatMessage[]>;
   loadUsage(conversationId: string): Promise<TokenBudget | null>;
   listThreads(limit?: number, cursor?: string | null): Promise<PaginatedThreads>;
@@ -71,29 +96,69 @@ export function useConversation(
   );
 
   const send = useCallback(
-    async (conversationId: string, text: string) => {
+    async (
+      conversationId: string,
+      text: string,
+      signal?: AbortSignal,
+      editMessageId?: string,
+    ) => {
       try {
-        return await client.sendMessage(conversationId, text);
+        return await client.sendMessage(conversationId, text, signal, editMessageId);
       } catch (error) {
         if (!isUnusableConversation(error)) throw error;
-        return client.sendMessage(await replace(conversationId), text);
+        // A replacement conversation cannot contain a message id from the
+        // vanished one. Preserve the edited text, but make it the fresh root.
+        return client.sendMessage(await replace(conversationId), text, signal);
       }
     },
     [client, replace],
   );
 
   const stream = useCallback(
-    async function* (conversationId: string, text: string): AsyncGenerator<StreamEvent> {
+    async function* (
+      conversationId: string,
+      text: string,
+      signal?: AbortSignal,
+      editMessageId?: string,
+    ): AsyncGenerator<StreamEvent> {
       try {
-        yield* client.streamMessage(conversationId, text);
+        yield* client.streamMessage(conversationId, text, signal, editMessageId);
       } catch (error) {
         if (!isUnusableConversation(error)) throw error;
-        yield* client.streamMessage(await replace(conversationId), text);
+        // The old branch no longer exists server-side, so retrying its edit id
+        // against the newly created conversation would deterministically 404.
+        yield* client.streamMessage(await replace(conversationId), text, signal);
       }
     },
     [client, replace],
   );
 
+  const decideApproval = useCallback(
+    (
+      conversationId: string,
+      runId: string,
+      approvalId: string,
+      decision: ApprovalDecision,
+    ) => client.decideApproval(conversationId, runId, approvalId, decision),
+    [client],
+  );
+
+  const streamApproval = useCallback(
+    (
+      conversationId: string,
+      runId: string,
+      approvalId: string,
+      decision: ApprovalDecision,
+      signal?: AbortSignal,
+    ) => client.streamApproval(conversationId, runId, approvalId, decision, signal),
+    [client],
+  );
+
+  const cancelApproval = useCallback(
+    (conversationId: string, runId: string, approvalId: string) =>
+      client.cancelApproval(conversationId, runId, approvalId),
+    [client],
+  );
   const loadHistory = useCallback(
     async (conversationId: string) => {
       try {
@@ -141,13 +206,28 @@ export function useConversation(
       ensureId,
       send,
       stream,
+      decideApproval,
+      streamApproval,
+      cancelApproval,
       loadHistory,
       loadUsage,
       listThreads,
       switchTo,
       startNew,
     }),
-    [peekId, ensureId, send, stream, loadHistory, loadUsage, listThreads, switchTo, startNew],
+    [
+      peekId,
+      ensureId,
+      send,
+      stream,
+      decideApproval,
+      streamApproval,
+      cancelApproval,
+      loadHistory,
+      loadUsage,
+      listThreads,
+      switchTo,
+      startNew,
+    ],
   );
 }
-
