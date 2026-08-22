@@ -324,9 +324,9 @@ def test_a_visitor_pass_does_not_shadow_the_host_session_cookie() -> None:
 
     # The conversation belongs to Dana, not to the visitor she used to be.
     as_dana = TestClient(app, cookies=session_cookie(id="u_8412"))
-    assert [t["conversation_id"] for t in as_dana.get("/conversations").json()] == [cid]
+    assert [t["conversation_id"] for t in as_dana.get("/conversations").json()["items"]] == [cid]
     still_a_visitor = {"Authorization": f"Bearer {visitor_pass}"}
-    assert TestClient(app).get("/conversations", headers=still_a_visitor).json() == []
+    assert TestClient(app).get("/conversations", headers=still_a_visitor).json()["items"] == []
 
 
 def test_a_host_bearer_token_outranks_the_session_cookie() -> None:
@@ -348,9 +348,13 @@ def test_a_host_bearer_token_outranks_the_session_cookie() -> None:
     cid = caller.post("/conversations").json()["conversation_id"]
 
     assert [
-        t["conversation_id"] for t in TestClient(app).get("/conversations", headers=as_noam).json()
+        t["conversation_id"]
+        for t in TestClient(app).get("/conversations", headers=as_noam).json()["items"]
     ] == [cid]
-    assert TestClient(app, cookies=session_cookie(id="u_asaf")).get("/conversations").json() == []
+    assert (
+        TestClient(app, cookies=session_cookie(id="u_asaf")).get("/conversations").json()["items"]
+        == []
+    )
 
 
 def test_a_visitor_pass_is_an_identity_of_its_own(unauthenticated: TestClient) -> None:
