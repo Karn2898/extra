@@ -56,6 +56,12 @@ class ConversationSession:
 
 
 @dataclass(frozen=True)
+class PaginatedSessions:
+    sessions: list[ConversationSession]
+    next_cursor: str | None = None
+
+
+@dataclass(frozen=True)
 class ConversationMessage:
     message_id: str
     session_id: str

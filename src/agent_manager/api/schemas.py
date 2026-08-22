@@ -45,6 +45,11 @@ class ConversationSummary(BaseModel):
     last_message_at: datetime | None = None
 
 
+class PaginatedConversationsResponse(BaseModel):
+    items: list[ConversationSummary]
+    next_cursor: str | None = None
+
+
 class MessageOut(BaseModel):
     role: Role
     content: str

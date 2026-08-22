@@ -8,6 +8,7 @@ import {
 } from "../storage/conversationStorage";
 import type {
   ChatMessage,
+  PaginatedThreads,
   TokenBudget,
   SendMessageResponse,
   StreamEvent,
@@ -27,7 +28,7 @@ export interface Conversation {
   stream(conversationId: string, text: string): AsyncGenerator<StreamEvent>;
   loadHistory(conversationId: string): Promise<ChatMessage[]>;
   loadUsage(conversationId: string): Promise<TokenBudget | null>;
-  listThreads(): Promise<ThreadSummary[]>;
+  listThreads(limit?: number, cursor?: string | null): Promise<PaginatedThreads>;
   switchTo(conversationId: string): void;
   startNew(): void;
 }
@@ -118,7 +119,11 @@ export function useConversation(
     [client],
   );
 
-  const listThreads = useCallback(() => client.listConversations().catch(() => []), [client]);
+  const listThreads = useCallback(
+    (limit?: number, cursor?: string | null) =>
+      client.listConversations(limit, cursor).catch(() => ({ items: [], next_cursor: null })),
+    [client],
+  );
 
   const switchTo = useCallback(
     (conversationId: string) => setStoredConversationId(endpoint, conversationId),

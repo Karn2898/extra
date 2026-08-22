@@ -54,12 +54,12 @@ def test_list_conversations_returns_titled_threads_scoped_to_user(client: TestCl
     b = client.post("/conversations", headers=u1).json()["conversation_id"]
     client.post(f"/conversations/{b}/messages", json={"message": "second thread"}, headers=u1)
 
-    threads = client.get("/conversations", headers=u1).json()
+    threads = client.get("/conversations", headers=u1).json()["items"]
     assert {t["conversation_id"]: t["title"] for t in threads} == {
         a: "first thread",
         b: "second thread",
     }
-    assert client.get("/conversations", headers=bearer("u2")).json() == []
+    assert client.get("/conversations", headers=bearer("u2")).json()["items"] == []
 
 
 def test_another_caller_cannot_touch_a_conversation_it_does_not_own(client: TestClient) -> None:
@@ -91,7 +91,10 @@ def test_create_cannot_claim_a_conversation_id_owned_by_another_caller(
     assert taken.status_code == 409
     assert client.get("/conversations/sess-1/messages", headers=bob).status_code == 403
 
-    assert client.get("/conversations", headers=alice).json()[0]["conversation_id"] == "sess-1"
+    assert (
+        client.get("/conversations", headers=alice).json()["items"][0]["conversation_id"]
+        == "sess-1"
+    )
 
 
 @pytest.fixture
@@ -144,7 +147,7 @@ def test_the_host_session_cookie_authenticates_a_same_origin_deployment() -> Non
     cid = created.json()["conversation_id"]
     dana.post(f"/conversations/{cid}/messages", json={"message": "hi"})
 
-    assert [t["conversation_id"] for t in dana.get("/conversations").json()] == [cid]
+    assert [t["conversation_id"] for t in dana.get("/conversations").json()["items"]] == [cid]
     assert TestClient(app).get(f"/conversations/{cid}/messages").status_code == 401
 
 
@@ -161,7 +164,7 @@ def test_a_visitor_pass_is_an_identity_of_its_own(unauthenticated: TestClient) -
 
     assert client.get(f"/conversations/{cid}/messages", headers=visitor).status_code == 200
     assert client.get(f"/conversations/{cid}/messages", headers=other_visitor).status_code == 403
-    assert client.get("/conversations", headers=other_visitor).json() == []
+    assert client.get("/conversations", headers=other_visitor).json()["items"] == []
 
 
 def test_signing_in_adopts_the_conversations_a_visitor_already_started() -> None:
@@ -177,9 +180,9 @@ def test_signing_in_adopts_the_conversations_a_visitor_already_started() -> None
     linked = client.post("/auth/link", json={"anonymous_token": pass_token}, headers=alice)
 
     assert linked.json() == {"conversations_moved": 1}
-    assert [t["conversation_id"] for t in client.get("/conversations", headers=alice).json()] == [
-        cid
-    ]
+    assert [
+        t["conversation_id"] for t in client.get("/conversations", headers=alice).json()["items"]
+    ] == [cid]
     assert client.get(f"/conversations/{cid}/messages", headers=alice).status_code == 200
     assert client.get(f"/conversations/{cid}/messages", headers=visitor).status_code == 403
 
