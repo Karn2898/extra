@@ -524,7 +524,7 @@ async def test_pagination_contract(repo: Repository) -> None:
             if r5:
                 r5.created_at = base_time
             await session.commit()
-    else:
+    elif isinstance(repo, MemoryRepository):
         from dataclasses import replace
 
         repo._sessions["s1"] = replace(s1, created_at=base_time)
@@ -574,7 +574,7 @@ async def test_pagination_contract(repo: Repository) -> None:
     assert [s.session_id for s in page3.items] == ["s1"]
     assert page3.next_cursor is None
 
-    all_ids = [s.session_id for s in page1.items + page2.items + page3.items]
+    all_ids = [s.session_id for s in [*page1.items, *page2.items, *page3.items]]
     assert all_ids == ["s5", "s4", "s3", "s2", "s1"]
 
     # Page boundary landing exactly on limit
