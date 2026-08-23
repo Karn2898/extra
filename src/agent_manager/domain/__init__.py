@@ -18,8 +18,13 @@ from agent_manager.domain.models import (
     User,
     thread_title,
 )
+from agent_manager.domain.pagination import (
+    InvalidCursorError,
+    decode_cursor,
+    encode_cursor,
+    ensure_utc,
+)
 from agent_manager.domain.repository import Repository
-from agent_manager.infrastructure.persistence.pagination import InvalidCursorError
 
 __all__ = [
     "DEFAULT_PAGE_LIMIT",
@@ -40,5 +45,8 @@ __all__ = [
     "Role",
     "TokenBudgetUsage",
     "User",
+    "decode_cursor",
+    "encode_cursor",
+    "ensure_utc",
     "thread_title",
 ]

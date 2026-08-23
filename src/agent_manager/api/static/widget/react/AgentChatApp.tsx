@@ -249,8 +249,8 @@ export function AgentChatApp({
       if (threadsGenerationRef.current !== currentGen) return;
       setThreads((prev) => {
         // Keyset pagination sorts by (last_message_at, session_id). Since last_message_at
-        // is mutable, newly active threads can jump across pages. The drawer presents a snapshot
-        // taken when opened; deduplication prevents duplicate items if order mutates mid-scroll.
+        // is mutable, a thread updated while scrolling could appear across page boundaries;
+        // deduplication prevents duplicate items if order mutates mid-scroll.
         const existingIds = new Set(prev.map((t) => t.conversation_id));
         const newItems = res.items.filter((t) => !existingIds.has(t.conversation_id));
         return [...prev, ...newItems];

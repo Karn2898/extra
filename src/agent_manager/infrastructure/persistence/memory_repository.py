@@ -21,10 +21,10 @@ from agent_manager.domain import (
     Role,
     User,
 )
-from agent_manager.infrastructure.persistence.pagination import (
-    _utc,
+from agent_manager.domain.pagination import (
     decode_cursor,
     encode_cursor,
+    ensure_utc,
 )
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
@@ -32,12 +32,12 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 def _effective_t(s: ConversationSession) -> datetime:
     dt = s.last_message_at or s.created_at or _EPOCH
-    res = _utc(dt)
+    res = ensure_utc(dt)
     return res if res is not None else _EPOCH
 
 
 def _is_after_cursor(s: ConversationSession, cursor_t: datetime, cursor_id: str) -> bool:
-    target_t = _utc(cursor_t) or _EPOCH
+    target_t = ensure_utc(cursor_t) or _EPOCH
     eff_t = _effective_t(s)
     if eff_t < target_t:
         return True

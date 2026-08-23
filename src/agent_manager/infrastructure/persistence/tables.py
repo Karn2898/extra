@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Column, DateTime, Float, Index, Integer, Text, func
+from sqlalchemy import JSON, Column, DateTime, Float, Index, Integer, Text, text
 from sqlmodel import Field, SQLModel
 
 
@@ -37,10 +37,7 @@ class ConversationSessionRow(SQLModel, table=True):
         Index(
             "idx_conversation_sessions_user_active_session",
             "user_id",
-            func.coalesce(
-                Column("last_message_at", DateTime(timezone=True)),
-                Column("created_at", DateTime(timezone=True)),
-            ),
+            text("COALESCE(last_message_at, created_at)"),
             "session_id",
         ),
     )

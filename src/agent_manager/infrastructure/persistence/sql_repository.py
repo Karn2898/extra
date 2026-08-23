@@ -30,10 +30,10 @@ from agent_manager.domain import (
     Role,
     User,
 )
-from agent_manager.infrastructure.persistence.pagination import (
-    _utc,
+from agent_manager.domain.pagination import (
     decode_cursor,
     encode_cursor,
+    ensure_utc,
 )
 from agent_manager.infrastructure.persistence.tables import (
     ConversationMessageRow,
@@ -199,7 +199,7 @@ class SqlRepository(Repository):
 
         next_cursor = (
             encode_cursor(
-                rows[-1].last_message_at or rows[-1].created_at,
+                ensure_utc(rows[-1].last_message_at or rows[-1].created_at),  # type: ignore[arg-type]
                 rows[-1].session_id,
             )
             if has_more and rows
@@ -579,8 +579,8 @@ def _user(row: ConversationUserRow) -> User:
         display_name=row.display_name,
         linked_to_user_id=row.linked_to_user_id,
         metadata=dict(row.metadata_json or {}),
-        created_at=_utc(row.created_at),
-        updated_at=_utc(row.updated_at),
+        created_at=ensure_utc(row.created_at),
+        updated_at=ensure_utc(row.updated_at),
     )
 
 
@@ -593,10 +593,10 @@ def _session(row: ConversationSessionRow) -> ConversationSession:
         title=row.title,
         head_message_id=row.head_message_id,
         metadata=dict(row.metadata_json or {}),
-        created_at=_utc(row.created_at),
-        updated_at=_utc(row.updated_at),
-        last_message_at=_utc(row.last_message_at),
-        expires_at=_utc(row.expires_at),
+        created_at=ensure_utc(row.created_at),
+        updated_at=ensure_utc(row.updated_at),
+        last_message_at=ensure_utc(row.last_message_at),
+        expires_at=ensure_utc(row.expires_at),
     )
 
 
@@ -648,7 +648,7 @@ def _message(row: ConversationMessageRow) -> ConversationMessage:
         status=row.status,
         error_type=row.error_type,
         metadata=dict(row.metadata_json or {}),
-        created_at=_utc(row.created_at) or row.created_at,
+        created_at=ensure_utc(row.created_at) or row.created_at,
     )
 
 
@@ -664,7 +664,7 @@ def _message_json(row: ConversationMessageRow) -> dict[str, Any]:
         "tool_name": row.tool_name,
         "provider": row.provider,
         "status": row.status,
-        "created_at": (_utc(row.created_at) or row.created_at).isoformat(),
+        "created_at": (ensure_utc(row.created_at) or row.created_at).isoformat(),
         "metadata": dict(row.metadata_json or {}),
     }
 
@@ -676,10 +676,10 @@ def _snapshot(row: ConversationSnapshotRow) -> ConversationSnapshot:
         conversation_json=dict(row.conversation_json or {}),
         message_count=row.message_count,
         last_message_id=row.last_message_id,
-        last_message_at=_utc(row.last_message_at),
+        last_message_at=ensure_utc(row.last_message_at),
         model_context_tokens=row.model_context_tokens,
-        updated_at=_utc(row.updated_at) or row.updated_at,
-        expires_at=_utc(row.expires_at),
+        updated_at=ensure_utc(row.updated_at) or row.updated_at,
+        expires_at=ensure_utc(row.expires_at),
     )
 
 

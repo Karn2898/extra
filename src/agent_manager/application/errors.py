@@ -1,6 +1,6 @@
 """Application-layer failures exposed by conversation use cases."""
 
-from agent_manager.infrastructure.persistence.pagination import InvalidCursorError
+from agent_manager.domain.pagination import InvalidCursorError
 
 __all__ = [
     "ConversationAccessDenied",

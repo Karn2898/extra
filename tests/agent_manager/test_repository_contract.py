@@ -496,10 +496,37 @@ async def test_pagination_contract(repo: Repository) -> None:
     user_id = "paginated_user"
     await repo.upsert_user(user_id)
 
-    # 1. Multi-page iteration returning each session exactly once
+    base_time = datetime(2026, 8, 20, 12, 0, 0, tzinfo=UTC)
     await repo.create_session("s1", user_id=user_id)
     await repo.create_session("s2", user_id=user_id)
     await repo.create_session("s3", user_id=user_id)
+    await repo.append_message(
+        ConversationMessage(
+            message_id="m1",
+            session_id="s1",
+            role=Role.USER,
+            content="m1",
+            created_at=base_time,
+        )
+    )
+    await repo.append_message(
+        ConversationMessage(
+            message_id="m2",
+            session_id="s2",
+            role=Role.USER,
+            content="m2",
+            created_at=base_time + timedelta(hours=1),
+        )
+    )
+    await repo.append_message(
+        ConversationMessage(
+            message_id="m3",
+            session_id="s3",
+            role=Role.USER,
+            content="m3",
+            created_at=base_time + timedelta(hours=2),
+        )
+    )
 
     page1 = await repo.list_sessions(user_id, page=PageRequest(limit=2))
     assert len(page1.items) == 2
