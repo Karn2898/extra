@@ -119,6 +119,7 @@ export function AgentChatApp({
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMoreThreads, setLoadingMoreThreads] = useState(false);
+  const [threadsError, setThreadsError] = useState<string | null>(null);
   const [threadsOpen, setThreadsOpen] = useState(false);
   const hasMoreThreads = nextCursor !== null;
   const isLoadingMoreRef = useRef(false);
@@ -225,12 +226,17 @@ export function AgentChatApp({
     const currentGen = threadsGenerationRef.current;
     setThreadsOpen(true);
     setLoadingMoreThreads(true);
+    setThreadsError(null);
     isLoadingMoreRef.current = true;
     try {
       const res = await conversation.listThreads(THREADS_PAGE_SIZE, null);
       if (threadsGenerationRef.current !== currentGen) return;
       setThreads(res.items);
       setNextCursor(res.next_cursor);
+    } catch (err) {
+      if (threadsGenerationRef.current !== currentGen) return;
+      const msg = err instanceof AgentChatHttpError ? err.message : GENERIC_ERROR;
+      setThreadsError(msg);
     } finally {
       if (threadsGenerationRef.current === currentGen) {
         setLoadingMoreThreads(false);
@@ -244,6 +250,7 @@ export function AgentChatApp({
     const currentGen = threadsGenerationRef.current;
     isLoadingMoreRef.current = true;
     setLoadingMoreThreads(true);
+    setThreadsError(null);
     try {
       const res = await conversation.listThreads(THREADS_PAGE_SIZE, nextCursor);
       if (threadsGenerationRef.current !== currentGen) return;
@@ -256,6 +263,10 @@ export function AgentChatApp({
         return [...prev, ...newItems];
       });
       setNextCursor(res.next_cursor);
+    } catch (err) {
+      if (threadsGenerationRef.current !== currentGen) return;
+      const msg = err instanceof AgentChatHttpError ? err.message : GENERIC_ERROR;
+      setThreadsError(msg);
     } finally {
       if (threadsGenerationRef.current === currentGen) {
         setLoadingMoreThreads(false);
@@ -643,11 +654,13 @@ export function AgentChatApp({
           <ThreadDrawer
             open={threadsOpen}
             threads={threads}
-            activeId={getStoredConversationId(config.endpoint)}
+            activeId={activeId}
             loadingMore={loadingMoreThreads}
+            error={threadsError}
             hasMore={hasMoreThreads}
             onLoadMore={() => void loadMoreThreads()}
-            onSelect={openThread}
+            onRetry={() => (threads.length === 0 ? void openThreads() : void loadMoreThreads())}
+            onSelect={(cid) => void openThread(cid)}
             onNew={startNewThread}
             onClose={() => setThreadsOpen(false)}
           />
@@ -979,8 +992,10 @@ function ThreadDrawer({
   threads,
   activeId,
   loadingMore,
+  error,
   hasMore,
   onLoadMore,
+  onRetry,
   onSelect,
   onNew,
   onClose,
@@ -989,15 +1004,17 @@ function ThreadDrawer({
   threads: ThreadSummary[];
   activeId: string | null;
   loadingMore: boolean;
+  error: string | null;
   hasMore: boolean;
   onLoadMore: () => void;
+  onRetry: () => void;
   onSelect: (conversationId: string) => void;
   onNew: () => void;
   onClose: () => void;
 }) {
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const { scrollTop, clientHeight, scrollHeight } = e.currentTarget;
-    if (scrollHeight - scrollTop - clientHeight < SCROLL_THRESHOLD_PX && hasMore && !loadingMore) {
+    if (scrollHeight - scrollTop - clientHeight < SCROLL_THRESHOLD_PX && hasMore && !loadingMore && !error) {
       onLoadMore();
     }
   };
@@ -1026,8 +1043,21 @@ function ThreadDrawer({
             {thread.title || "New chat"}
           </button>
         ))}
-        {threads.length === 0 && !loadingMore ? <p className="thread-empty">No conversations yet</p> : null}
+        {threads.length === 0 && !loadingMore && !error ? <p className="thread-empty">No conversations yet</p> : null}
+        {error ? (
+          <div className="thread-empty thread-error">
+            <p>{error}</p>
+            <button className="thread-retry-btn" onClick={onRetry} type="button">
+              Retry
+            </button>
+          </div>
+        ) : null}
         {loadingMore ? <p className="thread-empty">Loading...</p> : null}
+        {hasMore && !loadingMore && !error ? (
+          <button className="thread-load-more-btn" onClick={onLoadMore} type="button">
+            Load more
+          </button>
+        ) : null}
       </div>
     </div>
   );

@@ -497,53 +497,91 @@ async def test_pagination_contract(repo: Repository) -> None:
     await repo.upsert_user(user_id)
 
     base_time = datetime(2026, 8, 20, 12, 0, 0, tzinfo=UTC)
-    await repo.create_session("s1", user_id=user_id)
-    await repo.create_session("s2", user_id=user_id)
+    s1 = await repo.create_session("s1", user_id=user_id)
+    s2 = await repo.create_session("s2", user_id=user_id)
     await repo.create_session("s3", user_id=user_id)
-    await repo.append_message(
-        ConversationMessage(
-            message_id="m1",
-            session_id="s1",
-            role=Role.USER,
-            content="m1",
-            created_at=base_time,
-        )
-    )
-    await repo.append_message(
-        ConversationMessage(
-            message_id="m2",
-            session_id="s2",
-            role=Role.USER,
-            content="m2",
-            created_at=base_time + timedelta(hours=1),
-        )
-    )
+    await repo.create_session("s4", user_id=user_id)
+    await repo.create_session("s5", user_id=user_id)
+
+    # If repo is SqlRepository, set created_at explicitly so created_at ordering is deterministic
+    if isinstance(repo, SqlRepository):
+        async with repo._sessions() as session:
+            from agent_manager.infrastructure.persistence.tables import ConversationSessionRow
+
+            r1 = await session.get(ConversationSessionRow, "s1")
+            if r1:
+                r1.created_at = base_time
+            r2 = await session.get(ConversationSessionRow, "s2")
+            if r2:
+                r2.created_at = base_time + timedelta(minutes=10)
+            r3 = await session.get(ConversationSessionRow, "s3")
+            if r3:
+                r3.created_at = base_time
+            r4 = await session.get(ConversationSessionRow, "s4")
+            if r4:
+                r4.created_at = base_time
+            r5 = await session.get(ConversationSessionRow, "s5")
+            if r5:
+                r5.created_at = base_time
+            await session.commit()
+    else:
+        from dataclasses import replace
+
+        repo._sessions["s1"] = replace(s1, created_at=base_time)
+        repo._sessions["s2"] = replace(s2, created_at=base_time + timedelta(minutes=10))
+
+    # Append messages to s3, s4, s5 (s4 and s5 share the same last_message_at timestamp)
     await repo.append_message(
         ConversationMessage(
             message_id="m3",
             session_id="s3",
             role=Role.USER,
             content="m3",
+            created_at=base_time + timedelta(hours=1),
+        )
+    )
+    await repo.append_message(
+        ConversationMessage(
+            message_id="m4",
+            session_id="s4",
+            role=Role.USER,
+            content="m4",
+            created_at=base_time + timedelta(hours=2),
+        )
+    )
+    await repo.append_message(
+        ConversationMessage(
+            message_id="m5",
+            session_id="s5",
+            role=Role.USER,
+            content="m5",
             created_at=base_time + timedelta(hours=2),
         )
     )
 
+    # Page 1: limit 2 -> ["s5", "s4"]
     page1 = await repo.list_sessions(user_id, page=PageRequest(limit=2))
-    assert len(page1.items) == 2
+    assert [s.session_id for s in page1.items] == ["s5", "s4"]
     assert page1.next_cursor is not None
 
+    # Page 2: limit 2 -> ["s3", "s2"]
     page2 = await repo.list_sessions(user_id, page=PageRequest(limit=2, cursor=page1.next_cursor))
-    assert len(page2.items) == 1
-    assert page2.next_cursor is None
+    assert [s.session_id for s in page2.items] == ["s3", "s2"]
+    assert page2.next_cursor is not None
 
-    all_ids = [s.session_id for s in page1.items + page2.items]
-    assert all_ids == ["s3", "s2", "s1"]
+    # Page 3: limit 2 -> ["s1"]
+    page3 = await repo.list_sessions(user_id, page=PageRequest(limit=2, cursor=page2.next_cursor))
+    assert [s.session_id for s in page3.items] == ["s1"]
+    assert page3.next_cursor is None
 
-    # 2. Page boundary landing exactly on limit
-    page_exact = await repo.list_sessions(user_id, page=PageRequest(limit=3))
-    assert len(page_exact.items) == 3
+    all_ids = [s.session_id for s in page1.items + page2.items + page3.items]
+    assert all_ids == ["s5", "s4", "s3", "s2", "s1"]
+
+    # Page boundary landing exactly on limit
+    page_exact = await repo.list_sessions(user_id, page=PageRequest(limit=5))
+    assert len(page_exact.items) == 5
     assert page_exact.next_cursor is None
 
-    # 3. Malformed cursor raises InvalidCursorError
+    # Malformed cursor raises InvalidCursorError
     with pytest.raises(InvalidCursorError):
         await repo.list_sessions(user_id, page=PageRequest(cursor="invalid_garbage_token"))

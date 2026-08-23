@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -76,7 +77,7 @@ class PageRequest:
 
 @dataclass(frozen=True)
 class Page(Generic[T]):
-    items: list[T]
+    items: Sequence[T]
     next_cursor: str | None = None
 
 
