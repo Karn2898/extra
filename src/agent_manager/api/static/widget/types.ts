@@ -116,6 +116,7 @@ export interface StreamEvent {
     | "tool_failed"
     | "final"
     | "pending_approval"
+    | "title"
     | "error";
   content?: string;
   route?: string[];
@@ -132,6 +133,8 @@ export interface StreamEvent {
   agent_id?: string;
   description?: string;
   arguments?: Record<string, unknown>;
+  /** Set only on a `title` event: the conversation's generated title. */
+  title?: string;
 }
 
 /** Detail of the `agent-chat:identity-error` event, raised when a configured

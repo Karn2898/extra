@@ -156,6 +156,13 @@ async def stream_message(
                 payload = to_stream_event(event).model_dump(exclude_none=True)
                 yield f"event: {event.type}\ndata: {json.dumps(payload)}\n\n"
             exhausted = True
+            # Titling runs alongside the turn and is normally done well before
+            # this point, so awaiting it here costs nothing; delivering it on
+            # this stream is what makes the client's view of the title
+            # deterministic rather than dependent on which finished first.
+            if (title := await service.wait_for_generated_title(turn)) is not None:
+                titled = StreamEventOut(type="title", title=title).model_dump(exclude_none=True)
+                yield f"event: title\ndata: {json.dumps(titled)}\n\n"
         except Exception:
             await service.fail_turn(turn)
             # The run is already terminal; `finally` must not try to cancel it.

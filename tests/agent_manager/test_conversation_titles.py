@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from typing import Any
 
 import pytest
+from fastapi.testclient import TestClient
 
 from agent_engine.core.spec import BaseModelConfig
 from agent_engine.engine.types import ChatMessage, RunResult
@@ -23,7 +24,7 @@ from agent_manager.infrastructure.titles import (
     TRACE_NAME,
     ConversationTitler,
 )
-from tests.agent_manager.conftest import RecordingEngine
+from tests.agent_manager.conftest import RecordingEngine, bearer, build_test_app
 
 ALICE = Principal.external("alice")
 LONG_QUESTION = (
@@ -305,3 +306,96 @@ def test_title_generator_is_none_when_the_engine_has_no_default_model() -> None:
 
 def test_title_generator_is_none_for_an_engine_without_the_capability() -> None:
     assert _title_generator(PlainEngine()) is None
+
+
+class SlowCompletionEngine(StubCompletionEngine):
+    """Finishes only when released — stands in for a title that outlives its turn."""
+
+    def __init__(self, answer: str = "Next Month Invoice Estimate") -> None:
+        super().__init__(answer)
+        self.released = asyncio.Event()
+
+    async def complete(self, prompt: str, **kwargs: Any) -> str:
+        await self.released.wait()
+        return self.answer
+
+
+async def test_the_generated_title_is_delivered_even_when_it_outlives_the_turn() -> None:
+    """The turn finishing first must not lose the title.
+
+    Generation runs alongside the turn, so which of the two lands first is a
+    race. `wait_for_generated_title` is what makes delivery independent of the
+    outcome: it resolves once generation actually completes, however late.
+    """
+    engine = SlowCompletionEngine()
+    service = ConversationService(
+        RecordingEngine(), MemoryRepository(), title_generator=titler(engine)
+    )
+    cid = await service.create(ALICE)
+
+    turn = await service.prepare_turn(cid, LONG_QUESTION, ALICE)
+    async for _event in service.stream_turn(turn):
+        pass
+    engine.released.set()
+
+    assert await service.wait_for_generated_title(turn) == "Next Month Invoice Estimate"
+
+
+async def test_no_title_is_delivered_for_a_turn_that_started_no_generation() -> None:
+    service = ConversationService(
+        RecordingEngine(), MemoryRepository(), title_generator=titler(StubCompletionEngine())
+    )
+    cid = await service.create(ALICE)
+
+    await service.send(cid, LONG_QUESTION, ALICE)
+    second = await service.prepare_turn(cid, "a follow-up question", ALICE)
+
+    assert second.title_task is None
+    assert await service.wait_for_generated_title(second) is None
+
+
+async def test_a_failed_generation_delivers_the_trim_that_stands_in_for_it() -> None:
+    """The event carries the settled title, not only a changed one — so a client
+    relaying it never has to distinguish success from fallback."""
+    service = ConversationService(
+        RecordingEngine(), MemoryRepository(), title_generator=titler(FailingCompletionEngine())
+    )
+    cid = await service.create(ALICE)
+
+    turn = await service.prepare_turn(cid, LONG_QUESTION, ALICE)
+
+    assert await service.wait_for_generated_title(turn) == LONG_QUESTION[:47] + "…"
+
+
+def test_the_stream_delivers_the_title_after_the_turn() -> None:
+    """End to end over SSE: the client is told the title without asking again."""
+    engine = StubCompletionEngine()
+    service = ConversationService(
+        RecordingEngine(), MemoryRepository(), title_generator=titler(engine)
+    )
+    client = TestClient(build_test_app(service), headers=bearer("alice"))
+    cid = client.post("/conversations").json()["conversation_id"]
+
+    with client.stream(
+        "POST", f"/conversations/{cid}/messages/stream", json={"message": LONG_QUESTION}
+    ) as response:
+        text = "".join(response.iter_text())
+
+    assert 'event: title\ndata: {"type": "title", "title": "Next Month Invoice Estimate"}' in text
+    assert text.index("event: final") < text.index("event: title")
+
+
+def test_the_stream_sends_no_title_event_on_a_later_turn() -> None:
+    service = ConversationService(
+        RecordingEngine(), MemoryRepository(), title_generator=titler(StubCompletionEngine())
+    )
+    client = TestClient(build_test_app(service), headers=bearer("alice"))
+    cid = client.post("/conversations").json()["conversation_id"]
+    client.post(f"/conversations/{cid}/messages", json={"message": LONG_QUESTION})
+
+    with client.stream(
+        "POST", f"/conversations/{cid}/messages/stream", json={"message": "a follow-up"}
+    ) as response:
+        text = "".join(response.iter_text())
+
+    assert "event: title" not in text

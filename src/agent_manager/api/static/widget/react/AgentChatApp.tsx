@@ -275,6 +275,17 @@ export function AgentChatApp({
     }
   }, [conversation, nextCursor]);
 
+  // The server sends a `title` event once generation actually finishes, so the
+  // list is corrected from that event rather than from a guess about which
+  // finished first — the turn or its title.
+  const applyGeneratedTitle = useCallback((conversationId: string, title: string) => {
+    setThreads((prev) =>
+      prev.map((thread) =>
+        thread.conversation_id === conversationId ? { ...thread, title } : thread,
+      ),
+    );
+  }, []);
+
   const openThread = useCallback(
     async (conversationId: string) => {
       conversation.switchTo(conversationId);
@@ -540,6 +551,10 @@ export function AgentChatApp({
             replaceEntry(cid, userEntry.id, userEntry);
             continue;
           }
+          if (event.type === "title") {
+            if (event.title) applyGeneratedTitle(resolveConversationId(cid), event.title);
+            continue;
+          }
           completed ||= event.type === "final";
           entry = reduceStreamEvent(entry, event);
           replaceEntry(cid, pending.id, entry);
@@ -591,6 +606,7 @@ export function AgentChatApp({
       finishExecution,
       onAnswer,
       putEntries,
+      applyGeneratedTitle,
       refreshUsage,
       replaceEntry,
       resolveConversationId,

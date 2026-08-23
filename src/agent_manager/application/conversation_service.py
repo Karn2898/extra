@@ -13,7 +13,7 @@ import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Coroutine, Sequence
 from contextlib import suppress
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 
 from agent_engine.approvals.decision import ApprovalDecision
 from agent_engine.approvals.errors import ApprovalAlreadyProcessed, RunNotFound
@@ -54,6 +54,8 @@ from agent_manager.domain import (
 )
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 
 def _run_context(turn: PreparedConversationTurn) -> RunContext:
@@ -97,12 +99,27 @@ class ConversationService:
         self._config_path = config_path
         self._run_repository = run_repository
         self._title_generator = title_generator
-        self._background: set[asyncio.Task[None]] = set()
+        self._background: set[asyncio.Task[Any]] = set()
 
     async def close(self) -> None:
         """Let background work finish before the process goes down."""
         if self._background:
             await asyncio.gather(*self._background, return_exceptions=True)
+
+    async def wait_for_generated_title(self, turn: PreparedConversationTurn) -> str | None:
+        """This conversation's settled title, once the turn's naming work lands.
+
+        `None` only when the turn started no naming at all — not a first turn,
+        or no generator configured. Otherwise the stored title, which is the
+        generated one or the trimmed opening message that stands in when
+        generation fails; a caller relaying this always relays the current
+        truth rather than having to reason about which happened.
+
+        Cheap for whoever drives a live turn: naming starts with the turn, so
+        by the time the turn's own stream ends this has usually finished
+        already. Bounded by the generator's own timeout regardless.
+        """
+        return await turn.title_task if turn.title_task is not None else None
 
     async def create(self, principal: Principal, *, session_id: str | None = None) -> str:
         """Create a conversation, or return the caller's own existing one.
@@ -252,8 +269,11 @@ class ConversationService:
         if not appended:
             await self._transition_run(run_id, RunStatus.CANCELLED)
             raise ConversationBranchConflict(conversation_id)
-        if not prior_context.messages:
+        title_task = (
             await self._name_conversation(conversation_id, text)
+            if not prior_context.messages
+            else None
+        )
 
         return PreparedConversationTurn(
             session_id=conversation_id,
@@ -263,6 +283,7 @@ class ConversationService:
             message=text,
             history=build_history(prior_context.messages, self._window),
             principal=principal,
+            title_task=title_task,
         )
 
     async def complete_turn(
@@ -483,22 +504,25 @@ class ConversationService:
             await task
             raise
 
-    async def _name_conversation(self, conversation_id: str, text: str) -> None:
+    async def _name_conversation(
+        self, conversation_id: str, text: str
+    ) -> asyncio.Task[str | None] | None:
         """Title a conversation from its opening message, once.
 
         The trimmed title lands first so the thread is never nameless, and a
         generated one overwrites it from the background: the caller's first
-        token must not wait on a second model.
+        token must not wait on a second model. Returns the background work so
+        the caller can deliver its result without waiting on it here.
         """
         await self._rename(conversation_id, thread_title(text))
         generator = self._title_generator
         if generator is None:
-            return
-        self._spawn(self._generate_title(generator, conversation_id, text))
+            return None
+        return self._spawn(self._generate_title(generator, conversation_id, text))
 
     async def _generate_title(
         self, generator: TitleGenerator, conversation_id: str, text: str
-    ) -> None:
+    ) -> str | None:
         try:
             title = await generator.generate(text, conversation_id)
         except Exception:
@@ -509,8 +533,9 @@ class ConversationService:
                 conversation_id=conversation_id,
                 exc_info=True,
             )
-            return
+            return None
         await self._rename(conversation_id, title)
+        return title
 
     async def _rename(self, conversation_id: str, title: str) -> None:
         """A title is cosmetic; failing to store one must not orphan a turn."""
@@ -525,7 +550,7 @@ class ConversationService:
                 exc_info=True,
             )
 
-    def _spawn(self, work: Coroutine[Any, Any, None]) -> None:
+    def _spawn(self, work: Coroutine[Any, Any, T]) -> asyncio.Task[T]:
         """Hold a background task for its whole life.
 
         The event loop keeps only a weak reference, so a task nobody owns can be
@@ -534,6 +559,7 @@ class ConversationService:
         task = asyncio.create_task(work)
         self._background.add(task)
         task.add_done_callback(self._background.discard)
+        return task
 
     async def _persist_assistant_turn(
         self,

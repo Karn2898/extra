@@ -53628,6 +53628,13 @@ function AgentChatApp({
       }
     }
   }, [conversation, nextCursor]);
+  const applyGeneratedTitle = (0, import_react10.useCallback)((conversationId, title) => {
+    setThreads(
+      (prev) => prev.map(
+        (thread) => thread.conversation_id === conversationId ? { ...thread, title } : thread
+      )
+    );
+  }, []);
   const openThread = (0, import_react10.useCallback)(
     async (conversationId) => {
       conversation.switchTo(conversationId);
@@ -53863,6 +53870,10 @@ function AgentChatApp({
             replaceEntry(cid, userEntry.id, userEntry);
             continue;
           }
+          if (event.type === "title") {
+            if (event.title) applyGeneratedTitle(resolveConversationId(cid), event.title);
+            continue;
+          }
           completed || (completed = event.type === "final");
           entry = reduceStreamEvent(entry, event);
           replaceEntry(cid, pending.id, entry);
@@ -53914,6 +53925,7 @@ function AgentChatApp({
       finishExecution,
       onAnswer,
       putEntries,
+      applyGeneratedTitle,
       refreshUsage,
       replaceEntry,
       resolveConversationId

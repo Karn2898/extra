@@ -128,3 +128,4 @@ class StreamEventOut(BaseModel):
     agent_id: str | None = None
     description: str | None = None
     arguments: dict[str, Any] | None = None
+    title: str | None = None
