@@ -12,7 +12,8 @@ from agent_manager.domain.models import (
     ConversationSession,
     ConversationSnapshot,
     Message,
-    PaginatedSessions,
+    Page,
+    PageRequest,
     Role,
     User,
 )
@@ -68,8 +69,8 @@ class Repository(ABC):
 
     @abstractmethod
     async def list_sessions(
-        self, user_id: str, *, limit: int = 50, cursor: str | None = None
-    ) -> PaginatedSessions:
+        self, user_id: str, page: PageRequest | None = None
+    ) -> Page[ConversationSession]:
         """A user's sessions, most-recently-active first, with cursor pagination."""
 
     @abstractmethod

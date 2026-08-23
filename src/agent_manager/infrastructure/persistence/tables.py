@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Column, DateTime, Float, Index, Integer, Text
+from sqlalchemy import JSON, Column, DateTime, Float, Index, Integer, Text, func
 from sqlmodel import Field, SQLModel
 
 
@@ -33,6 +33,17 @@ class ConversationUserRow(SQLModel, table=True):
 
 class ConversationSessionRow(SQLModel, table=True):
     __tablename__ = "conversation_sessions"
+    __table_args__ = (
+        Index(
+            "idx_conversation_sessions_user_active_session",
+            "user_id",
+            func.coalesce(
+                Column("last_message_at", DateTime(timezone=True)),
+                Column("created_at", DateTime(timezone=True)),
+            ),
+            "session_id",
+        ),
+    )
 
     session_id: str = Field(primary_key=True, max_length=64)
     user_id: str | None = Field(default=None, foreign_key="conversation_users.user_id", index=True)

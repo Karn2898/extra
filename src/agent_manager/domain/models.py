@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Generic, TypeVar
+
+T = TypeVar("T")
 
 BUDGET_WARNING_PERCENT = 65.0
 BUDGET_CRITICAL_PERCENT = 85.0
@@ -56,10 +58,29 @@ class ConversationSession:
     expires_at: datetime | None = None
 
 
+DEFAULT_PAGE_LIMIT = 20
+MAX_PAGE_LIMIT = 100
+
+
 @dataclass(frozen=True)
-class PaginatedSessions:
-    sessions: list[ConversationSession]
+class PageRequest:
+    limit: int = DEFAULT_PAGE_LIMIT
+    cursor: str | None = None
+
+    def __post_init__(self) -> None:
+        bounded_limit = max(1, min(self.limit, MAX_PAGE_LIMIT))
+        object.__setattr__(self, "limit", bounded_limit)
+        if self.cursor is not None and not self.cursor.strip():
+            object.__setattr__(self, "cursor", None)
+
+
+@dataclass(frozen=True)
+class Page(Generic[T]):
+    items: list[T]
     next_cursor: str | None = None
+
+
+PaginatedSessions = Page[ConversationSession]
 
 
 @dataclass(frozen=True)

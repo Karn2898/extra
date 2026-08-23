@@ -29,6 +29,7 @@ from agent_manager.api.schemas import (
     StreamEventOut,
     TokenBudgetResponse,
 )
+from agent_manager.domain import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, PageRequest
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -50,17 +51,19 @@ async def create_conversation(
 async def list_conversations(
     service: Service,
     caller: Caller,
-    limit: int = Query(default=20, ge=1, le=100),
+    limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
     cursor: str | None = Query(default=None),
 ) -> PaginatedConversationsResponse:
-    paginated = await service.list_conversations(caller, limit=limit, cursor=cursor)
+    with as_http_error():
+        page = PageRequest(limit=limit, cursor=cursor)
+        paginated = await service.list_conversations(caller, page=page)
     items = [
         ConversationSummary(
             conversation_id=session.session_id,
             title=session.title,
             last_message_at=session.last_message_at,
         )
-        for session in paginated.sessions
+        for session in paginated.items
     ]
     return PaginatedConversationsResponse(items=items, next_cursor=paginated.next_cursor)
 

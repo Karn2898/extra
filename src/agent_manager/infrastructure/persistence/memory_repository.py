@@ -7,6 +7,7 @@ from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 from agent_manager.domain import (
     ConversationContext,
@@ -14,12 +15,14 @@ from agent_manager.domain import (
     ConversationSession,
     ConversationSnapshot,
     Message,
-    PaginatedSessions,
+    Page,
+    PageRequest,
     Repository,
     Role,
     User,
 )
-from agent_manager.infrastructure.persistence.sql_repository import (
+from agent_manager.infrastructure.persistence.pagination import (
+    _utc,
     decode_cursor,
     encode_cursor,
 )
@@ -27,15 +30,20 @@ from agent_manager.infrastructure.persistence.sql_repository import (
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
-def _is_after_cursor(s: ConversationSession, cursor_t: datetime | None, cursor_id: str) -> bool:
-    sid = s.session_id or ""
-    if cursor_t is not None:
-        if s.last_message_at is None:
-            return True
-        if s.last_message_at < cursor_t:
-            return True
-        return s.last_message_at == cursor_t and sid < cursor_id
-    return s.last_message_at is None and sid < cursor_id
+def _effective_t(s: ConversationSession) -> datetime:
+    dt = s.last_message_at or s.created_at or _EPOCH
+    res = _utc(dt)
+    return res if res is not None else _EPOCH
+
+
+def _is_after_cursor(s: ConversationSession, cursor_t: datetime, cursor_id: str) -> bool:
+    target_t = _utc(cursor_t) or _EPOCH
+    eff_t = _effective_t(s)
+    if eff_t < target_t:
+        return True
+    if eff_t == target_t:
+        return (s.session_id or "") < cursor_id
+    return False
 
 
 class MemoryRepository(Repository):
@@ -54,23 +62,23 @@ class MemoryRepository(Repository):
         display_name: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> User:
-        now = datetime.now(UTC)
         existing = self._users.get(user_id)
+        now = datetime.now(UTC)
         user = User(
             user_id=user_id,
             external_user_id=external_user_id
             if external_user_id is not None
-            else existing.external_user_id
-            if existing
-            else None,
-            username=username if username is not None else existing.username if existing else None,
+            else (existing.external_user_id if existing else None),
+            username=username
+            if username is not None
+            else (existing.username if existing else None),
             display_name=display_name
             if display_name is not None
-            else existing.display_name
-            if existing
-            else None,
+            else (existing.display_name if existing else None),
             linked_to_user_id=existing.linked_to_user_id if existing else None,
-            metadata=dict(metadata or (existing.metadata if existing else {})),
+            metadata=dict(
+                metadata if metadata is not None else (existing.metadata if existing else {})
+            ),
             created_at=existing.created_at if existing else now,
             updated_at=now,
         )
@@ -81,14 +89,30 @@ class MemoryRepository(Repository):
         return self._users.get(user_id)
 
     async def link_anonymous_user(self, anonymous_user_id: str, user_id: str) -> int:
-        visitor = self._users.get(anonymous_user_id)
-        if visitor is None or visitor.linked_to_user_id is not None:
+        if anonymous_user_id == user_id:
             return 0
-        self._users[anonymous_user_id] = replace(visitor, linked_to_user_id=user_id)
-        moved = [s for s in self._sessions.values() if s.user_id == anonymous_user_id]
-        for session in moved:
-            self._sessions[session.session_id] = replace(session, user_id=user_id)
-        return len(moved)
+
+        target = self._users.get(user_id)
+        if target and target.linked_to_user_id:
+            return 0
+
+        anon = self._users.get(anonymous_user_id)
+        if anon and anon.linked_to_user_id:
+            return 0
+
+        moved = 0
+        now = datetime.now(UTC)
+        for sid, session in list(self._sessions.items()):
+            if session.user_id == anonymous_user_id:
+                self._sessions[sid] = replace(session, user_id=user_id, updated_at=now)
+                moved += 1
+
+        if anon:
+            self._users[anonymous_user_id] = replace(
+                anon, linked_to_user_id=user_id, updated_at=now
+            )
+
+        return moved
 
     async def create_session(
         self,
@@ -101,11 +125,11 @@ class MemoryRepository(Repository):
         metadata: dict[str, Any] | None = None,
         expires_at: datetime | None = None,
     ) -> ConversationSession:
-        sid = session_id or uuid.uuid4().hex
+        sid = session_id or uuid4().hex
+        if sid in self._sessions:
+            return self._sessions[sid]
+
         now = datetime.now(UTC)
-        existing = self._sessions.get(sid)
-        if existing is not None:
-            return existing
         session = ConversationSession(
             session_id=sid,
             user_id=user_id,
@@ -126,15 +150,14 @@ class MemoryRepository(Repository):
         return self._sessions.get(session_id)
 
     async def list_sessions(
-        self, user_id: str, *, limit: int = 50, cursor: str | None = None
-    ) -> PaginatedSessions:
+        self, user_id: str, page: PageRequest | None = None
+    ) -> Page[ConversationSession]:
+        page = page or PageRequest()
+        limit = page.limit
+        cursor = page.cursor
         sessions = [s for s in self._sessions.values() if s.user_id == user_id]
         sessions.sort(
-            key=lambda s: (
-                s.last_message_at is not None,
-                s.last_message_at or _EPOCH,
-                s.session_id,
-            ),
+            key=lambda s: (_effective_t(s), s.session_id or ""),
             reverse=True,
         )
 
@@ -145,11 +168,14 @@ class MemoryRepository(Repository):
         has_more = len(sessions) > limit
         result_sessions = sessions[:limit] if has_more else sessions
         next_cursor = (
-            encode_cursor(result_sessions[-1].last_message_at, result_sessions[-1].session_id)
+            encode_cursor(
+                _effective_t(result_sessions[-1]),
+                result_sessions[-1].session_id,
+            )
             if has_more and result_sessions
             else None
         )
-        return PaginatedSessions(sessions=result_sessions, next_cursor=next_cursor)
+        return Page(items=result_sessions, next_cursor=next_cursor)
 
     async def rename_session(self, session_id: str, title: str) -> None:
         session = self._sessions.get(session_id)

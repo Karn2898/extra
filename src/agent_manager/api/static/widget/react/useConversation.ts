@@ -185,8 +185,7 @@ export function useConversation(
   );
 
   const listThreads = useCallback(
-    (limit?: number, cursor?: string | null) =>
-      client.listConversations(limit, cursor).catch(() => ({ items: [], next_cursor: null })),
+    (limit?: number, cursor?: string | null) => client.listConversations(limit, cursor),
     [client],
   );
 

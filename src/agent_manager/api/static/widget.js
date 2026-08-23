@@ -52176,7 +52176,7 @@ var AgentChatClient = class {
     }));
     return {
       items,
-      next_cursor: data.next_cursor ? String(data.next_cursor) : null
+      next_cursor: data.next_cursor ?? null
     };
   }
   async getMessages(conversationId) {
@@ -53399,7 +53399,7 @@ function useConversation(client, endpoint, onReplaced) {
     [client]
   );
   const listThreads = (0, import_react9.useCallback)(
-    (limit, cursor) => client.listConversations(limit, cursor).catch(() => ({ items: [], next_cursor: null })),
+    (limit, cursor) => client.listConversations(limit, cursor),
     [client]
   );
   const switchTo = (0, import_react9.useCallback)(
@@ -53444,6 +53444,8 @@ function useConversation(client, endpoint, onReplaced) {
 
 // src/agent_manager/api/static/widget/react/AgentChatApp.tsx
 var import_jsx_runtime4 = __toESM(require_jsx_runtime(), 1);
+var THREADS_PAGE_SIZE = 20;
+var SCROLL_THRESHOLD_PX = 40;
 var DEFAULT_GREETING = "How can I help you today?";
 var GENERIC_ERROR = "Something went wrong. Please try again.";
 var COPIED_RESET_MS = 2e3;
@@ -53491,8 +53493,10 @@ function AgentChatApp({
   const [threads, setThreads] = (0, import_react10.useState)([]);
   const [nextCursor, setNextCursor] = (0, import_react10.useState)(null);
   const [loadingMoreThreads, setLoadingMoreThreads] = (0, import_react10.useState)(false);
-  const [hasMoreThreads, setHasMoreThreads] = (0, import_react10.useState)(false);
   const [threadsOpen, setThreadsOpen] = (0, import_react10.useState)(false);
+  const hasMoreThreads = nextCursor !== null;
+  const isLoadingMoreRef = (0, import_react10.useRef)(false);
+  const threadsGenerationRef = (0, import_react10.useRef)(0);
   const launcherRef = (0, import_react10.useRef)(null);
   const inputRef = (0, import_react10.useRef)(null);
   const approvalRequestsRef = (0, import_react10.useRef)(/* @__PURE__ */ new Set());
@@ -53531,8 +53535,8 @@ function AgentChatApp({
   }, []);
   const refreshUsage = (0, import_react10.useCallback)(
     async (cid) => {
-      const u4 = await conversation.loadUsage(cid);
-      setUsageById((prev) => ({ ...prev, [cid]: u4 }));
+      const next2 = await conversation.loadUsage(cid);
+      setUsageById((prev) => ({ ...prev, [cid]: next2 }));
     },
     [conversation]
   );
@@ -53573,27 +53577,44 @@ function AgentChatApp({
     launcherRef.current?.focus({ preventScroll: true });
   }, [inline]);
   const openThreads = (0, import_react10.useCallback)(async () => {
+    threadsGenerationRef.current += 1;
+    const currentGen = threadsGenerationRef.current;
     setThreadsOpen(true);
     setLoadingMoreThreads(true);
-    const res = await conversation.listThreads(20, null);
-    setThreads(res.items);
-    setNextCursor(res.next_cursor);
-    setHasMoreThreads(res.next_cursor !== null);
-    setLoadingMoreThreads(false);
+    isLoadingMoreRef.current = true;
+    try {
+      const res = await conversation.listThreads(THREADS_PAGE_SIZE, null);
+      if (threadsGenerationRef.current !== currentGen) return;
+      setThreads(res.items);
+      setNextCursor(res.next_cursor);
+    } finally {
+      if (threadsGenerationRef.current === currentGen) {
+        setLoadingMoreThreads(false);
+        isLoadingMoreRef.current = false;
+      }
+    }
   }, [conversation]);
   const loadMoreThreads = (0, import_react10.useCallback)(async () => {
-    if (loadingMoreThreads || !hasMoreThreads || !nextCursor) return;
+    if (isLoadingMoreRef.current || !nextCursor) return;
+    const currentGen = threadsGenerationRef.current;
+    isLoadingMoreRef.current = true;
     setLoadingMoreThreads(true);
-    const res = await conversation.listThreads(20, nextCursor);
-    setThreads((prev) => {
-      const existingIds = new Set(prev.map((t) => t.conversation_id));
-      const newItems = res.items.filter((t) => !existingIds.has(t.conversation_id));
-      return [...prev, ...newItems];
-    });
-    setNextCursor(res.next_cursor);
-    setHasMoreThreads(res.next_cursor !== null);
-    setLoadingMoreThreads(false);
-  }, [conversation, hasMoreThreads, loadingMoreThreads, nextCursor]);
+    try {
+      const res = await conversation.listThreads(THREADS_PAGE_SIZE, nextCursor);
+      if (threadsGenerationRef.current !== currentGen) return;
+      setThreads((prev) => {
+        const existingIds = new Set(prev.map((t) => t.conversation_id));
+        const newItems = res.items.filter((t) => !existingIds.has(t.conversation_id));
+        return [...prev, ...newItems];
+      });
+      setNextCursor(res.next_cursor);
+    } finally {
+      if (threadsGenerationRef.current === currentGen) {
+        setLoadingMoreThreads(false);
+        isLoadingMoreRef.current = false;
+      }
+    }
+  }, [conversation, nextCursor]);
   const openThread = (0, import_react10.useCallback)(
     async (conversationId) => {
       conversation.switchTo(conversationId);
@@ -54202,7 +54223,7 @@ function ThreadDrawer({
 }) {
   const handleScroll = (e) => {
     const { scrollTop, clientHeight, scrollHeight } = e.currentTarget;
-    if (scrollHeight - scrollTop - clientHeight < 40 && hasMore && !loadingMore) {
+    if (scrollHeight - scrollTop - clientHeight < SCROLL_THRESHOLD_PX && hasMore && !loadingMore) {
       onLoadMore();
     }
   };

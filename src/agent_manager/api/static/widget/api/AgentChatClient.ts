@@ -74,15 +74,16 @@ export class AgentChatClient {
     const response = await this.request(`/conversations?${params.toString()}`);
 
     const data = await response.json();
-    const rawItems = Array.isArray(data.items) ? data.items : [];
-    const items: ThreadSummary[] = rawItems.map((thread: any) => ({
+    const rawItems: Array<{ conversation_id: string; title?: string | null; last_message_at?: string | null }> =
+      Array.isArray(data.items) ? data.items : [];
+    const items: ThreadSummary[] = rawItems.map((thread) => ({
       conversation_id: String(thread.conversation_id),
       title: thread.title ?? null,
       last_message_at: thread.last_message_at ?? null,
     }));
     return {
       items,
-      next_cursor: data.next_cursor ? String(data.next_cursor) : null,
+      next_cursor: (data.next_cursor as string | null) ?? null,
     };
   }
 

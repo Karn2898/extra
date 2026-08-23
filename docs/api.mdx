@@ -166,6 +166,36 @@ Response:
 
 Errors: `409` the supplied `session_id` belongs to another user.
 
+### `GET /conversations`
+
+List the calling user's conversations, ordered by most recently active first, using keyset pagination.
+
+**Query Parameters:**
+- `limit` *(integer, optional, default: 20, min: 1, max: 100)* — Maximum number of conversations to return per page.
+- `cursor` *(string, optional)* — Opaque pagination cursor token obtained from `next_cursor` of the previous page.
+
+```bash
+curl "http://localhost:8100/conversations?limit=20" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Response:
+
+```json
+{
+  "items": [
+    {
+      "conversation_id": "0d5a…",
+      "title": "Order status inquiry",
+      "last_message_at": "2026-08-20T14:00:00+00:00"
+    }
+  ],
+  "next_cursor": "eyJ0IjoiMjAyNi0wOC0yMFQxNDowMDowMCswMDowMCIsImlkIjoic2Vzcy0xMiJ9"
+}
+```
+
+When `next_cursor` is `null`, no further pages remain. Cursors are opaque server tokens and must not be constructed manually by clients.
+
 ### `POST /conversations/{id}/messages`
 
 Send a message. Prior history is assembled automatically.

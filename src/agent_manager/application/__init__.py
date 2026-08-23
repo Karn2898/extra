@@ -9,6 +9,7 @@ from agent_manager.application.errors import (
     ConversationMessageNotFound,
     ConversationNotFound,
     ConversationTokenBudgetExceeded,
+    InvalidCursorError,
 )
 from agent_manager.application.prepared_conversation_turn import PreparedConversationTurn
 
@@ -21,5 +22,6 @@ __all__ = [
     "ConversationNotFound",
     "ConversationService",
     "ConversationTokenBudgetExceeded",
+    "InvalidCursorError",
     "PreparedConversationTurn",
 ]

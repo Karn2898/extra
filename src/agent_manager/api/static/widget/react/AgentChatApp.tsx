@@ -43,6 +43,9 @@ import {
 import { reduceStreamEvent } from "./streamReducer";
 import { useConversation } from "./useConversation";
 
+const THREADS_PAGE_SIZE = 20;
+const SCROLL_THRESHOLD_PX = 40;
+
 const DEFAULT_GREETING = "How can I help you today?";
 const GENERIC_ERROR = "Something went wrong. Please try again.";
 const COPIED_RESET_MS = 2000;
@@ -116,8 +119,10 @@ export function AgentChatApp({
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMoreThreads, setLoadingMoreThreads] = useState(false);
-  const [hasMoreThreads, setHasMoreThreads] = useState(false);
   const [threadsOpen, setThreadsOpen] = useState(false);
+  const hasMoreThreads = nextCursor !== null;
+  const isLoadingMoreRef = useRef(false);
+  const threadsGenerationRef = useRef(0);
   const launcherRef = useRef<HTMLButtonElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const approvalRequestsRef = useRef(new Set<string>());
@@ -165,8 +170,8 @@ export function AgentChatApp({
 
   const refreshUsage = useCallback(
     async (cid: string) => {
-      const u = await conversation.loadUsage(cid);
-      setUsageById((prev) => ({ ...prev, [cid]: u }));
+      const next = await conversation.loadUsage(cid);
+      setUsageById((prev) => ({ ...prev, [cid]: next }));
     },
     [conversation],
   );
@@ -216,28 +221,48 @@ export function AgentChatApp({
   }, [inline]);
 
   const openThreads = useCallback(async () => {
+    threadsGenerationRef.current += 1;
+    const currentGen = threadsGenerationRef.current;
     setThreadsOpen(true);
     setLoadingMoreThreads(true);
-    const res = await conversation.listThreads(20, null);
-    setThreads(res.items);
-    setNextCursor(res.next_cursor);
-    setHasMoreThreads(res.next_cursor !== null);
-    setLoadingMoreThreads(false);
+    isLoadingMoreRef.current = true;
+    try {
+      const res = await conversation.listThreads(THREADS_PAGE_SIZE, null);
+      if (threadsGenerationRef.current !== currentGen) return;
+      setThreads(res.items);
+      setNextCursor(res.next_cursor);
+    } finally {
+      if (threadsGenerationRef.current === currentGen) {
+        setLoadingMoreThreads(false);
+        isLoadingMoreRef.current = false;
+      }
+    }
   }, [conversation]);
 
   const loadMoreThreads = useCallback(async () => {
-    if (loadingMoreThreads || !hasMoreThreads || !nextCursor) return;
+    if (isLoadingMoreRef.current || !nextCursor) return;
+    const currentGen = threadsGenerationRef.current;
+    isLoadingMoreRef.current = true;
     setLoadingMoreThreads(true);
-    const res = await conversation.listThreads(20, nextCursor);
-    setThreads((prev) => {
-      const existingIds = new Set(prev.map((t) => t.conversation_id));
-      const newItems = res.items.filter((t) => !existingIds.has(t.conversation_id));
-      return [...prev, ...newItems];
-    });
-    setNextCursor(res.next_cursor);
-    setHasMoreThreads(res.next_cursor !== null);
-    setLoadingMoreThreads(false);
-  }, [conversation, hasMoreThreads, loadingMoreThreads, nextCursor]);
+    try {
+      const res = await conversation.listThreads(THREADS_PAGE_SIZE, nextCursor);
+      if (threadsGenerationRef.current !== currentGen) return;
+      setThreads((prev) => {
+        // Keyset pagination sorts by (last_message_at, session_id). Since last_message_at
+        // is mutable, newly active threads can jump across pages. The drawer presents a snapshot
+        // taken when opened; deduplication prevents duplicate items if order mutates mid-scroll.
+        const existingIds = new Set(prev.map((t) => t.conversation_id));
+        const newItems = res.items.filter((t) => !existingIds.has(t.conversation_id));
+        return [...prev, ...newItems];
+      });
+      setNextCursor(res.next_cursor);
+    } finally {
+      if (threadsGenerationRef.current === currentGen) {
+        setLoadingMoreThreads(false);
+        isLoadingMoreRef.current = false;
+      }
+    }
+  }, [conversation, nextCursor]);
 
   const openThread = useCallback(
     async (conversationId: string) => {
@@ -972,7 +997,7 @@ function ThreadDrawer({
 }) {
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const { scrollTop, clientHeight, scrollHeight } = e.currentTarget;
-    if (scrollHeight - scrollTop - clientHeight < 40 && hasMore && !loadingMore) {
+    if (scrollHeight - scrollTop - clientHeight < SCROLL_THRESHOLD_PX && hasMore && !loadingMore) {
       onLoadMore();
     }
   };
