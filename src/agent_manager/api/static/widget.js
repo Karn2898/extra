@@ -52163,15 +52163,21 @@ var AgentChatClient = class {
     const data = await response.json();
     return String(data.conversation_id);
   }
-  async listConversations() {
-    const response = await this.request("/conversations");
+  async listConversations(limit = 20, cursor) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (cursor) params.set("cursor", cursor);
+    const response = await this.request(`/conversations?${params.toString()}`);
     const data = await response.json();
-    if (!Array.isArray(data)) return [];
-    return data.map((thread) => ({
+    const rawItems = Array.isArray(data.items) ? data.items : [];
+    const items = rawItems.map((thread) => ({
       conversation_id: String(thread.conversation_id),
       title: thread.title ?? null,
       last_message_at: thread.last_message_at ?? null
     }));
+    return {
+      items,
+      next_cursor: data.next_cursor ?? null
+    };
   }
   async getMessages(conversationId) {
     const response = await this.request(`/conversations/${conversationId}/messages`);
@@ -52633,20 +52639,6 @@ function randomId() {
   bytes[8] = bytes[8] & 63 | 128;
   const hex = Array.from(bytes, (b3) => b3.toString(16).padStart(2, "0")).join("");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-
-// src/agent_manager/api/static/widget/storage/conversationStorage.ts
-function conversationStorageKey(endpoint) {
-  return `agent-chat:${endpoint}`;
-}
-function getStoredConversationId(endpoint, storage = localStorage) {
-  return storage.getItem(conversationStorageKey(endpoint));
-}
-function setStoredConversationId(endpoint, conversationId, storage = localStorage) {
-  storage.setItem(conversationStorageKey(endpoint), conversationId);
-}
-function removeStoredConversationId(endpoint, storage = localStorage) {
-  storage.removeItem(conversationStorageKey(endpoint));
 }
 
 // src/agent_manager/api/static/widget/react/shadcnAiElements.tsx
@@ -53314,6 +53306,22 @@ function upsertTool(tools, next2) {
 
 // src/agent_manager/api/static/widget/react/useConversation.ts
 var import_react9 = __toESM(require_react(), 1);
+
+// src/agent_manager/api/static/widget/storage/conversationStorage.ts
+function conversationStorageKey(endpoint) {
+  return `agent-chat:${endpoint}`;
+}
+function getStoredConversationId(endpoint, storage = localStorage) {
+  return storage.getItem(conversationStorageKey(endpoint));
+}
+function setStoredConversationId(endpoint, conversationId, storage = localStorage) {
+  storage.setItem(conversationStorageKey(endpoint), conversationId);
+}
+function removeStoredConversationId(endpoint, storage = localStorage) {
+  storage.removeItem(conversationStorageKey(endpoint));
+}
+
+// src/agent_manager/api/static/widget/react/useConversation.ts
 var isUnusableConversation = (error) => error instanceof AgentChatHttpError && (error.status === 404 || error.status === 403);
 function useConversation(client, endpoint, onReplaced) {
   const startConversation = (0, import_react9.useCallback)(async () => {
@@ -53392,7 +53400,10 @@ function useConversation(client, endpoint, onReplaced) {
     },
     [client]
   );
-  const listThreads = (0, import_react9.useCallback)(() => client.listConversations().catch(() => []), [client]);
+  const listThreads = (0, import_react9.useCallback)(
+    (limit, cursor) => client.listConversations(limit, cursor),
+    [client]
+  );
   const switchTo = (0, import_react9.useCallback)(
     (conversationId) => setStoredConversationId(endpoint, conversationId),
     [endpoint]
@@ -53435,6 +53446,8 @@ function useConversation(client, endpoint, onReplaced) {
 
 // src/agent_manager/api/static/widget/react/AgentChatApp.tsx
 var import_jsx_runtime4 = __toESM(require_jsx_runtime(), 1);
+var THREADS_PAGE_SIZE = 20;
+var SCROLL_THRESHOLD_PX = 40;
 var DEFAULT_GREETING = "How can I help you today?";
 var GENERIC_ERROR = "Something went wrong. Please try again.";
 var COPIED_RESET_MS = 2e3;
@@ -53480,7 +53493,13 @@ function AgentChatApp({
   const canSubmit = !isExecutionActive && !budgetExceeded && !approvalBlocksComposer;
   const canStop = isExecutionActive;
   const [threads, setThreads] = (0, import_react10.useState)([]);
+  const [nextCursor, setNextCursor] = (0, import_react10.useState)(null);
+  const [loadingMoreThreads, setLoadingMoreThreads] = (0, import_react10.useState)(false);
+  const [threadsError, setThreadsError] = (0, import_react10.useState)(null);
   const [threadsOpen, setThreadsOpen] = (0, import_react10.useState)(false);
+  const hasMoreThreads = nextCursor !== null;
+  const isLoadingMoreRef = (0, import_react10.useRef)(false);
+  const threadsGenerationRef = (0, import_react10.useRef)(0);
   const launcherRef = (0, import_react10.useRef)(null);
   const inputRef = (0, import_react10.useRef)(null);
   const approvalRequestsRef = (0, import_react10.useRef)(/* @__PURE__ */ new Set());
@@ -53561,9 +53580,54 @@ function AgentChatApp({
     launcherRef.current?.focus({ preventScroll: true });
   }, [inline]);
   const openThreads = (0, import_react10.useCallback)(async () => {
-    setThreads(await conversation.listThreads());
+    threadsGenerationRef.current += 1;
+    const currentGen = threadsGenerationRef.current;
     setThreadsOpen(true);
+    setLoadingMoreThreads(true);
+    setThreadsError(null);
+    isLoadingMoreRef.current = true;
+    try {
+      const res = await conversation.listThreads(THREADS_PAGE_SIZE, null);
+      if (threadsGenerationRef.current !== currentGen) return;
+      setThreads(res.items);
+      setNextCursor(res.next_cursor);
+    } catch (err) {
+      if (threadsGenerationRef.current !== currentGen) return;
+      const msg = err instanceof AgentChatHttpError ? err.message : GENERIC_ERROR;
+      setThreadsError(msg);
+    } finally {
+      if (threadsGenerationRef.current === currentGen) {
+        setLoadingMoreThreads(false);
+        isLoadingMoreRef.current = false;
+      }
+    }
   }, [conversation]);
+  const loadMoreThreads = (0, import_react10.useCallback)(async () => {
+    if (isLoadingMoreRef.current || !nextCursor) return;
+    const currentGen = threadsGenerationRef.current;
+    isLoadingMoreRef.current = true;
+    setLoadingMoreThreads(true);
+    setThreadsError(null);
+    try {
+      const res = await conversation.listThreads(THREADS_PAGE_SIZE, nextCursor);
+      if (threadsGenerationRef.current !== currentGen) return;
+      setThreads((prev) => {
+        const existingIds = new Set(prev.map((t) => t.conversation_id));
+        const newItems = res.items.filter((t) => !existingIds.has(t.conversation_id));
+        return [...prev, ...newItems];
+      });
+      setNextCursor(res.next_cursor);
+    } catch (err) {
+      if (threadsGenerationRef.current !== currentGen) return;
+      const msg = err instanceof AgentChatHttpError ? err.message : GENERIC_ERROR;
+      setThreadsError(msg);
+    } finally {
+      if (threadsGenerationRef.current === currentGen) {
+        setLoadingMoreThreads(false);
+        isLoadingMoreRef.current = false;
+      }
+    }
+  }, [conversation, nextCursor]);
   const openThread = (0, import_react10.useCallback)(
     async (conversationId) => {
       conversation.switchTo(conversationId);
@@ -53910,8 +53974,13 @@ function AgentChatApp({
                   {
                     open: threadsOpen,
                     threads,
-                    activeId: getStoredConversationId(config.endpoint),
-                    onSelect: openThread,
+                    activeId,
+                    loadingMore: loadingMoreThreads,
+                    error: threadsError,
+                    hasMore: hasMoreThreads,
+                    onLoadMore: () => void loadMoreThreads(),
+                    onRetry: () => threads.length === 0 ? void openThreads() : void loadMoreThreads(),
+                    onSelect: (cid) => void openThread(cid),
                     onNew: startNewThread,
                     onClose: () => setThreadsOpen(false)
                   }
@@ -54160,10 +54229,21 @@ function ThreadDrawer({
   open,
   threads,
   activeId,
+  loadingMore,
+  error,
+  hasMore,
+  onLoadMore,
+  onRetry,
   onSelect,
   onNew,
   onClose
 }) {
+  const handleScroll = (e) => {
+    const { scrollTop, clientHeight, scrollHeight } = e.currentTarget;
+    if (scrollHeight - scrollTop - clientHeight < SCROLL_THRESHOLD_PX && hasMore && !loadingMore && !error) {
+      onLoadMore();
+    }
+  };
   return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: `thread-drawer${open ? " open" : ""}`, inert: !open, children: [
     /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "thread-drawer-head", children: [
       /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("span", { children: "Chats" }),
@@ -54173,7 +54253,7 @@ function ThreadDrawer({
       /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(SquarePen, { "aria-hidden": true }),
       "New chat"
     ] }),
-    /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "thread-list", children: [
+    /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "thread-list", onScroll: handleScroll, children: [
       threads.map((thread) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
         "button",
         {
@@ -54185,7 +54265,13 @@ function ThreadDrawer({
         },
         thread.conversation_id
       )),
-      threads.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { className: "thread-empty", children: "No conversations yet" }) : null
+      threads.length === 0 && !loadingMore && !error ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { className: "thread-empty", children: "No conversations yet" }) : null,
+      error ? /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { className: "thread-empty thread-error", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { children: error }),
+        /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("button", { className: "thread-retry-btn", onClick: onRetry, type: "button", children: "Retry" })
+      ] }) : null,
+      loadingMore ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("p", { className: "thread-empty", children: "Loading..." }) : null,
+      hasMore && !loadingMore && !error ? /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("button", { className: "thread-load-more-btn", onClick: onLoadMore, type: "button", children: "Load more" }) : null
     ] })
   ] });
 }

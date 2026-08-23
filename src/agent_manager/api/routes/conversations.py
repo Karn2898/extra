@@ -7,7 +7,7 @@ import logging
 from collections.abc import AsyncGenerator, AsyncIterator
 from typing import cast
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
 
 from agent_engine.runtime.streaming import RunStreamEvent
@@ -23,11 +23,13 @@ from agent_manager.api.schemas import (
     CreateConversationRequest,
     CreateConversationResponse,
     MessageOut,
+    PaginatedConversationsResponse,
     SendMessageRequest,
     SendMessageResponse,
     StreamEventOut,
     TokenBudgetResponse,
 )
+from agent_manager.domain import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, PageRequest
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -45,17 +47,25 @@ async def create_conversation(
     return CreateConversationResponse(conversation_id=session_id, session_id=session_id)
 
 
-@router.get("/conversations", response_model=list[ConversationSummary])
-async def list_conversations(service: Service, caller: Caller) -> list[ConversationSummary]:
-    sessions = await service.list_conversations(caller)
-    return [
+@router.get("/conversations", response_model=PaginatedConversationsResponse)
+async def list_conversations(
+    service: Service,
+    caller: Caller,
+    limit: int = Query(default=DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
+    cursor: str | None = Query(default=None),
+) -> PaginatedConversationsResponse:
+    with as_http_error():
+        page = PageRequest(limit=limit, cursor=cursor)
+        paginated = await service.list_conversations(caller, page=page)
+    items = [
         ConversationSummary(
             conversation_id=session.session_id,
             title=session.title,
             last_message_at=session.last_message_at,
         )
-        for session in sessions
+        for session in paginated.items
     ]
+    return PaginatedConversationsResponse(items=items, next_cursor=paginated.next_cursor)
 
 
 @router.get("/conversations/{conversation_id}/messages", response_model=list[MessageOut])

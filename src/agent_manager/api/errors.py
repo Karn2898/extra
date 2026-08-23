@@ -22,11 +22,16 @@ from agent_manager.application import (
     ConversationMessageNotFound,
     ConversationNotFound,
     ConversationTokenBudgetExceeded,
+    InvalidCursorError,
 )
 
 BUDGET_EXCEEDED_DETAIL = {
     "error_type": "context_limit_exceeded",
     "message": "This conversation has reached its context limit. Start a new chat to continue.",
+}
+INVALID_CURSOR_DETAIL = {
+    "error_type": "invalid_cursor",
+    "message": "invalid pagination cursor",
 }
 INTERNAL_ERROR_MESSAGE = "Internal server error"
 
@@ -38,6 +43,7 @@ _HTTP_ERRORS: dict[type[Exception], tuple[int, Any]] = {
     ConversationMessageNotFound: (404, "message not found on active conversation branch"),
     ConversationBranchConflict: (409, "conversation branch changed; reload and try again"),
     ConversationLinkRefused: (403, "a visitor cannot adopt another visitor"),
+    InvalidCursorError: (400, INVALID_CURSOR_DETAIL),
 }
 
 

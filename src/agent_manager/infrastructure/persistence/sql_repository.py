@@ -11,7 +11,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, literal, update
+from sqlalchemy import and_, delete, func, literal, or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy.orm import aliased
@@ -24,9 +24,16 @@ from agent_manager.domain import (
     ConversationSession,
     ConversationSnapshot,
     Message,
+    Page,
+    PageRequest,
     Repository,
     Role,
     User,
+)
+from agent_manager.domain.pagination import (
+    decode_cursor,
+    encode_cursor,
+    ensure_utc,
 )
 from agent_manager.infrastructure.persistence.tables import (
     ConversationMessageRow,
@@ -151,16 +158,58 @@ class SqlRepository(Repository):
             row = await session.get(ConversationSessionRow, session_id)
         return _session(row) if row else None
 
-    async def list_sessions(self, user_id: str, *, limit: int = 50) -> list[ConversationSession]:
+    async def list_sessions(
+        self, user_id: str, page: PageRequest | None = None
+    ) -> Page[ConversationSession]:
+        page = page or PageRequest()
+        limit = page.limit
+        cursor = page.cursor
+        sort_key = func.coalesce(
+            ConversationSessionRow.last_message_at, ConversationSessionRow.created_at
+        )
+        conditions: list[Any] = [ConversationSessionRow.user_id == user_id]
+
+        if cursor is not None:
+            cursor_t, cursor_id = decode_cursor(cursor)
+            conditions.append(
+                or_(
+                    sort_key < cursor_t,
+                    and_(
+                        sort_key == cursor_t,
+                        col(ConversationSessionRow.session_id) < cursor_id,
+                    ),
+                )
+            )
+
         stmt = (
             select(ConversationSessionRow)
-            .where(ConversationSessionRow.user_id == user_id)
-            .order_by(col(ConversationSessionRow.last_message_at).desc())
-            .limit(limit)
+            .where(*conditions)
+            .order_by(
+                sort_key.desc(),
+                col(ConversationSessionRow.session_id).desc(),
+            )
+            .limit(limit + 1)
         )
         async with self._sessions() as session:
-            rows = (await session.exec(stmt)).all()
-        return [_session(row) for row in rows]
+            rows = list((await session.exec(stmt)).all())
+
+        has_more = len(rows) > limit
+        if has_more:
+            rows = rows[:limit]
+
+        next_cursor = (
+            encode_cursor(
+                ensure_utc(rows[-1].last_message_at or rows[-1].created_at),  # type: ignore[arg-type]
+                rows[-1].session_id,
+            )
+            if has_more and rows
+            else None
+        )
+
+        return Page(
+            items=[_session(row) for row in rows],
+            next_cursor=next_cursor,
+        )
 
     async def rename_session(self, session_id: str, title: str) -> None:
         async with self._sessions() as session:
@@ -530,8 +579,8 @@ def _user(row: ConversationUserRow) -> User:
         display_name=row.display_name,
         linked_to_user_id=row.linked_to_user_id,
         metadata=dict(row.metadata_json or {}),
-        created_at=_utc(row.created_at),
-        updated_at=_utc(row.updated_at),
+        created_at=ensure_utc(row.created_at),
+        updated_at=ensure_utc(row.updated_at),
     )
 
 
@@ -544,10 +593,10 @@ def _session(row: ConversationSessionRow) -> ConversationSession:
         title=row.title,
         head_message_id=row.head_message_id,
         metadata=dict(row.metadata_json or {}),
-        created_at=_utc(row.created_at),
-        updated_at=_utc(row.updated_at),
-        last_message_at=_utc(row.last_message_at),
-        expires_at=_utc(row.expires_at),
+        created_at=ensure_utc(row.created_at),
+        updated_at=ensure_utc(row.updated_at),
+        last_message_at=ensure_utc(row.last_message_at),
+        expires_at=ensure_utc(row.expires_at),
     )
 
 
@@ -599,7 +648,7 @@ def _message(row: ConversationMessageRow) -> ConversationMessage:
         status=row.status,
         error_type=row.error_type,
         metadata=dict(row.metadata_json or {}),
-        created_at=_utc(row.created_at) or row.created_at,
+        created_at=ensure_utc(row.created_at) or row.created_at,
     )
 
 
@@ -615,7 +664,7 @@ def _message_json(row: ConversationMessageRow) -> dict[str, Any]:
         "tool_name": row.tool_name,
         "provider": row.provider,
         "status": row.status,
-        "created_at": (_utc(row.created_at) or row.created_at).isoformat(),
+        "created_at": (ensure_utc(row.created_at) or row.created_at).isoformat(),
         "metadata": dict(row.metadata_json or {}),
     }
 
@@ -627,10 +676,10 @@ def _snapshot(row: ConversationSnapshotRow) -> ConversationSnapshot:
         conversation_json=dict(row.conversation_json or {}),
         message_count=row.message_count,
         last_message_id=row.last_message_id,
-        last_message_at=_utc(row.last_message_at),
+        last_message_at=ensure_utc(row.last_message_at),
         model_context_tokens=row.model_context_tokens,
-        updated_at=_utc(row.updated_at) or row.updated_at,
-        expires_at=_utc(row.expires_at),
+        updated_at=ensure_utc(row.updated_at) or row.updated_at,
+        expires_at=ensure_utc(row.expires_at),
     )
 
 
@@ -651,11 +700,3 @@ def _bound_messages(
         if total >= max_chars:
             break
     return list(reversed(kept))
-
-
-def _utc(value: datetime | None) -> datetime | None:
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)

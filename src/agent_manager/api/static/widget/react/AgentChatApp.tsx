@@ -43,6 +43,9 @@ import {
 import { reduceStreamEvent } from "./streamReducer";
 import { useConversation } from "./useConversation";
 
+const THREADS_PAGE_SIZE = 20;
+const SCROLL_THRESHOLD_PX = 40;
+
 const DEFAULT_GREETING = "How can I help you today?";
 const GENERIC_ERROR = "Something went wrong. Please try again.";
 const COPIED_RESET_MS = 2000;
@@ -114,7 +117,13 @@ export function AgentChatApp({
   const canStop = isExecutionActive;
 
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMoreThreads, setLoadingMoreThreads] = useState(false);
+  const [threadsError, setThreadsError] = useState<string | null>(null);
   const [threadsOpen, setThreadsOpen] = useState(false);
+  const hasMoreThreads = nextCursor !== null;
+  const isLoadingMoreRef = useRef(false);
+  const threadsGenerationRef = useRef(0);
   const launcherRef = useRef<HTMLButtonElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const approvalRequestsRef = useRef(new Set<string>());
@@ -213,9 +222,58 @@ export function AgentChatApp({
   }, [inline]);
 
   const openThreads = useCallback(async () => {
-    setThreads(await conversation.listThreads());
+    threadsGenerationRef.current += 1;
+    const currentGen = threadsGenerationRef.current;
     setThreadsOpen(true);
+    setLoadingMoreThreads(true);
+    setThreadsError(null);
+    isLoadingMoreRef.current = true;
+    try {
+      const res = await conversation.listThreads(THREADS_PAGE_SIZE, null);
+      if (threadsGenerationRef.current !== currentGen) return;
+      setThreads(res.items);
+      setNextCursor(res.next_cursor);
+    } catch (err) {
+      if (threadsGenerationRef.current !== currentGen) return;
+      const msg = err instanceof AgentChatHttpError ? err.message : GENERIC_ERROR;
+      setThreadsError(msg);
+    } finally {
+      if (threadsGenerationRef.current === currentGen) {
+        setLoadingMoreThreads(false);
+        isLoadingMoreRef.current = false;
+      }
+    }
   }, [conversation]);
+
+  const loadMoreThreads = useCallback(async () => {
+    if (isLoadingMoreRef.current || !nextCursor) return;
+    const currentGen = threadsGenerationRef.current;
+    isLoadingMoreRef.current = true;
+    setLoadingMoreThreads(true);
+    setThreadsError(null);
+    try {
+      const res = await conversation.listThreads(THREADS_PAGE_SIZE, nextCursor);
+      if (threadsGenerationRef.current !== currentGen) return;
+      setThreads((prev) => {
+        // Keyset pagination sorts by (last_message_at, session_id). Since last_message_at
+        // is mutable, a thread updated while scrolling could appear across page boundaries;
+        // deduplication prevents duplicate items if order mutates mid-scroll.
+        const existingIds = new Set(prev.map((t) => t.conversation_id));
+        const newItems = res.items.filter((t) => !existingIds.has(t.conversation_id));
+        return [...prev, ...newItems];
+      });
+      setNextCursor(res.next_cursor);
+    } catch (err) {
+      if (threadsGenerationRef.current !== currentGen) return;
+      const msg = err instanceof AgentChatHttpError ? err.message : GENERIC_ERROR;
+      setThreadsError(msg);
+    } finally {
+      if (threadsGenerationRef.current === currentGen) {
+        setLoadingMoreThreads(false);
+        isLoadingMoreRef.current = false;
+      }
+    }
+  }, [conversation, nextCursor]);
 
   const openThread = useCallback(
     async (conversationId: string) => {
@@ -228,7 +286,6 @@ export function AgentChatApp({
       inputRef.current?.focus({ preventScroll: true });
     },
     [conversation, entriesById, loadThread, refreshUsage],
-
   );
 
   const startNewThread = useCallback(() => {
@@ -597,8 +654,13 @@ export function AgentChatApp({
           <ThreadDrawer
             open={threadsOpen}
             threads={threads}
-            activeId={getStoredConversationId(config.endpoint)}
-            onSelect={openThread}
+            activeId={activeId}
+            loadingMore={loadingMoreThreads}
+            error={threadsError}
+            hasMore={hasMoreThreads}
+            onLoadMore={() => void loadMoreThreads()}
+            onRetry={() => (threads.length === 0 ? void openThreads() : void loadMoreThreads())}
+            onSelect={(cid) => void openThread(cid)}
             onNew={startNewThread}
             onClose={() => setThreadsOpen(false)}
           />
@@ -929,6 +991,11 @@ function ThreadDrawer({
   open,
   threads,
   activeId,
+  loadingMore,
+  error,
+  hasMore,
+  onLoadMore,
+  onRetry,
   onSelect,
   onNew,
   onClose,
@@ -936,10 +1003,22 @@ function ThreadDrawer({
   open: boolean;
   threads: ThreadSummary[];
   activeId: string | null;
+  loadingMore: boolean;
+  error: string | null;
+  hasMore: boolean;
+  onLoadMore: () => void;
+  onRetry: () => void;
   onSelect: (conversationId: string) => void;
   onNew: () => void;
   onClose: () => void;
 }) {
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const { scrollTop, clientHeight, scrollHeight } = e.currentTarget;
+    if (scrollHeight - scrollTop - clientHeight < SCROLL_THRESHOLD_PX && hasMore && !loadingMore && !error) {
+      onLoadMore();
+    }
+  };
+
   return (
     <div className={`thread-drawer${open ? " open" : ""}`} inert={!open}>
       <div className="thread-drawer-head">
@@ -952,7 +1031,7 @@ function ThreadDrawer({
         <SquarePenIcon aria-hidden />
         New chat
       </button>
-      <div className="thread-list">
+      <div className="thread-list" onScroll={handleScroll}>
         {threads.map((thread) => (
           <button
             key={thread.conversation_id}
@@ -964,7 +1043,21 @@ function ThreadDrawer({
             {thread.title || "New chat"}
           </button>
         ))}
-        {threads.length === 0 ? <p className="thread-empty">No conversations yet</p> : null}
+        {threads.length === 0 && !loadingMore && !error ? <p className="thread-empty">No conversations yet</p> : null}
+        {error ? (
+          <div className="thread-empty thread-error">
+            <p>{error}</p>
+            <button className="thread-retry-btn" onClick={onRetry} type="button">
+              Retry
+            </button>
+          </div>
+        ) : null}
+        {loadingMore ? <p className="thread-empty">Loading...</p> : null}
+        {hasMore && !loadingMore && !error ? (
+          <button className="thread-load-more-btn" onClick={onLoadMore} type="button">
+            Load more
+          </button>
+        ) : null}
       </div>
     </div>
   );

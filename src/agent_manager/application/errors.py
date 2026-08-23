@@ -1,5 +1,18 @@
 """Application-layer failures exposed by conversation use cases."""
 
+from agent_manager.domain.pagination import InvalidCursorError
+
+__all__ = [
+    "ConversationAccessDenied",
+    "ConversationAlreadyExists",
+    "ConversationBranchConflict",
+    "ConversationLinkRefused",
+    "ConversationMessageNotFound",
+    "ConversationNotFound",
+    "ConversationTokenBudgetExceeded",
+    "InvalidCursorError",
+]
+
 
 class ConversationNotFound(Exception):
     """An operation targeted a conversation id that does not exist."""

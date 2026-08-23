@@ -13,7 +13,13 @@ import pytest
 from sqlmodel import SQLModel, select
 
 import agent_manager.infrastructure.persistence.tables  # noqa: F401  (register tables)
-from agent_manager.domain import ConversationMessage, Repository, Role
+from agent_manager.domain import (
+    ConversationMessage,
+    InvalidCursorError,
+    PageRequest,
+    Repository,
+    Role,
+)
 from agent_manager.infrastructure.persistence.database import create_db_engine, session_factory
 from agent_manager.infrastructure.persistence.memory_repository import MemoryRepository
 from agent_manager.infrastructure.persistence.sql_repository import SqlRepository
@@ -56,7 +62,7 @@ async def test_create_session_never_reassigns_an_existing_owner(repo: Repository
     stored = await repo.get_session("shared-id")
     assert stored is not None
     assert stored.user_id == "alice"
-    assert await repo.list_sessions("bob") == []
+    assert (await repo.list_sessions("bob")).items == []
 
 
 async def test_create_session_writes_nothing_when_the_id_is_taken(repo: Repository) -> None:
@@ -107,7 +113,7 @@ async def test_appending_a_message_never_claims_the_conversation(repo: Repositor
     unowned = await repo.get_session("unowned")
     assert owned is not None and owned.user_id == "alice"
     assert unowned is not None and unowned.user_id is None
-    assert await repo.list_sessions("bob") == []
+    assert (await repo.list_sessions("bob")).items == []
 
 
 async def test_messages_in_insertion_order(repo: Repository) -> None:
@@ -468,8 +474,8 @@ async def test_linking_a_visitor_moves_their_sessions_once(repo: Repository) -> 
     assert await repo.link_anonymous_user("anon:v1", "ext:alice") == 1
     moved = await repo.get_session("pre-login")
     assert moved is not None and moved.user_id == "ext:alice"
-    assert [s.session_id for s in await repo.list_sessions("ext:alice")] == ["pre-login"]
-    assert await repo.list_sessions("anon:v1") == []
+    assert [s.session_id for s in (await repo.list_sessions("ext:alice")).items] == ["pre-login"]
+    assert (await repo.list_sessions("anon:v1")).items == []
 
     visitor = await repo.get_user("anon:v1")
     assert visitor is not None and visitor.linked_to_user_id == "ext:alice"
@@ -477,9 +483,105 @@ async def test_linking_a_visitor_moves_their_sessions_once(repo: Repository) -> 
     # Spent: a replayed pass moves nothing, whoever presents it.
     await repo.upsert_user("ext:bob")
     assert await repo.link_anonymous_user("anon:v1", "ext:bob") == 0
-    assert await repo.list_sessions("ext:bob") == []
+    assert (await repo.list_sessions("ext:bob")).items == []
 
 
 async def test_linking_an_unknown_visitor_is_a_no_op(repo: Repository) -> None:
     await repo.upsert_user("ext:alice")
     assert await repo.link_anonymous_user("anon:never-seen", "ext:alice") == 0
+
+
+async def test_pagination_contract(repo: Repository) -> None:
+    """Comprehensive contract tests for repository pagination."""
+    user_id = "paginated_user"
+    await repo.upsert_user(user_id)
+
+    base_time = datetime(2026, 8, 20, 12, 0, 0, tzinfo=UTC)
+    s1 = await repo.create_session("s1", user_id=user_id)
+    s2 = await repo.create_session("s2", user_id=user_id)
+    await repo.create_session("s3", user_id=user_id)
+    await repo.create_session("s4", user_id=user_id)
+    await repo.create_session("s5", user_id=user_id)
+
+    # If repo is SqlRepository, set created_at explicitly so created_at ordering is deterministic
+    if isinstance(repo, SqlRepository):
+        async with repo._sessions() as session:
+            from agent_manager.infrastructure.persistence.tables import ConversationSessionRow
+
+            r1 = await session.get(ConversationSessionRow, "s1")
+            if r1:
+                r1.created_at = base_time
+            r2 = await session.get(ConversationSessionRow, "s2")
+            if r2:
+                r2.created_at = base_time + timedelta(minutes=10)
+            r3 = await session.get(ConversationSessionRow, "s3")
+            if r3:
+                r3.created_at = base_time
+            r4 = await session.get(ConversationSessionRow, "s4")
+            if r4:
+                r4.created_at = base_time
+            r5 = await session.get(ConversationSessionRow, "s5")
+            if r5:
+                r5.created_at = base_time
+            await session.commit()
+    elif isinstance(repo, MemoryRepository):
+        from dataclasses import replace
+
+        repo._sessions["s1"] = replace(s1, created_at=base_time)
+        repo._sessions["s2"] = replace(s2, created_at=base_time + timedelta(minutes=10))
+
+    # Append messages to s3, s4, s5 (s4 and s5 share the same last_message_at timestamp)
+    await repo.append_message(
+        ConversationMessage(
+            message_id="m3",
+            session_id="s3",
+            role=Role.USER,
+            content="m3",
+            created_at=base_time + timedelta(hours=1),
+        )
+    )
+    await repo.append_message(
+        ConversationMessage(
+            message_id="m4",
+            session_id="s4",
+            role=Role.USER,
+            content="m4",
+            created_at=base_time + timedelta(hours=2),
+        )
+    )
+    await repo.append_message(
+        ConversationMessage(
+            message_id="m5",
+            session_id="s5",
+            role=Role.USER,
+            content="m5",
+            created_at=base_time + timedelta(hours=2),
+        )
+    )
+
+    # Page 1: limit 2 -> ["s5", "s4"]
+    page1 = await repo.list_sessions(user_id, page=PageRequest(limit=2))
+    assert [s.session_id for s in page1.items] == ["s5", "s4"]
+    assert page1.next_cursor is not None
+
+    # Page 2: limit 2 -> ["s3", "s2"]
+    page2 = await repo.list_sessions(user_id, page=PageRequest(limit=2, cursor=page1.next_cursor))
+    assert [s.session_id for s in page2.items] == ["s3", "s2"]
+    assert page2.next_cursor is not None
+
+    # Page 3: limit 2 -> ["s1"]
+    page3 = await repo.list_sessions(user_id, page=PageRequest(limit=2, cursor=page2.next_cursor))
+    assert [s.session_id for s in page3.items] == ["s1"]
+    assert page3.next_cursor is None
+
+    all_ids = [s.session_id for s in [*page1.items, *page2.items, *page3.items]]
+    assert all_ids == ["s5", "s4", "s3", "s2", "s1"]
+
+    # Page boundary landing exactly on limit
+    page_exact = await repo.list_sessions(user_id, page=PageRequest(limit=5))
+    assert len(page_exact.items) == 5
+    assert page_exact.next_cursor is None
+
+    # Malformed cursor raises InvalidCursorError
+    with pytest.raises(InvalidCursorError):
+        await repo.list_sessions(user_id, page=PageRequest(cursor="invalid_garbage_token"))

@@ -31,7 +31,7 @@ async function mockConversationApi(
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(options.threads ?? []),
+      body: JSON.stringify({ items: options.threads ?? [], next_cursor: null }),
     });
   });
 
@@ -44,7 +44,7 @@ async function mockConversationApi(
       contentType: "application/json",
       body:
         method === "GET"
-          ? JSON.stringify(options.threads ?? [])
+          ? JSON.stringify({ items: options.threads ?? [], next_cursor: null })
           : JSON.stringify({ conversation_id: "conv-smoke", session_id: "conv-smoke" }),
     });
   });
@@ -147,7 +147,7 @@ async function mockApprovalApi(
   await page.route("**/conversations", async (route) => {
     const body =
       route.request().method() === "GET"
-        ? []
+        ? { items: [], next_cursor: null }
         : { conversation_id: "conv-approval", session_id: "conv-approval" };
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   });
@@ -1408,4 +1408,56 @@ test("auto-mount does not duplicate an authored element and attributes control t
   await expect.poll(() => shadowText(page, ".title")).toBe("Attribute Assistant");
   await expect.poll(() => shadowText(page, ".messages")).toContain("The attribute greeting wins.");
   await expect.poll(() => shadowClassContains(page, ".panel", "open")).toBe(true);
+});
+
+test("thread drawer paginates and appends next pages on scroll", async ({ page }) => {
+  let callCount = 0;
+  await pinVisitorPass(page);
+
+  await page.route(/\/conversations\?/, async (route) => {
+    callCount += 1;
+    const url = new URL(route.request().url());
+    const cursor = url.searchParams.get("cursor");
+    if (!cursor) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [
+            { conversation_id: "thread-1", title: "Thread One", last_message_at: "2026-06-28T00:00:00Z" },
+            { conversation_id: "thread-2", title: "Thread Two", last_message_at: "2026-06-27T00:00:00Z" },
+          ],
+          next_cursor: "page-2-token",
+        }),
+      });
+    } else {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [
+            { conversation_id: "thread-3", title: "Thread Three", last_message_at: "2026-06-26T00:00:00Z" },
+          ],
+          next_cursor: null,
+        }),
+      });
+    }
+  });
+
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowClick(page, '[aria-label="Conversations"]');
+
+  await expect.poll(() => shadowText(page, ".thread-drawer")).toContain("Thread One");
+  await expect.poll(() => shadowText(page, ".thread-drawer")).toContain("Thread Two");
+
+  await (await widget(page)).evaluate((el) => {
+    const drawer = el.shadowRoot?.querySelector(".thread-list");
+    if (drawer) {
+      drawer.scrollTop = drawer.scrollHeight;
+      drawer.dispatchEvent(new Event("scroll"));
+    }
+  });
+
+  await expect.poll(() => shadowText(page, ".thread-drawer")).toContain("Thread Three");
 });
