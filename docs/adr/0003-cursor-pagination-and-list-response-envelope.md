@@ -1,4 +1,4 @@
-# ADR 0003 — Chat history keyset pagination and cursor format
+# ADR 0003 — Cursor pagination and list response envelope
 
 - **Status:** Accepted
 - **Date:** 2026-08-23
