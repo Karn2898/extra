@@ -185,6 +185,21 @@ async def _run_async(
         sys.exit(1)
 
 
+@cli.group()
+def mcp() -> None:
+    """MCP server commands."""
+
+
+@mcp.command(name="serve")
+@click.option("--config", required=True, help="Path to agents.yml")
+@click.option("--env", default=None, help="Path to .env file")
+def serve_stdio(config: str, env: str | None) -> None:
+    """Serve the agent system as an MCP server over stdio."""
+    from agentctl.mcp.server import serve_stdio as serve_stdio_mcp
+
+    serve_stdio_mcp(config, env)
+
+
 @cli.command()
 @click.option("--config", required=True, help="Path to agents.yml")
 @click.option("--host", default="0.0.0.0", show_default=True, help="Host to bind to")

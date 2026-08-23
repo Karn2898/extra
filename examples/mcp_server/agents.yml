@@ -1,0 +1,15 @@
+system:
+  name: "Echo Agent"
+
+defaults:
+  model:
+    provider: anthropic
+    name: claude-haiku-4-5
+    temperature: 0.0
+
+execution:
+  max_iterations: 5
+  max_tool_calls: 3
+
+graph:
+  echo_agent:
