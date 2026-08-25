@@ -114,11 +114,15 @@ export class TokenSource {
     return this.pending;
   }
 
+  private isCookieMode(): boolean {
+    return !this.tokenUrl && !this.provider;
+  }
+
   /** A host token, plus the one-time hand-off of whatever this browser chatted
    *  about before signing in. */
   private async hostToken(): Promise<string | null> {
     const token = await this.fromHost();
-    if (token || this.storedPass()) {
+    if (token || (this.isCookieMode() && this.storedPass())) {
       void this.claimVisitorHistory(token);
     }
     return token;
