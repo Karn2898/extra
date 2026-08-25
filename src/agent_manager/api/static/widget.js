@@ -52348,19 +52348,31 @@ var TokenSource = class {
    *  about before signing in. */
   async hostToken() {
     const token = await this.fromHost();
-    if (token) await this.claimVisitorHistory(token);
+    if (token || this.storedPass()) {
+      void this.claimVisitorHistory(token);
+    }
     return token;
   }
   async claimVisitorHistory(hostToken) {
     const pass = this.storedPass();
     if (!pass) return;
     try {
+      const headers = { "Content-Type": "application/json" };
+      if (hostToken) headers.Authorization = `Bearer ${hostToken}`;
       const response = await fetch(`${this.endpoint}${LINK_ENDPOINT}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${hostToken}` },
+        headers,
+        credentials: "include",
         body: JSON.stringify({ anonymous_token: pass })
       });
-      if (response.status < 500) this.clearPass();
+      if (response.ok) {
+        const data = await response.json().catch(() => null);
+        if (hostToken !== null || (data?.conversations_moved ?? 0) > 0) {
+          this.clearPass();
+        }
+      } else if (hostToken !== null && response.status >= 400 && response.status < 500 && response.status !== 401) {
+        this.clearPass();
+      }
     } catch {
     }
   }

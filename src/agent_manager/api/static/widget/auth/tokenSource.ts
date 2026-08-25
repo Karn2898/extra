@@ -118,22 +118,32 @@ export class TokenSource {
    *  about before signing in. */
   private async hostToken(): Promise<string | null> {
     const token = await this.fromHost();
-    if (token) await this.claimVisitorHistory(token);
+    if (token || this.storedPass()) {
+      void this.claimVisitorHistory(token);
+    }
     return token;
   }
 
-  private async claimVisitorHistory(hostToken: string): Promise<void> {
+  private async claimVisitorHistory(hostToken: string | null): Promise<void> {
     const pass = this.storedPass();
     if (!pass) return;
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (hostToken) headers.Authorization = `Bearer ${hostToken}`;
       const response = await fetch(`${this.endpoint}${LINK_ENDPOINT}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${hostToken}` },
+        headers,
+        credentials: "include",
         body: JSON.stringify({ anonymous_token: pass }),
       });
-      // Drop the pass on any verdict, including a refusal — only a server that
-      // never answered is worth asking again.
-      if (response.status < 500) this.clearPass();
+      if (response.ok) {
+        const data = (await response.json().catch(() => null)) as { conversations_moved?: number } | null;
+        if (hostToken !== null || (data?.conversations_moved ?? 0) > 0) {
+          this.clearPass();
+        }
+      } else if (hostToken !== null && response.status >= 400 && response.status < 500 && response.status !== 401) {
+        this.clearPass();
+      }
     } catch {
       // Offline: keep the pass so the next page load retries the hand-off.
     }

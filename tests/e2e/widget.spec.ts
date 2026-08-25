@@ -26,6 +26,14 @@ async function mockConversationApi(
   const calls: string[] = [];
   await pinVisitorPass(page);
 
+  await page.route("**/auth/link", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ conversations_moved: 0 }),
+    });
+  });
+
   await page.route(/\/conversations\?/, async (route) => {
     calls.push(`GET ${new URL(route.request().url()).pathname}`);
     await route.fulfill({
