@@ -52366,10 +52366,7 @@ var TokenSource = class {
         body: JSON.stringify({ anonymous_token: pass })
       });
       if (response.ok) {
-        const data = await response.json().catch(() => null);
-        if (hostToken !== null || (data?.conversations_moved ?? 0) > 0) {
-          this.clearPass();
-        }
+        this.clearPass();
       } else if (hostToken !== null && response.status >= 400 && response.status < 500 && response.status !== 401) {
         this.clearPass();
       }

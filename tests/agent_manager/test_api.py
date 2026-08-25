@@ -420,6 +420,22 @@ def test_linking_via_cookie_authentication() -> None:
     assert alice_client.get(f"/conversations/{cid}/messages").status_code == 200
 
 
+def test_linking_via_cookie_returns_401_when_not_logged_in() -> None:
+    """Without a session cookie the server must reject the link request, not silently succeed."""
+    app = build_test_app(
+        ConversationService(RecordingEngine(), MemoryRepository()),
+        extra_auth_mode=AuthMode.HOST_TOKEN,
+        extra_auth_cookie=HOST_COOKIE,
+        extra_auth_claim_user_id="id",
+    )
+    client = TestClient(app)
+    pass_token = client.post("/auth/anonymous").json()["token"]
+
+    # No cookie, no bearer — the server has no way to identify the adopting caller.
+    result = client.post("/auth/link", json={"anonymous_token": pass_token})
+    assert result.status_code == 401
+
+
 def test_linking_refuses_a_pass_that_is_not_ours_or_already_spent() -> None:
     app = build_test_app(ConversationService(RecordingEngine(), MemoryRepository()))
     client = TestClient(app)
