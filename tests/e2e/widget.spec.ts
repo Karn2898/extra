@@ -1469,3 +1469,40 @@ test("thread drawer paginates and appends next pages on scroll", async ({ page }
 
   await expect.poll(() => shadowText(page, ".thread-drawer")).toContain("Thread Three");
 });
+
+test("visitor pass cached, cookie login hand-off merges history and first thread list request observes merged threads", async ({ page }) => {
+  const calls: string[] = [];
+  await pinVisitorPass(page);
+
+  let linkCalled = false;
+  await page.route("**/auth/link", async (route) => {
+    linkCalled = true;
+    calls.push(`POST ${new URL(route.request().url()).pathname}`);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ conversations_moved: 1 }),
+    });
+  });
+
+  await page.route(/\/conversations\?/, async (route) => {
+    calls.push(`GET ${new URL(route.request().url()).pathname}`);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        items: linkCalled
+          ? [{ conversation_id: "merged-thread", title: "Merged Thread", last_message_at: "2026-06-28T00:00:00Z" }]
+          : [],
+        next_cursor: null,
+      }),
+    });
+  });
+
+  await page.goto("/widget-demo.html");
+  await shadowClick(page, ".launcher");
+  await shadowClick(page, '[aria-label="Conversations"]');
+
+  await expect.poll(() => linkCalled).toBe(true);
+  await expect.poll(() => shadowText(page, ".thread-drawer")).toContain("Merged Thread");
+});
