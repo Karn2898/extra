@@ -747,6 +747,44 @@ assert.equal(mintedPass, false, "never asks for a visitor pass");
   );
 }
 
+// In cookie mode (host_token), a visitor chats anonymously, then signs in via cookie in the same SPA.
+// Calling client methods re-evaluates identity, claims history via /auth/link, and sends requests with cookie.
+{
+  resetPage();
+  localStorage.setItem(visitorPassKey("https://api.example"), "old-cookie-pass");
+  let loggedInViaCookie = false;
+  const calls = [];
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, auth: options.headers?.Authorization });
+    if (url.endsWith("/auth/link")) {
+      return loggedInViaCookie ? jsonResponse({ conversations_moved: 1 }) : jsonResponse({}, false, 401);
+    }
+    return jsonResponse({ conversation_id: "c1" });
+  };
+  const tokens = new TokenSource("https://api.example");
+  const client = new AgentChatClient("https://api.example", tokens);
+
+  // Before login: claimVisitorHistory gets 401, pass is kept, bearer old-cookie-pass sent
+  await client.createConversation();
+  const sentWhileSignedOut = calls.filter((c) => c.url.endsWith("/conversations")).pop().auth;
+  assert.equal(sentWhileSignedOut, "Bearer old-cookie-pass", "visitor pass used while signed out");
+
+  // User logs in via cookie on the host site
+  loggedInViaCookie = true;
+  await client.createConversation();
+  const sentAfterCookieLogin = calls.filter((c) => c.url.endsWith("/conversations")).pop().auth;
+  assert.equal(sentAfterCookieLogin, undefined, "no bearer sent after cookie login");
+  assert.ok(
+    calls.some((c) => c.url.endsWith("/auth/link")),
+    "cookie mode pre-login conversations are merged",
+  );
+  assert.equal(
+    localStorage.getItem(visitorPassKey("https://api.example")),
+    null,
+    "visitor pass is cleared after successful cookie merge",
+  );
+}
+
 // reset() keeps the visitor pass; only forget() discards it. Getting this
 // backwards silently throws away the conversations the merge exists to rescue.
 {

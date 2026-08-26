@@ -46,6 +46,8 @@ export class TokenSource {
   /** Bumped by `reset()` so a resolution already in flight, once it lands, can
    *  tell it is answering a question nobody is asking anymore. */
   private generation = 0;
+  /** Avoid repeating unauthenticated claim attempts for the same pass in cookie mode. */
+  private lastClaimAttemptPass: string | null = null;
   private readonly tokenUrl: string;
   private readonly provider: TokenProvider | null;
   private readonly storage: Storage;
@@ -64,7 +66,9 @@ export class TokenSource {
   }
 
   async current(): Promise<string | null> {
-    if (!this.cached) await this.resolve(() => this.storedPass());
+    if (!this.cached || (this.isCookieMode() && this.storedPass() !== null)) {
+      await this.resolve(() => this.storedPass());
+    }
     return this.cached;
   }
 
@@ -123,7 +127,7 @@ export class TokenSource {
   private async hostToken(): Promise<string | null> {
     const token = await this.fromHost();
     if (token || (this.isCookieMode() && this.storedPass())) {
-      void this.claimVisitorHistory(token);
+      await this.claimVisitorHistory(token);
     }
     return token;
   }
