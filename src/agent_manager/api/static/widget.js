@@ -52309,9 +52309,7 @@ var TokenSource = class {
     });
   }
   async current() {
-    if (!this.cached || this.isCookieMode() && this.storedPass() !== null) {
-      await this.resolve(() => this.storedPass());
-    }
+    if (!this.cached) await this.resolve(() => this.storedPass());
     return this.cached;
   }
   /** After a 401: whatever we sent is no good, so get another. */
@@ -52373,7 +52371,10 @@ var TokenSource = class {
         body: JSON.stringify({ anonymous_token: pass })
       });
       if (response.ok) {
-        this.clearPass();
+        const data = await response.json().catch(() => null);
+        if (hostToken !== null || (data?.conversations_moved ?? 0) > 0) {
+          this.clearPass();
+        }
       } else if (hostToken !== null && response.status >= 400 && response.status < 500 && response.status !== 401) {
         this.clearPass();
       }

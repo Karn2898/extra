@@ -66,9 +66,7 @@ export class TokenSource {
   }
 
   async current(): Promise<string | null> {
-    if (!this.cached || (this.isCookieMode() && this.storedPass() !== null)) {
-      await this.resolve(() => this.storedPass());
-    }
+    if (!this.cached) await this.resolve(() => this.storedPass());
     return this.cached;
   }
 
@@ -145,10 +143,10 @@ export class TokenSource {
         body: JSON.stringify({ anonymous_token: pass }),
       });
       if (response.ok) {
-        // In Bearer mode the pass is always cleared on success (conversation may be 0 if already merged).
-        // In cookie mode we also always clear: the pass is spent whether or not conversations moved —
-        // keeping it would fire a wasted POST /auth/link on every subsequent page load.
-        this.clearPass();
+        const data = (await response.json().catch(() => null)) as { conversations_moved?: number } | null;
+        if (hostToken !== null || (data?.conversations_moved ?? 0) > 0) {
+          this.clearPass();
+        }
       } else if (hostToken !== null && response.status >= 400 && response.status < 500 && response.status !== 401) {
         this.clearPass();
       }

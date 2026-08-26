@@ -771,6 +771,7 @@ assert.equal(mintedPass, false, "never asks for a visitor pass");
 
   // User logs in via cookie on the host site
   loggedInViaCookie = true;
+  tokens.reset(); // what refreshIdentity() does
   await client.createConversation();
   const sentAfterCookieLogin = calls.filter((c) => c.url.endsWith("/conversations")).pop().auth;
   assert.equal(sentAfterCookieLogin, undefined, "no bearer sent after cookie login");
