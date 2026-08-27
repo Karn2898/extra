@@ -66,7 +66,9 @@ export class TokenSource {
   }
 
   async current(): Promise<string | null> {
-    if (!this.cached) await this.resolve(() => this.storedPass());
+    if (!this.cached || (this.isCookieMode() && this.storedPass() !== null)) {
+      await this.resolve(() => this.storedPass());
+    }
     return this.cached;
   }
 

@@ -52309,7 +52309,9 @@ var TokenSource = class {
     });
   }
   async current() {
-    if (!this.cached) await this.resolve(() => this.storedPass());
+    if (!this.cached || this.isCookieMode() && this.storedPass() !== null) {
+      await this.resolve(() => this.storedPass());
+    }
     return this.cached;
   }
   /** After a 401: whatever we sent is no good, so get another. */
