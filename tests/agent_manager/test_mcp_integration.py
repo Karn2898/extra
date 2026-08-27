@@ -6,22 +6,24 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from anyio import create_memory_object_stream
+from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from mcp import ClientSession
+from mcp.shared.message import SessionMessage
+from mcp.types import TextContent
 
+from agent_engine.engine.engine import Engine
 from agent_engine.engine.types import ChatMessage, ChatRole, RunResult, ToolUsageRecord
 from agent_engine.runtime.hooks.models import RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
 from agent_manager.application import ConversationService
 from agent_manager.infrastructure.persistence.memory_repository import MemoryRepository
 from agentctl.mcp.server import create_mcp_server
-from agentctl.session import load_and_validate
 
 
-class FakeEngine:
+class FakeEngine(Engine):
     def __init__(self) -> None:
         self.prompts: list[str] = []
         self.histories: list[tuple[ChatMessage, ...]] = []
@@ -89,57 +91,36 @@ def _write_spec(tmp_path: Path) -> Path:
 
 
 async def _run_server_with_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    spec = _write_spec(tmp_path)
-    db_url = f"sqlite+aiosqlite:///{tmp_path / 'chat.db'}"
-    monkeypatch.setenv("AGENT_DB_BACKEND", "sqlite")
-    monkeypatch.setenv("AGENT_DB_URL", db_url)
-
     service, engine = _make_service()
+    mcp_server = create_mcp_server(service)
 
-    with (
-        patch("agentctl.mcp.server.LangGraphEngine", return_value=engine),
-        patch("agentctl.mcp.server.application_repositories") as mock_repos,
-        patch("agentctl.mcp.server.Settings", return_value=MagicMock(
-            context_window=10,
-            context_max_chars=None,
-            context_max_tokens=None,
-            snapshot_ttl_seconds=86_400,
-        )),
-    ):
-        mock_repos.return_value.__aenter__ = AsyncMock(
-            return_value=MagicMock(
-                conversations=service._repository,
-                session_approvals=MagicMock(),
+    c2s_send: MemoryObjectSendStream[SessionMessage]
+    c2s_receive: MemoryObjectReceiveStream[SessionMessage | Exception]
+    s2c_send: MemoryObjectSendStream[SessionMessage]
+    s2c_receive: MemoryObjectReceiveStream[SessionMessage | Exception]
+
+    c2s_send, c2s_receive = create_memory_object_stream[SessionMessage | Exception](0)
+    s2c_send, s2c_receive = create_memory_object_stream[SessionMessage | Exception](0)
+
+    async def server_task() -> None:
+        try:
+            await mcp_server.run(
+                c2s_receive,
+                s2c_send,
+                mcp_server.create_initialization_options(),
             )
-        )
-        mock_repos.return_value.__aexit__ = AsyncMock(return_value=False)
+        except Exception:
+            pass
+        finally:
+            await s2c_send.aclose()
+            await c2s_receive.aclose()
 
-        _spec_obj, _base_dir = load_and_validate(str(spec))
+    task = asyncio.create_task(server_task())
 
-        mcp_server = create_mcp_server(service)
-
-        c2s_send, c2s_receive = create_memory_object_stream(0)
-        s2c_send, s2c_receive = create_memory_object_stream(0)
-
-        async def server_task() -> None:
-            try:
-                await mcp_server.run(
-                    c2s_receive,
-                    s2c_send,
-                    mcp_server.create_initialization_options(),
-                )
-            except Exception:
-                pass
-            finally:
-                await s2c_send.aclose()
-                await c2s_receive.aclose()
-
-        task = asyncio.create_task(server_task())
-
-        session = ClientSession(s2c_receive, c2s_send)
-        await session.__aenter__()
-        await session.initialize()
-        return session, engine, task
+    session = ClientSession(s2c_receive, c2s_send)
+    await session.__aenter__()
+    await session.initialize()
+    return session, engine, task
 
 
 class TestMcpServerIntegration:
@@ -154,8 +135,10 @@ class TestMcpServerIntegration:
             )
             assert not result.isError
             content = result.structuredContent
+            assert isinstance(content, dict)
             assert "session_id" in content
-            assert len(content["session_id"]) == 16
+            assert len(str(content["session_id"])) == 16
+            assert content["status"] == "completed"
             assert content["answer"] == "answer-hello"
             assert content["visited"] == ["root", "knowledge_agent"]
         finally:
@@ -174,6 +157,7 @@ class TestMcpServerIntegration:
                 {"message": "hello"},
             )
             assert not first.isError
+            assert isinstance(first.structuredContent, dict)
             sid = first.structuredContent["session_id"]
 
             second = await session.call_tool(
@@ -181,6 +165,8 @@ class TestMcpServerIntegration:
                 {"message": "follow up", "session_id": sid},
             )
             assert not second.isError
+            assert isinstance(second.structuredContent, dict)
+            assert second.structuredContent["status"] == "completed"
             assert second.structuredContent["answer"] == "answer-follow up"
             assert len(_engine.histories) == 2
             assert _engine.histories[1] == (
@@ -203,6 +189,7 @@ class TestMcpServerIntegration:
                 {"message": "session one message"},
             )
             assert not first.isError
+            assert isinstance(first.structuredContent, dict)
             sid1 = first.structuredContent["session_id"]
 
             second = await session.call_tool(
@@ -210,6 +197,7 @@ class TestMcpServerIntegration:
                 {"message": "session two message"},
             )
             assert not second.isError
+            assert isinstance(second.structuredContent, dict)
             sid2 = second.structuredContent["session_id"]
 
             assert sid1 != sid2
@@ -254,7 +242,10 @@ class TestMcpServerIntegration:
                 {"message": ""},
             )
             assert result.isError
-            assert "non-empty string" in (result.content[0].text if result.content else "")
+            assert len(result.content) > 0
+            first_content = result.content[0]
+            assert isinstance(first_content, TextContent)
+            assert "non-empty string" in first_content.text
         finally:
             await session.__aexit__(None, None, None)
             task.cancel()

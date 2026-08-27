@@ -355,9 +355,7 @@ def _validate_model(path: str, raw: Any, errors: list[ValidationError]) -> None:
 
     temperature = raw.get("temperature")
     if temperature is not None and (
-        not isinstance(temperature, int | float)
-        or isinstance(temperature, bool)
-        or temperature < 0
+        not isinstance(temperature, int | float) or isinstance(temperature, bool) or temperature < 0
     ):
         errors.append(ValidationError(f"{path}.temperature", "Must be a non-negative number"))
 
@@ -631,9 +629,7 @@ def _looks_secret(value: str) -> bool:
 
 def _looks_secret_value(value: str) -> bool:
     """Value check: flag only strings that plausibly contain a credential."""
-    return bool(
-        _SECRET_VALUE_ASSIGNMENT.search(value) or _CREDENTIAL_SHAPES.search(value)
-    )
+    return bool(_SECRET_VALUE_ASSIGNMENT.search(value) or _CREDENTIAL_SHAPES.search(value))
 
 
 def _dedupe_stable(items: Iterable[str]) -> tuple[str, ...]:

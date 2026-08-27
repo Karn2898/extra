@@ -7,10 +7,9 @@ from uuid import uuid4
 
 import click
 
-from agent_engine.engine.langgraph.engine import LangGraphEngine
 from agent_engine.generate.generator import Generator
 from agent_engine.parsers.yaml.parser import YAMLParser
-from agentctl.session import SpecError, load_and_validate, load_env
+from agentctl.session import SpecError, load_env, runtime_session
 
 LOCAL_USER_ID = "local-user"
 
@@ -116,52 +115,23 @@ async def _run_async(
 ) -> None:
     load_env(config, env)
 
-    try:
-        spec, base_dir = load_and_validate(config)
-    except SpecError as exc:
-        for message_text in exc.messages:
-            click.echo(f"✗ {message_text}", err=True)
-        sys.exit(1)
-
-    from agent_manager.application import ConversationService
-    from agent_manager.composition import application_repositories
-    from agent_manager.config import Settings
-
     effective_session_id = session_id or uuid4().hex[:16]
     effective_user_id = user_id or LOCAL_USER_ID
 
-    click.echo(f"  system : {spec.meta.name}", err=True)
-    if session_id:
-        click.echo(f"  session: {effective_session_id}", err=True)
-    else:
-        click.echo(
-            f"  session: {effective_session_id} (generated; reuse with --session-id)",
-            err=True,
-        )
-    click.echo(f"  user   : {effective_user_id}", err=True)
-    click.echo(f"  message: {message}", err=True)
-    click.echo("", err=True)
-
-    settings = Settings()
     try:
-        async with (
-            application_repositories(settings) as repositories,
-            LangGraphEngine(
-                base_dir,
-                session_approval_repository=repositories.session_approvals,
-            ) as engine,
-        ):
-            await engine.build(spec)
-            service = ConversationService(
-                engine,
-                repositories.conversations,
-                window=settings.context_window,
-                max_chars=settings.context_max_chars,
-                max_tokens=settings.context_max_tokens,
-                snapshot_ttl_seconds=settings.snapshot_ttl_seconds,
-                system_name=spec.meta.name,
-                config_path=str(Path(config).resolve()),
-            )
+        async with runtime_session(config) as (spec, service):
+            click.echo(f"  system : {spec.meta.name}", err=True)
+            if session_id:
+                click.echo(f"  session: {effective_session_id}", err=True)
+            else:
+                click.echo(
+                    f"  session: {effective_session_id} (generated; reuse with --session-id)",
+                    err=True,
+                )
+            click.echo(f"  user   : {effective_user_id}", err=True)
+            click.echo(f"  message: {message}", err=True)
+            click.echo("", err=True)
+
             await service.create(user_id=effective_user_id, session_id=effective_session_id)
             if stream:
                 async for event in service.stream(
@@ -180,6 +150,10 @@ async def _run_async(
                 click.echo(f"  route  : {' → '.join(result.visited)}", err=True)
                 click.echo("")
                 click.echo(result.answer)
+    except SpecError as exc:
+        for message_text in exc.messages:
+            click.echo(f"✗ {message_text}", err=True)
+        sys.exit(1)
     except Exception as exc:
         click.echo(f"✗ Runtime error: {exc}", err=True)
         sys.exit(1)
@@ -195,6 +169,10 @@ def mcp() -> None:
 @click.option("--env", default=None, help="Path to .env file")
 def serve_stdio(config: str, env: str | None) -> None:
     """Serve the agent system as an MCP server over stdio."""
+    load_env(config, env)
+    from agent_manager.infrastructure.persistence.database import upgrade_database
+
+    upgrade_database()
     from agentctl.mcp.server import serve_stdio as serve_stdio_mcp
 
     serve_stdio_mcp(config, env)

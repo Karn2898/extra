@@ -8,13 +8,19 @@ path ``run`` uses instead of copy/pasting it.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 from agent_engine.core.spec import SystemSpec
 from agent_engine.core.validator import SystemSpecValidator
+from agent_engine.engine.langgraph.engine import LangGraphEngine
 from agent_engine.parsers.yaml.parser import YAMLParser
+from agent_manager.application import ConversationService
+from agent_manager.composition import application_repositories
+from agent_manager.config import Settings
 
 
 class SpecError(Exception):
@@ -47,3 +53,36 @@ def load_and_validate(config: str) -> tuple[SystemSpec, Path]:
     if errors:
         raise SpecError([str(e) for e in errors])
     return spec, base_dir
+
+
+@asynccontextmanager
+async def runtime_session(
+    config: str,
+    settings: Settings | None = None,
+) -> AsyncIterator[tuple[SystemSpec, ConversationService]]:
+    """Build the engine and conversation service for one command runtime.
+
+    Validates the YAML spec, sets up application repositories and the
+    execution engine, builds the graph, and binds a :class:`ConversationService`.
+    """
+    spec, base_dir = load_and_validate(config)
+    settings = settings or Settings()
+    async with (
+        application_repositories(settings) as repositories,
+        LangGraphEngine(
+            base_dir,
+            session_approval_repository=repositories.session_approvals,
+        ) as engine,
+    ):
+        await engine.build(spec)
+        service = ConversationService(
+            engine,
+            repositories.conversations,
+            window=settings.context_window,
+            max_chars=settings.context_max_chars,
+            max_tokens=settings.context_max_tokens,
+            snapshot_ttl_seconds=settings.snapshot_ttl_seconds,
+            system_name=spec.meta.name,
+            config_path=str(Path(config).resolve()),
+        )
+        yield spec, service

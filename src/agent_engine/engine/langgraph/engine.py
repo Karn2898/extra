@@ -55,6 +55,7 @@ from agent_engine.loaders.tool_loader import ToolLoader
 from agent_engine.logging_config import log
 from agent_engine.models.factory import build_chat_model
 from agent_engine.observability import build_callbacks
+from agent_engine.prompts import TemplateLoader
 from agent_engine.runtime.execution import ExecutionLimiter, current_execution
 from agent_engine.runtime.hooks import (
     EngineContext,
@@ -232,6 +233,7 @@ class LangGraphEngine(Engine):
             run_repository=InMemoryRunRepository(),
             approval_repository=InMemoryApprovalRepository(),
         )
+        self._prompt_loader = TemplateLoader(self._base_dir)
         # Composition roots inject a shared or persistent repository. The fallback
         # keeps direct engine construction backwards-compatible for tests and
         # embedded local use.
@@ -790,6 +792,7 @@ class LangGraphEngine(Engine):
             children=children,
             filters=self._filters,
             base_dir=self._base_dir,
+            prompt_loader=self._prompt_loader,
         )
 
     def _build_agent_node(self, spec: AgentSpec, node_path: str) -> AgentNode:
@@ -812,6 +815,7 @@ class LangGraphEngine(Engine):
             execution_manager=self._execution_manager,
             approval_coordinator=self._approval_coordinator,
             system_namespace=self._system_name,
+            prompt_loader=self._prompt_loader,
         )
 
     def _build_model(self, model: NodeModelConfig) -> BaseChatModel:

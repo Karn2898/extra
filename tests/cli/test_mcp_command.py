@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -9,7 +10,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from agent_engine.engine.types import RunResult, ToolUsageRecord
+from agent_engine.engine.engine import Engine
+from agent_engine.engine.types import ChatMessage, RunResult, ToolUsageRecord
+from agent_engine.runtime.streaming import RunStreamEvent
 from agent_manager.domain import Repository
 from agentctl.main import cli
 
@@ -25,7 +28,7 @@ def _write_spec(tmp_path: Path) -> Path:
     return spec
 
 
-class FakeEngine:
+class FakeEngine(Engine):
     def __init__(self) -> None:
         self.prompts: list[str] = []
         self.build_calls: list[object] = []
@@ -43,7 +46,7 @@ class FakeEngine:
         self,
         message: str,
         *,
-        history: tuple = (),
+        history: Sequence[ChatMessage] = (),
         context: object = None,
     ) -> RunResult:
         self.prompts.append(message)
@@ -59,6 +62,16 @@ class FakeEngine:
                 ),
             ),
         )
+
+    async def stream(
+        self,
+        message: str,
+        *,
+        history: Sequence[ChatMessage] = (),
+        context: object = None,
+    ) -> AsyncIterator[RunStreamEvent]:
+        self.prompts.append(message)
+        yield RunStreamEvent(type="final", content=f"answer-{message}")
 
     async def close(self) -> None: ...
 
@@ -88,25 +101,27 @@ def _patch_mcp_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         return repos
 
     with (
-        patch("agentctl.mcp.server.LangGraphEngine", return_value=fake_engine),
-        patch("agentctl.mcp.server.application_repositories", side_effect=_fake_repositories),
-        patch("agentctl.mcp.server.Settings", return_value=MagicMock(
-            context_window=10,
-            context_max_chars=None,
-            context_max_tokens=None,
-            snapshot_ttl_seconds=86_400,
-        )),
+        patch("agentctl.session.LangGraphEngine", return_value=fake_engine),
+        patch("agentctl.session.application_repositories", side_effect=_fake_repositories),
+        patch(
+            "agentctl.session.Settings",
+            return_value=MagicMock(
+                context_window=10,
+                context_max_chars=None,
+                context_max_tokens=None,
+                snapshot_ttl_seconds=86_400,
+            ),
+        ),
     ):
         yield spec, fake_engine, fake_repo
 
 
 def test_mcp_serve_starts_stdio_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    with _patch_mcp_runtime(tmp_path, monkeypatch) as (spec, fake_engine, _fake_repo), patch(
-        "agentctl.mcp.server.stdio_server"
-    ) as mock_stdio:
-        mock_stdio.return_value.__aenter__ = AsyncMock(
-            return_value=(MagicMock(), MagicMock())
-        )
+    with (
+        _patch_mcp_runtime(tmp_path, monkeypatch) as (spec, fake_engine, _fake_repo),
+        patch("agentctl.mcp.server.stdio_server") as mock_stdio,
+    ):
+        mock_stdio.return_value.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
         mock_stdio.return_value.__aexit__ = AsyncMock(return_value=False)
 
         runner = CliRunner()

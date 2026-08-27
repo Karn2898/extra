@@ -6,9 +6,17 @@ from collections.abc import AsyncIterator, Sequence
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from mcp.types import CallToolRequest, CallToolRequestParams, ListToolsRequest
+from mcp.types import (
+    CallToolRequest,
+    CallToolRequestParams,
+    CallToolResult,
+    ListToolsRequest,
+    ListToolsResult,
+    TextContent,
+)
 
-from agent_engine.engine.types import ChatMessage, RunResult, ToolUsageRecord
+from agent_engine.engine.engine import Engine
+from agent_engine.engine.types import ChatMessage, PendingApproval, RunResult, ToolUsageRecord
 from agent_engine.runtime.hooks.models import RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
 from agent_manager.application import ConversationService
@@ -23,11 +31,12 @@ from agentctl.mcp.server import (
 )
 
 
-class FakeEngine:
+class FakeEngine(Engine):
     def __init__(self) -> None:
         self.prompts: list[str] = []
         self.histories: list[tuple[ChatMessage, ...]] = []
         self.contexts: list[RunContext | None] = []
+        self.pending_approval: PendingApproval | None = None
 
     async def build(self, _spec: object) -> None: ...
 
@@ -41,6 +50,14 @@ class FakeEngine:
         self.prompts.append(message)
         self.histories.append(tuple(history))
         self.contexts.append(context)
+        if self.pending_approval is not None:
+            return RunResult(
+                system_name="Fake System",
+                visited=["root"],
+                answer="",
+                status="pending_approval",
+                pending_approval=self.pending_approval,
+            )
         return RunResult(
             system_name="Fake System",
             visited=["root", "knowledge_agent"],
@@ -77,9 +94,9 @@ class FakeEngine:
     async def close(self) -> None: ...
 
 
-def _make_service() -> tuple[ConversationService, FakeEngine, Repository]:
+def _make_service() -> tuple[ConversationService, FakeEngine, MagicMock]:
     engine = FakeEngine()
-    repo = MagicMock(spec=Repository)
+    repo: MagicMock = MagicMock(spec=Repository)
     repo.conversation_exists = AsyncMock(return_value=True)
     repo.create_session = AsyncMock(return_value=MagicMock(session_id="sess-1"))
     repo.get_context = AsyncMock(return_value=MagicMock(messages=[]))
@@ -166,7 +183,8 @@ class TestHandleExtraChat:
         result = await _handle_extra_chat(service, {"message": "hello"})
 
         assert "session_id" in result
-        assert len(result["session_id"]) == 16
+        assert len(str(result["session_id"])) == 16
+        assert result["status"] == "completed"
         repo.create_session.assert_called_once()
         repo.append_message.assert_called()
 
@@ -176,6 +194,7 @@ class TestHandleExtraChat:
         result = await _handle_extra_chat(service, {"message": "hello", "session_id": "my-sess"})
 
         assert result["session_id"] == "my-sess"
+        assert result["status"] == "completed"
         repo.create_session.assert_called_once()
         assert repo.create_session.call_args.args[0] == "my-sess"
         assert repo.create_session.call_args.kwargs["user_id"] == "local-user"
@@ -185,15 +204,43 @@ class TestHandleExtraChat:
 
         result = await _handle_extra_chat(service, {"message": "docs?"})
 
+        assert result["status"] == "completed"
         assert result["answer"] == "The relevant documentation is..."
         assert result["visited"] == ["root", "knowledge_agent"]
-        assert len(result["used_tools"]) == 1
-        tool = result["used_tools"][0]
+        used_tools = result["used_tools"]
+        assert isinstance(used_tools, list)
+        assert len(used_tools) == 1
+        tool = used_tools[0]
         assert tool["name"] == "search_internal_documents"
         assert tool["provider"] == "mcp"
         assert tool["status"] == "succeeded"
         assert tool["agent_id"] == "enterprise_docs_agent"
         assert tool["server_id"] == "local_knowledge_mcp"
+
+    async def test_maps_pending_approval_to_output(self) -> None:
+        service, engine, _repo = _make_service()
+        engine.pending_approval = PendingApproval(
+            run_id="run-1",
+            approval_id="appr-1",
+            agent_id="agent_a",
+            tool_name="sensitive_tool",
+            description="Execute sensitive tool",
+            provider="mcp",
+            server_id="server_1",
+            arguments={"arg": "val"},
+        )
+
+        result = await _handle_extra_chat(service, {"message": "do action"})
+
+        assert result["status"] == "pending_approval"
+        assert result["answer"] == ""
+        assert "pending_approval" in result
+        pa = result["pending_approval"]
+        assert isinstance(pa, dict)
+        assert pa["run_id"] == "run-1"
+        assert pa["approval_id"] == "appr-1"
+        assert pa["tool_name"] == "sensitive_tool"
+        assert pa["arguments"] == {"arg": "val"}
 
     async def test_uses_provided_user_id(self) -> None:
         service, _engine, repo = _make_service()
@@ -220,6 +267,7 @@ class TestCreateMcpServer:
         handler = server.request_handlers[type(req)]
         result = await handler(req)
 
+        assert isinstance(result.root, ListToolsResult)
         tools = result.root.tools
         assert len(tools) == 1
         assert tools[0].name == "extra_chat"
@@ -239,10 +287,13 @@ class TestCreateMcpServer:
         handler = server.request_handlers[type(req)]
         result = await handler(req)
 
+        assert isinstance(result.root, CallToolResult)
         assert not result.root.isError
         content = result.root.structuredContent
+        assert isinstance(content, dict)
         assert "session_id" in content
-        assert len(content["session_id"]) == 16
+        assert len(str(content["session_id"])) == 16
+        assert content["status"] == "completed"
         assert content["answer"] == "The relevant documentation is..."
         assert engine.prompts == ["hello"]
 
@@ -257,5 +308,9 @@ class TestCreateMcpServer:
         handler = server.request_handlers[type(req)]
         result = await handler(req)
 
+        assert isinstance(result.root, CallToolResult)
         assert result.root.isError is True
-        assert "Unknown tool" in (result.root.content[0].text if result.root.content else "")
+        assert len(result.root.content) > 0
+        first_content = result.root.content[0]
+        assert isinstance(first_content, TextContent)
+        assert "Unknown tool" in first_content.text

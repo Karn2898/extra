@@ -26,13 +26,12 @@ from agent_engine.engine.langgraph.filters import RouteFilter
 from agent_engine.engine.langgraph.helpers import (
     as_text,
     emit_route,
-    load_file,
     model_context,
-    render_prompt,
     run_tool_loop,
 )
 from agent_engine.loaders.resolver_loader import ResolverLoader
 from agent_engine.logging_config import log
+from agent_engine.prompts import TemplateLoader
 from agent_engine.runtime.execution import (
     ExecutionLimitExceeded,
     blocked_message,
@@ -152,6 +151,7 @@ class AgentNode:
         approval_coordinator: ApprovalCoordinator,
         system_namespace: str = "",
         mcp_server_by_tool: dict[str, str] | None = None,
+        prompt_loader: TemplateLoader | None = None,
     ) -> None:
         self._spec = spec
         self._node_path = node_path
@@ -165,6 +165,7 @@ class AgentNode:
         self._execution_manager = execution_manager
         self._approval_coordinator = approval_coordinator
         self._system_namespace = system_namespace
+        self._prompt_loader = prompt_loader
 
     async def __call__(self, state: GraphState) -> dict[str, object]:
         ctx = self._resolve_context()
@@ -184,8 +185,13 @@ class AgentNode:
 
     def _build_prompt(self, ctx: dict[str, str]) -> str:
         """Load the system-prompt template and interpolate resolver values."""
-        template = load_file(self._base_dir, self._spec.prompts.system) or self._spec.description
-        return render_prompt(template, ctx)
+        template_text = ""
+        if self._spec.prompts.system and self._prompt_loader is not None:
+            parsed = self._prompt_loader.load(self._spec.prompts.system)
+            template_text = self._prompt_loader.render(parsed, ctx)
+        if not template_text:
+            template_text = self._spec.description or ""
+        return template_text
 
     async def _run(self, system_prompt: str, state: GraphState) -> dict[str, object]:
         """Drive the model + tool loop until the model stops requesting tools."""
@@ -522,6 +528,7 @@ class OrchestratorNode:
         children: list[ChildEntry],
         filters: list[RouteFilter],
         base_dir: Path,
+        prompt_loader: TemplateLoader | None = None,
     ) -> None:
         self._spec = spec
         self._node_path = node_path
@@ -529,10 +536,16 @@ class OrchestratorNode:
         self._children = children
         self._filters = filters
         self._base_dir = base_dir
+        self._prompt_loader = prompt_loader
 
     async def __call__(self, state: GraphState) -> dict[str, object]:
         candidates = self._filter_children(state)
-        base_prompt = load_file(self._base_dir, self._spec.prompts.system) or self._spec.description
+        base_prompt = ""
+        if self._spec.prompts.system and self._prompt_loader is not None:
+            parsed = self._prompt_loader.load(self._spec.prompts.system)
+            base_prompt = self._prompt_loader.render(parsed, {})
+        if not base_prompt:
+            base_prompt = self._spec.description or ""
         system_prompt = f"{base_prompt}\n{_ORCHESTRATOR_CONTRACT}"
         return await self._run(system_prompt, candidates, state)
 

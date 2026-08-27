@@ -9,13 +9,13 @@ from typing import Any, ClassVar
 import pytest
 from click.testing import CliRunner, Result
 
+import agentctl.session as session_mod
 from agent_engine.engine.types import ChatMessage, ChatRole, RunResult
 from agent_engine.runtime.hooks import RunContext
 from agent_engine.runtime.streaming import RunStreamEvent
 from agent_manager.infrastructure.persistence.database import create_db_engine, session_factory
 from agent_manager.infrastructure.persistence.sql_repository import SqlRepository
 from agent_manager.infrastructure.persistence.tables import ConversationSnapshotRow
-from agentctl import main as main_mod
 from agentctl.main import cli
 
 
@@ -167,7 +167,7 @@ def test_agentctl_run_persists_messages_and_reuses_session_context(
     db_url = f"sqlite+aiosqlite:///{tmp_path / 'chat.db'}"
     monkeypatch.setenv("AGENT_DB_BACKEND", "sqlite")
     monkeypatch.setenv("AGENT_DB_URL", db_url)
-    monkeypatch.setattr(main_mod, "LangGraphEngine", FakeRuntimeEngine)
+    monkeypatch.setattr(session_mod, "LangGraphEngine", FakeRuntimeEngine)
     FakeRuntimeEngine.prompts.clear()
     FakeRuntimeEngine.histories.clear()
     FakeRuntimeEngine.contexts.clear()
@@ -221,7 +221,7 @@ def test_agentctl_run_without_session_prints_reusable_generated_session(
     db_url = f"sqlite+aiosqlite:///{tmp_path / 'generated.db'}"
     monkeypatch.setenv("AGENT_DB_BACKEND", "sqlite")
     monkeypatch.setenv("AGENT_DB_URL", db_url)
-    monkeypatch.setattr(main_mod, "LangGraphEngine", FakeRuntimeEngine)
+    monkeypatch.setattr(session_mod, "LangGraphEngine", FakeRuntimeEngine)
     FakeRuntimeEngine.prompts.clear()
     FakeRuntimeEngine.histories.clear()
     FakeRuntimeEngine.contexts.clear()
@@ -251,7 +251,7 @@ def test_agentctl_run_failure_keeps_user_message_without_assistant_response(
     db_url = f"sqlite+aiosqlite:///{tmp_path / 'failure.db'}"
     monkeypatch.setenv("AGENT_DB_BACKEND", "sqlite")
     monkeypatch.setenv("AGENT_DB_URL", db_url)
-    monkeypatch.setattr(main_mod, "LangGraphEngine", FailingRuntimeEngine)
+    monkeypatch.setattr(session_mod, "LangGraphEngine", FailingRuntimeEngine)
     FailingRuntimeEngine.prompts.clear()
     FailingRuntimeEngine.histories.clear()
     FailingRuntimeEngine.contexts.clear()

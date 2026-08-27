@@ -13,19 +13,17 @@ import dataclasses
 import logging
 import signal
 import sys
-from pathlib import Path
 from uuid import uuid4
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool
 
-from agent_engine.engine.langgraph.engine import LangGraphEngine
+from agent_engine.engine.types import PendingApproval
 from agent_engine.runtime.tool_models import ToolUsageRecord
 from agent_manager.application import ConversationService
-from agent_manager.composition import application_repositories
-from agent_manager.config import Settings
-from agentctl.session import load_and_validate, load_env
+from agent_manager.infrastructure.persistence.database import upgrade_database
+from agentctl.session import load_env, runtime_session
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +37,21 @@ class ExtraChatError(Exception):
 def _tool_usage_to_dict(tool: ToolUsageRecord) -> dict[str, object]:
     data = dataclasses.asdict(tool)
     return {k: v for k, v in data.items() if v is not None}
+
+
+def _pending_approval_to_dict(pa: PendingApproval | None) -> dict[str, object] | None:
+    if pa is None:
+        return None
+    return {
+        "run_id": pa.run_id,
+        "approval_id": pa.approval_id,
+        "agent_id": pa.agent_id,
+        "tool_name": pa.tool_name,
+        "description": pa.description,
+        "provider": pa.provider,
+        "server_id": pa.server_id,
+        "arguments": dict(pa.arguments),
+    }
 
 
 def _validate_extra_chat_input(arguments: dict[str, object]) -> tuple[str, str | None, str | None]:
@@ -70,12 +83,16 @@ async def _handle_extra_chat(
 
     result = await service.send(effective_session_id, message, user_id=effective_user_id)
 
-    return {
+    response: dict[str, object] = {
         "session_id": effective_session_id,
+        "status": result.status,
         "answer": result.answer,
         "visited": list(result.visited),
         "used_tools": [_tool_usage_to_dict(t) for t in result.used_tools],
     }
+    if result.pending_approval is not None:
+        response["pending_approval"] = _pending_approval_to_dict(result.pending_approval)
+    return response
 
 
 def create_mcp_server(service: ConversationService) -> Server:
@@ -88,7 +105,9 @@ def create_mcp_server(service: ConversationService) -> Server:
                 name="extra_chat",
                 description=(
                     "Send a message to the Extra agent system and receive a response. "
-                    "Maintains conversation history across calls via session_id."
+                    "Maintains conversation history across calls via session_id. "
+                    "Returns run status, answer text, visited agents, used tools, "
+                    "and pending_approval details if execution suspended for human approval."
                 ),
                 inputSchema={
                     "type": "object",
@@ -124,24 +143,7 @@ def create_mcp_server(service: ConversationService) -> Server:
 
 
 async def _run_mcp_server(config: str) -> None:
-    spec, base_dir = load_and_validate(config)
-    settings = Settings()
-
-    async with application_repositories(settings) as repositories, LangGraphEngine(
-        base_dir,
-        session_approval_repository=repositories.session_approvals,
-    ) as engine:
-        await engine.build(spec)
-        service = ConversationService(
-            engine,
-            repositories.conversations,
-            window=settings.context_window,
-            max_chars=settings.context_max_chars,
-            max_tokens=settings.context_max_tokens,
-            snapshot_ttl_seconds=settings.snapshot_ttl_seconds,
-            system_name=spec.meta.name,
-            config_path=str(Path(config).resolve()),
-        )
+    async with runtime_session(config) as (_spec, service):
         mcp_server = create_mcp_server(service)
 
         shutdown_event = asyncio.Event()
@@ -183,6 +185,7 @@ async def _run_mcp_server(config: str) -> None:
 
 def serve_stdio(config: str, env: str | None) -> None:
     load_env(config, env)
+    upgrade_database()
     try:
         asyncio.run(_run_mcp_server(config))
     except Exception as exc:

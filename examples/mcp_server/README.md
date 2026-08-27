@@ -64,6 +64,7 @@ if __name__ == "__main__":
 ```json
 {
   "session_id": "a1b2c3d4e5f67890",
+  "status": "completed",
   "answer": "Hello! How can I assist you today?",
   "visited": ["echo_agent"],
   "used_tools": []
@@ -75,3 +76,6 @@ if __name__ == "__main__":
 - Omit `session_id` to create a new conversation.
 - Reuse `session_id` to continue an existing conversation.
 - Provide `user_id` to tag messages with a stable user identity.
+- Autonomous execution: by default in this example, `auto: true` is configured on the agent so tool calls execute immediately without pausing for human approval.
+- Human-in-the-Loop: for agents configured without `auto: true`, if a tool call requires confirmation, `extra_chat` returns `"status": "pending_approval"` along with a `pending_approval` metadata object containing the suspended `run_id`, `approval_id`, tool name, and arguments.
+

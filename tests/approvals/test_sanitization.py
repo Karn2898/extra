@@ -45,7 +45,9 @@ def test_original_arguments_unchanged() -> None:
     args = {"password": "hunter2", "nested": {"token": "t"}}
     mask_arguments(args)
     assert args["password"] == "hunter2"
-    assert args["nested"]["token"] == "t"
+    nested = args["nested"]
+    assert isinstance(nested, dict)
+    assert nested["token"] == "t"
 
 
 def test_mask_sensitive_passes_scalars_through() -> None:

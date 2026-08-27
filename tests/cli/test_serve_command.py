@@ -44,8 +44,6 @@ def test_serve_port_flag_overrides_default(captured_run: dict[str, object]) -> N
 
 
 def test_serve_port_env_var_overrides_default(captured_run: dict[str, object]) -> None:
-    res = CliRunner().invoke(
-        cli, ["serve", "--config", "agents.yml"], env={"PORT": "9000"}
-    )
+    res = CliRunner().invoke(cli, ["serve", "--config", "agents.yml"], env={"PORT": "9000"})
     assert res.exit_code == 0, res.output
     assert captured_run["port"] == 9000

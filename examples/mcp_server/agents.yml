@@ -11,5 +11,12 @@ execution:
   max_iterations: 5
   max_tool_calls: 3
 
+agents:
+  echo_agent:
+    name: "Echo Agent"
+    description: "A simple echo agent for demonstration."
+    auto: true
+
 graph:
   echo_agent:
+
