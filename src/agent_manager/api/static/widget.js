@@ -53505,6 +53505,7 @@ function AgentChatApp({
   const approvalRequestsRef = (0, import_react10.useRef)(/* @__PURE__ */ new Set());
   const approvalCancellationRequestsRef = (0, import_react10.useRef)(/* @__PURE__ */ new Set());
   const activeExecutionRef = (0, import_react10.useRef)(null);
+  const requestControllersRef = (0, import_react10.useRef)(/* @__PURE__ */ new Set());
   const replacementIdsRef = (0, import_react10.useRef)(/* @__PURE__ */ new Map());
   const resolveConversationId = (0, import_react10.useCallback)((conversationId) => {
     let resolved = conversationId;
@@ -53521,12 +53522,13 @@ function AgentChatApp({
   const conversation = useConversation(client, config.endpoint, onReplaced);
   (0, import_react10.useEffect)(
     () => () => {
-      activeExecutionRef.current?.controller.abort();
+      for (const controller of requestControllersRef.current) controller.abort();
     },
     []
   );
   const beginExecution = (0, import_react10.useCallback)((execution) => {
     if (activeExecutionRef.current !== null) return false;
+    requestControllersRef.current.add(execution.controller);
     activeExecutionRef.current = execution;
     setActiveExecution(execution);
     return true;
@@ -53628,6 +53630,13 @@ function AgentChatApp({
       }
     }
   }, [conversation, nextCursor]);
+  const applyGeneratedTitle = (0, import_react10.useCallback)((conversationId, title) => {
+    setThreads(
+      (prev) => prev.map(
+        (thread) => thread.conversation_id === conversationId ? { ...thread, title } : thread
+      )
+    );
+  }, []);
   const openThread = (0, import_react10.useCallback)(
     async (conversationId) => {
       conversation.switchTo(conversationId);
@@ -53773,6 +53782,7 @@ function AgentChatApp({
         );
       } finally {
         approvalRequestsRef.current.delete(approval.approval_id);
+        requestControllersRef.current.delete(controller);
         finishExecution(controller);
         void refreshUsage(cid);
       }
@@ -53846,6 +53856,7 @@ function AgentChatApp({
       setEditing(null);
       let entry = pending;
       let completed = false;
+      let executionSettled = false;
       try {
         for await (const event of conversation.stream(
           cid,
@@ -53863,11 +53874,24 @@ function AgentChatApp({
             replaceEntry(cid, userEntry.id, userEntry);
             continue;
           }
+          if (event.type === "title") {
+            if (event.title) applyGeneratedTitle(resolveConversationId(cid), event.title);
+            continue;
+          }
           completed || (completed = event.type === "final");
           entry = reduceStreamEvent(entry, event);
           replaceEntry(cid, pending.id, entry);
+          if (event.type === "final" || event.type === "pending_approval") {
+            executionSettled = true;
+            replaceEntry(cid, pending.id, { ...entry, typing: false });
+            if (event.type === "final") {
+              onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
+            }
+            finishExecution(controller);
+            void refreshUsage(resolveConversationId(cid));
+          }
         }
-        if (controller.signal.aborted && !completed) {
+        if (!executionSettled && controller.signal.aborted && !completed) {
           replaceEntry(cid, pending.id, {
             id: pending.id,
             role: "ai",
@@ -53876,11 +53900,14 @@ function AgentChatApp({
           });
           return;
         }
-        replaceEntry(cid, pending.id, { ...entry, typing: false });
-        if (!entry.approval) {
-          onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
+        if (!executionSettled) {
+          replaceEntry(cid, pending.id, { ...entry, typing: false });
+          if (!entry.approval) {
+            onAnswer({ visited: entry.route ?? [], used_tools: entry.tools ?? [] });
+          }
         }
       } catch (error) {
+        if (executionSettled) return;
         if (controller.signal.aborted && !completed) {
           replaceEntry(cid, pending.id, {
             id: pending.id,
@@ -53904,8 +53931,9 @@ function AgentChatApp({
           replaceEntry(cid, pending.id, { id: pending.id, role: "ai", text: message, error: true });
         }
       } finally {
+        requestControllersRef.current.delete(controller);
         finishExecution(controller);
-        void refreshUsage(resolveConversationId(cid));
+        if (!executionSettled) void refreshUsage(resolveConversationId(cid));
       }
     },
     [
@@ -53914,6 +53942,7 @@ function AgentChatApp({
       finishExecution,
       onAnswer,
       putEntries,
+      applyGeneratedTitle,
       refreshUsage,
       replaceEntry,
       resolveConversationId

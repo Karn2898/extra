@@ -595,6 +595,37 @@ test("sending a message calls backend, renders assistant answer, stores conversa
   expect(calls).toContain("GET /conversations/conv-smoke/messages");
 });
 
+test("a delayed title updates threads without keeping the completed turn active", async ({
+  page,
+}) => {
+  await page.request.post("/e2e-title/reset");
+  await page.goto("/widget-demo.html");
+  await page.locator("agent-chat").evaluate(
+    (element, endpoint) => element.setAttribute("endpoint", endpoint),
+    `${ENDPOINT}/e2e-title`,
+  );
+  await shadowClick(page, ".launcher");
+
+  await shadowFill(page, ".input", "first message");
+  await shadowClick(page, ".send");
+  await expect.poll(() => shadowText(page, ".messages")).toContain("Answer 1");
+  await expect.poll(() => shadowAttribute(page, ".send", "aria-label")).toBe("Send message");
+
+  // The first response is still waiting to deliver its title. A second turn
+  // succeeding now proves `final` already released the main execution.
+  await shadowFill(page, ".input", "second message");
+  await shadowClick(page, ".send");
+  await expect.poll(() => shadowText(page, ".messages")).toContain("Answer 2");
+
+  await shadowClick(page, '.header-btn[aria-label="Conversations"]');
+  await expect.poll(() => shadowText(page, ".thread-item")).toContain(
+    "A long opening message used as fallback",
+  );
+  await expect.poll(() => shadowText(page, ".thread-item")).toContain(
+    "Generated Conversation Title",
+  );
+});
+
 test("Stop cancels the active stream while preserving the next draft", async ({ page }) => {
   const calls = await mockConversationApi(page);
   let streamCount = 0;

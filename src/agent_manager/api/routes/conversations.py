@@ -156,6 +156,20 @@ async def stream_message(
                 payload = to_stream_event(event).model_dump(exclude_none=True)
                 yield f"event: {event.type}\ndata: {json.dumps(payload)}\n\n"
             exhausted = True
+            # Keep this response open for the independent title result. The
+            # client treats `final`/`pending_approval` as terminal for the main
+            # execution, so a slow title cannot hold the composer locked.
+            try:
+                title = await service.wait_for_generated_title(turn)
+            except Exception:
+                # The engine stream is already terminal and durable. A defect
+                # in secondary title delivery must not rewrite that outcome as
+                # a failed conversation turn.
+                logger.exception("conversation title delivery failed")
+                title = None
+            if title is not None:
+                titled = StreamEventOut(type="title", title=title).model_dump(exclude_none=True)
+                yield f"event: title\ndata: {json.dumps(titled)}\n\n"
         except Exception:
             await service.fail_turn(turn)
             # The run is already terminal; `finally` must not try to cancel it.

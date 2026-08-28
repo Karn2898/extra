@@ -111,6 +111,13 @@ Streaming events include:
   arguments, and the identifiers required to resume it.
 - `resume_started` — the existing run has left suspension and is executing
   again under the same `run_id`.
+- `title` — the conversation's settled, persisted title, sent after the main
+  stream's terminal event on a conversation's first turn only. Titling runs
+  alongside the turn; the widget unlocks at `final` or `pending_approval` while
+  the response may remain open for this later event. The value may be either a
+  generated title or the trimmed opening message used after generation fails.
+  The event is absent when no model is configured for titling or when the title
+  could not be persisted.
 - `error` — stream failure.
 
 While a turn runs, the composer remains editable but cannot submit another
