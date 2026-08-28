@@ -105,6 +105,11 @@ _QUOTE_PAIRS: tuple[tuple[str, str], ...] = (
     ("\N{HEBREW PUNCTUATION GERESH}", "\N{HEBREW PUNCTUATION GERESH}"),
 )
 
+_TRAILING_PUNCTUATION = (
+    ".!?:;,\N{HORIZONTAL ELLIPSIS}\N{ARABIC SEMICOLON}\N{ARABIC QUESTION MARK}"
+    "\N{IDEOGRAPHIC FULL STOP}\N{FULLWIDTH EXCLAMATION MARK}\N{FULLWIDTH QUESTION MARK}"
+)
+
 
 def _unquote(text: str) -> str:
     """Drop one matching pair of quote marks wrapping the whole string."""
@@ -126,5 +131,7 @@ def _as_title(answer: str) -> str:
     limit is not enforced on every backend and a paragraph would reach the UI.
     """
     first_line = next((line for line in answer.splitlines() if line.strip()), "")
-    label = _unquote(compact_text(first_line)).rstrip(".")[:MAX_TITLE_CHARS]
+    label = compact_text(first_line).rstrip(_TRAILING_PUNCTUATION).rstrip()
+    label = _unquote(label).strip()[:MAX_TITLE_CHARS]
+    label = label.rstrip(_TRAILING_PUNCTUATION).rstrip()
     return label if any(char.isalnum() for char in label) else ""

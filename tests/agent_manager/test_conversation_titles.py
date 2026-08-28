@@ -130,6 +130,7 @@ async def test_short_opening_message_is_its_own_title_without_a_model_call() -> 
         ("「Next Month Invoice Estimate」", "Next Month Invoice Estimate"),
         ("״הערכת חשבונית לחודש הבא״", "הערכת חשבונית לחודש הבא"),
         ("Next Month Invoice Estimate.", "Next Month Invoice Estimate"),
+        ('"Next Month Invoice Estimate".', "Next Month Invoice Estimate"),
         ("Title\nplus commentary the model added", "Title"),
         ("x" * 200, "x" * MAX_TITLE_CHARS),
     ],
@@ -252,6 +253,27 @@ async def test_only_the_first_turn_is_titled() -> None:
     assert len(engine.calls) == 1
 
 
+async def test_editing_the_first_message_does_not_title_the_conversation_again() -> None:
+    engine = StubCompletionEngine()
+    repository = MemoryRepository()
+    service = ConversationService(RecordingEngine(), repository, title_generator=titler(engine))
+    cid = await service.create(ALICE)
+
+    await service.send(cid, LONG_QUESTION, ALICE)
+    await service.close()
+    first_message = (await repository.list_conversation_messages(cid))[0]
+
+    edited_turn = await service.prepare_turn(
+        cid,
+        f"edited {LONG_QUESTION}",
+        ALICE,
+        edit_message_id=first_message.message_id,
+    )
+
+    assert edited_turn.title_task is None
+    assert len(engine.calls) == 1
+
+
 async def test_a_failing_generator_leaves_the_trimmed_title_in_place() -> None:
     repository = MemoryRepository()
     service = ConversationService(
@@ -341,6 +363,28 @@ async def test_the_generated_title_is_delivered_even_when_it_outlives_the_turn()
     assert await service.wait_for_generated_title(turn) == "Next Month Invoice Estimate"
 
 
+async def test_cancelling_the_title_wait_does_not_cancel_title_generation() -> None:
+    engine = SlowCompletionEngine()
+    repository = MemoryRepository()
+    service = ConversationService(RecordingEngine(), repository, title_generator=titler(engine))
+    cid = await service.create(ALICE)
+    turn = await service.prepare_turn(cid, LONG_QUESTION, ALICE)
+    assert turn.title_task is not None
+
+    waiter = asyncio.create_task(service.wait_for_generated_title(turn))
+    await asyncio.sleep(0)
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+
+    assert not turn.title_task.cancelled()
+    engine.released.set()
+    await service.close()
+    session = await repository.get_session(cid)
+    assert session is not None
+    assert session.title == "Next Month Invoice Estimate"
+
+
 async def test_no_title_is_delivered_for_a_turn_that_started_no_generation() -> None:
     service = ConversationService(
         RecordingEngine(), MemoryRepository(), title_generator=titler(StubCompletionEngine())
@@ -399,3 +443,57 @@ def test_the_stream_sends_no_title_event_on_a_later_turn() -> None:
         text = "".join(response.iter_text())
 
     assert "event: title" not in text
+
+
+class GeneratedTitleWriteFails(MemoryRepository):
+    async def rename_session(self, session_id: str, title: str) -> None:
+        if title == "Next Month Invoice Estimate":
+            raise RuntimeError("database unavailable")
+        await super().rename_session(session_id, title)
+
+
+def test_the_stream_does_not_emit_a_title_that_was_not_persisted() -> None:
+    repository = GeneratedTitleWriteFails()
+    service = ConversationService(
+        RecordingEngine(), repository, title_generator=titler(StubCompletionEngine())
+    )
+    client = TestClient(build_test_app(service), headers=bearer("alice"))
+    cid = client.post("/conversations").json()["conversation_id"]
+
+    with client.stream(
+        "POST", f"/conversations/{cid}/messages/stream", json={"message": LONG_QUESTION}
+    ) as response:
+        text = "".join(response.iter_text())
+
+    assert "event: title" not in text
+    session = asyncio.run(repository.get_session(cid))
+    assert session is not None
+    assert session.title == LONG_QUESTION[:47] + "…"
+
+
+class TitleDeliveryFails(ConversationService):
+    async def wait_for_generated_title(self, turn: Any) -> str | None:
+        del turn
+        raise RuntimeError("title delivery broke")
+
+
+def test_title_delivery_failure_does_not_fail_a_completed_turn() -> None:
+    repository = MemoryRepository()
+    service = TitleDeliveryFails(
+        RecordingEngine(), repository, title_generator=titler(StubCompletionEngine())
+    )
+    client = TestClient(build_test_app(service), headers=bearer("alice"))
+    cid = client.post("/conversations").json()["conversation_id"]
+
+    with client.stream(
+        "POST", f"/conversations/{cid}/messages/stream", json={"message": LONG_QUESTION}
+    ) as response:
+        text = "".join(response.iter_text())
+
+    assert "event: final" in text
+    assert "event: error" not in text
+    history = asyncio.run(repository.list_conversation_messages(cid))
+    assert [message.content for message in history] == [
+        LONG_QUESTION,
+        f"answer:{LONG_QUESTION}",
+    ]

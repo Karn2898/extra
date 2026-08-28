@@ -133,7 +133,7 @@ export interface StreamEvent {
   agent_id?: string;
   description?: string;
   arguments?: Record<string, unknown>;
-  /** Set only on a `title` event: the conversation's generated title. */
+  /** Set only on a `title` event: the conversation's settled, persisted title. */
   title?: string;
 }
 

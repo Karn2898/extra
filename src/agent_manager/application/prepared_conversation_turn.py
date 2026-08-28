@@ -21,7 +21,6 @@ class PreparedConversationTurn:
     #: hand, and the run must still act as whoever asked for it.
     principal: Principal
     #: Title generation started alongside this turn, on a conversation's first
-    #: message only. Held here so whoever delivers the turn can also deliver
-    #: its title, and so the handle dies with the turn rather than outliving it
-    #: in service-level state.
+    #: message only. The service owns the task until it finishes; the turn also
+    #: carries the handle so its transport can observe and deliver the result.
     title_task: asyncio.Task[str | None] | None = None

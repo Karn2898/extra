@@ -80,6 +80,24 @@ def test_log_helper_attaches_fields(caplog):
     assert record.fields == {"n": 1}
 
 
+def test_log_helper_forwards_exception_info(caplog):
+    with caplog.at_level(logging.WARNING, logger="agent_engine.test"):
+        try:
+            raise RuntimeError("boom")
+        except RuntimeError:
+            log(
+                logging.getLogger("agent_engine.test"),
+                logging.WARNING,
+                "failed",
+                exc_info=True,
+                operation="title",
+            )
+
+    record = caplog.records[-1]
+    assert record.exc_info is not None
+    assert record.fields == {"operation": "title"}
+
+
 def test_preview_collapses_newlines():
     from agent_engine.api.app import _preview
 
