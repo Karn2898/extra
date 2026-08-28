@@ -52299,8 +52299,6 @@ var TokenSource = class {
     /** Bumped by `reset()` so a resolution already in flight, once it lands, can
      *  tell it is answering a question nobody is asking anymore. */
     this.generation = 0;
-    /** Avoid repeating unauthenticated claim attempts for the same pass in cookie mode. */
-    this.lastClaimAttemptPass = null;
     this.tokenUrl = options.tokenUrl ?? "";
     this.provider = options.provider ?? null;
     this.storage = options.storage ?? localStorage;
@@ -52309,9 +52307,7 @@ var TokenSource = class {
     });
   }
   async current() {
-    if (!this.cached || this.isCookieMode() && this.storedPass() !== null) {
-      await this.resolve(() => this.storedPass());
-    }
+    if (!this.cached) await this.resolve(() => this.storedPass());
     return this.cached;
   }
   /** After a 401: whatever we sent is no good, so get another. */
@@ -52348,38 +52344,23 @@ var TokenSource = class {
     })());
     return this.pending;
   }
-  isCookieMode() {
-    return !this.tokenUrl && !this.provider;
-  }
   /** A host token, plus the one-time hand-off of whatever this browser chatted
    *  about before signing in. */
   async hostToken() {
     const token = await this.fromHost();
-    if (token || this.isCookieMode() && this.storedPass()) {
-      await this.claimVisitorHistory(token);
-    }
+    if (token) await this.claimVisitorHistory(token);
     return token;
   }
   async claimVisitorHistory(hostToken) {
     const pass = this.storedPass();
     if (!pass) return;
     try {
-      const headers = { "Content-Type": "application/json" };
-      if (hostToken) headers.Authorization = `Bearer ${hostToken}`;
       const response = await fetch(`${this.endpoint}${LINK_ENDPOINT}`, {
         method: "POST",
-        headers,
-        credentials: "include",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${hostToken}` },
         body: JSON.stringify({ anonymous_token: pass })
       });
-      if (response.ok) {
-        const data = await response.json().catch(() => null);
-        if (hostToken !== null || (data?.conversations_moved ?? 0) > 0) {
-          this.clearPass();
-        }
-      } else if (hostToken !== null && response.status >= 400 && response.status < 500 && response.status !== 401) {
-        this.clearPass();
-      }
+      if (response.status < 500) this.clearPass();
     } catch {
     }
   }
