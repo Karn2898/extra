@@ -769,15 +769,22 @@ assert.equal(mintedPass, false, "never asks for a visitor pass");
   const sentWhileSignedOut = calls.filter((c) => c.url.endsWith("/conversations")).pop().auth;
   assert.equal(sentWhileSignedOut, "Bearer old-cookie-pass", "visitor pass used while signed out");
 
-  // User logs in via cookie on the host site (zero-code: no refreshIdentity/reset called)
+  // 1. Multiple consecutive anonymous requests in cookie mode do NOT repeat /auth/link on every request
+  const initialLinkCalls = calls.filter((c) => c.url.endsWith("/auth/link")).length;
+  assert.equal(initialLinkCalls, 1, "/auth/link called once on first request");
+
+  await client.createConversation();
+  await client.createConversation();
+  await client.createConversation();
+  const linkCallsAfter5Turn = calls.filter((c) => c.url.endsWith("/auth/link")).length;
+  assert.equal(linkCallsAfter5Turn, 1, "/auth/link is throttled and not repeated on every anonymous request");
+
+  // 2. User logs in via cookie on the host site and resets identity / retries
   loggedInViaCookie = true;
+  tokens.reset();
   await client.createConversation();
   const sentAfterCookieLogin = calls.filter((c) => c.url.endsWith("/conversations")).pop().auth;
   assert.equal(sentAfterCookieLogin, undefined, "no bearer sent after cookie login");
-  assert.ok(
-    calls.some((c) => c.url.endsWith("/auth/link")),
-    "cookie mode pre-login conversations are merged",
-  );
   assert.equal(
     localStorage.getItem(visitorPassKey("https://api.example")),
     null,

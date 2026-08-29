@@ -35,6 +35,7 @@ export interface TokenSourceOptions {
 
 const PASS_ENDPOINT = "/auth/anonymous";
 const LINK_ENDPOINT = "/auth/link";
+const CLAIM_RETRY_INTERVAL_MS = 15000;
 
 export function visitorPassKey(endpoint: string): string {
   return `agent-chat:pass:${endpoint}`;
@@ -48,6 +49,7 @@ export class TokenSource {
   private generation = 0;
   /** Avoid repeating unauthenticated claim attempts for the same pass in cookie mode. */
   private lastClaimAttemptPass: string | null = null;
+  private lastClaimAttemptTime = 0;
   private readonly tokenUrl: string;
   private readonly provider: TokenProvider | null;
   private readonly storage: Storage;
@@ -66,7 +68,13 @@ export class TokenSource {
   }
 
   async current(): Promise<string | null> {
-    if (!this.cached || (this.isCookieMode() && this.storedPass() !== null)) {
+    const pass = this.storedPass();
+    const shouldRetryClaim =
+      this.isCookieMode() &&
+      pass !== null &&
+      (pass !== this.lastClaimAttemptPass || Date.now() - this.lastClaimAttemptTime >= CLAIM_RETRY_INTERVAL_MS);
+
+    if (!this.cached || shouldRetryClaim) {
       await this.resolve(() => this.storedPass());
     }
     return this.cached;
@@ -88,6 +96,8 @@ export class TokenSource {
     // next call starts a fresh one instead of awaiting an answer to a question
     // that no longer applies (e.g. the old tokenProvider).
     this.pending = null;
+    this.lastClaimAttemptPass = null;
+    this.lastClaimAttemptTime = 0;
   }
 
   /** Drop this browser's identity entirely — a host app signing its user out. */
@@ -148,8 +158,16 @@ export class TokenSource {
         const data = (await response.json().catch(() => null)) as { conversations_moved?: number } | null;
         if (hostToken !== null || (data?.conversations_moved ?? 0) > 0) {
           this.clearPass();
+          this.lastClaimAttemptPass = null;
+          this.lastClaimAttemptTime = 0;
+        } else {
+          this.lastClaimAttemptPass = pass;
+          this.lastClaimAttemptTime = Date.now();
         }
-      } else if (hostToken !== null && response.status >= 400 && response.status < 500 && response.status !== 401) {
+      } else if (response.status === 401) {
+        this.lastClaimAttemptPass = pass;
+        this.lastClaimAttemptTime = Date.now();
+      } else if (hostToken !== null && response.status >= 400 && response.status < 500) {
         this.clearPass();
       }
     } catch {
