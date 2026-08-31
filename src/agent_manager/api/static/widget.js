@@ -52143,8 +52143,8 @@ var AgentChatClient = class {
   }
   /** A 401 usually means the token expired: renew once and retry. The rejected
    *  attempt changed nothing, so replaying is safe. */
-  async request(path2, init) {
-    let response = await this.send(path2, init, await this.tokens.current());
+  async request(path2, init, options) {
+    let response = await this.send(path2, init, await this.tokens.current({ forceCheck: options?.forceCheck }));
     if (response.status === 401) {
       response = await this.send(path2, init, await this.tokens.renew());
     }
@@ -52166,7 +52166,7 @@ var AgentChatClient = class {
   async listConversations(limit = 20, cursor) {
     const params = new URLSearchParams({ limit: String(limit) });
     if (cursor) params.set("cursor", cursor);
-    const response = await this.request(`/conversations?${params.toString()}`);
+    const response = await this.request(`/conversations?${params.toString()}`, void 0, { forceCheck: true });
     const data = await response.json();
     const rawItems = Array.isArray(data.items) ? data.items : [];
     const items = rawItems.map((thread) => ({
@@ -52299,19 +52299,45 @@ var TokenSource = class {
     /** Bumped by `reset()` so a resolution already in flight, once it lands, can
      *  tell it is answering a question nobody is asking anymore. */
     this.generation = 0;
+    /** Avoid repeating unauthenticated claim attempts for the same pass in cookie mode. */
+    this.lastClaimAttemptPass = null;
+    this.lastCookieSnapshot = typeof document !== "undefined" ? document.cookie : "";
+    this.identityCheckDirty = true;
     this.tokenUrl = options.tokenUrl ?? "";
     this.provider = options.provider ?? null;
     this.storage = options.storage ?? localStorage;
     this.requireIdentity = options.requireIdentity ?? false;
     this.onIdentityFailure = options.onIdentityFailure ?? (() => {
     });
+    if (typeof window !== "undefined") {
+      const markDirty = () => {
+        this.identityCheckDirty = true;
+      };
+      try {
+        window.addEventListener("focus", markDirty);
+        if (typeof document !== "undefined") {
+          document.addEventListener("visibilitychange", markDirty);
+        }
+        window.addEventListener("storage", markDirty);
+      } catch {
+      }
+    }
   }
-  async current() {
-    if (!this.cached) await this.resolve(() => this.storedPass());
+  async current(options) {
+    const pass = this.storedPass();
+    const cookieChanged = this.cookieSnapshotChanged();
+    const force = options?.forceCheck ?? false;
+    const shouldClaim = this.isCookieMode() && pass !== null && (force || this.identityCheckDirty || cookieChanged || pass !== this.lastClaimAttemptPass);
+    if (!this.cached || shouldClaim) {
+      await this.resolve(() => this.storedPass());
+      this.identityCheckDirty = false;
+      this.updateCookieSnapshot();
+    }
     return this.cached;
   }
   /** After a 401: whatever we sent is no good, so get another. */
   async renew() {
+    this.identityCheckDirty = true;
     return this.resolve(() => this.issuePass());
   }
   /** Forget the token in hand, so the next request works out who the caller is
@@ -52322,11 +52348,23 @@ var TokenSource = class {
     this.generation += 1;
     this.cached = null;
     this.pending = null;
+    this.lastClaimAttemptPass = null;
+    this.identityCheckDirty = true;
+    this.updateCookieSnapshot();
   }
   /** Drop this browser's identity entirely — a host app signing its user out. */
   forget() {
     this.reset();
     this.clearPass();
+  }
+  cookieSnapshotChanged() {
+    if (typeof document === "undefined") return false;
+    return document.cookie !== this.lastCookieSnapshot;
+  }
+  updateCookieSnapshot() {
+    if (typeof document !== "undefined") {
+      this.lastCookieSnapshot = document.cookie;
+    }
   }
   /** Concurrent callers share one resolution. Without this, parallel requests
    *  each fetch a token and each hand over the visitor pass. */
@@ -52344,23 +52382,44 @@ var TokenSource = class {
     })());
     return this.pending;
   }
+  isCookieMode() {
+    return !this.tokenUrl && !this.provider;
+  }
   /** A host token, plus the one-time hand-off of whatever this browser chatted
    *  about before signing in. */
   async hostToken() {
     const token = await this.fromHost();
-    if (token) await this.claimVisitorHistory(token);
+    if (token || this.isCookieMode() && this.storedPass()) {
+      await this.claimVisitorHistory(token);
+    }
     return token;
   }
   async claimVisitorHistory(hostToken) {
     const pass = this.storedPass();
     if (!pass) return;
     try {
+      const headers = { "Content-Type": "application/json" };
+      if (hostToken) headers.Authorization = `Bearer ${hostToken}`;
       const response = await fetch(`${this.endpoint}${LINK_ENDPOINT}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${hostToken}` },
+        headers,
+        credentials: "include",
         body: JSON.stringify({ anonymous_token: pass })
       });
-      if (response.status < 500) this.clearPass();
+      if (response.ok) {
+        const data = await response.json().catch(() => null);
+        if (hostToken !== null || (data?.conversations_moved ?? 0) > 0) {
+          this.clearPass();
+          this.lastClaimAttemptPass = null;
+          this.identityCheckDirty = true;
+        } else {
+          this.lastClaimAttemptPass = pass;
+        }
+      } else if (response.status === 401) {
+        this.lastClaimAttemptPass = pass;
+      } else if (hostToken !== null && response.status >= 400 && response.status < 500) {
+        this.clearPass();
+      }
     } catch {
     }
   }

@@ -43,8 +43,8 @@ export class AgentChatClient {
 
   /** A 401 usually means the token expired: renew once and retry. The rejected
    *  attempt changed nothing, so replaying is safe. */
-  private async request(path: string, init?: RequestInit): Promise<Response> {
-    let response = await this.send(path, init, await this.tokens.current());
+  private async request(path: string, init?: RequestInit, options?: { forceCheck?: boolean }): Promise<Response> {
+    let response = await this.send(path, init, await this.tokens.current({ forceCheck: options?.forceCheck }));
     if (response.status === 401) {
       response = await this.send(path, init, await this.tokens.renew());
     }
@@ -71,7 +71,7 @@ export class AgentChatClient {
   async listConversations(limit = 20, cursor?: string | null): Promise<PaginatedThreads> {
     const params = new URLSearchParams({ limit: String(limit) });
     if (cursor) params.set("cursor", cursor);
-    const response = await this.request(`/conversations?${params.toString()}`);
+    const response = await this.request(`/conversations?${params.toString()}`, undefined, { forceCheck: true });
 
     const data = await response.json();
     const rawItems: Array<{ conversation_id: string; title?: string | null; last_message_at?: string | null }> =

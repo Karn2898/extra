@@ -46,6 +46,10 @@ export class TokenSource {
   /** Bumped by `reset()` so a resolution already in flight, once it lands, can
    *  tell it is answering a question nobody is asking anymore. */
   private generation = 0;
+  /** Avoid repeating unauthenticated claim attempts for the same pass in cookie mode. */
+  private lastClaimAttemptPass: string | null = null;
+  private lastCookieSnapshot = typeof document !== "undefined" ? document.cookie : "";
+  private identityCheckDirty = true;
   private readonly tokenUrl: string;
   private readonly provider: TokenProvider | null;
   private readonly storage: Storage;
@@ -61,15 +65,43 @@ export class TokenSource {
     this.storage = options.storage ?? localStorage;
     this.requireIdentity = options.requireIdentity ?? false;
     this.onIdentityFailure = options.onIdentityFailure ?? (() => {});
+
+    if (typeof window !== "undefined") {
+      const markDirty = () => {
+        this.identityCheckDirty = true;
+      };
+      try {
+        window.addEventListener("focus", markDirty);
+        if (typeof document !== "undefined") {
+          document.addEventListener("visibilitychange", markDirty);
+        }
+        window.addEventListener("storage", markDirty);
+      } catch {
+        // Non-browser or custom environment ignore
+      }
+    }
   }
 
-  async current(): Promise<string | null> {
-    if (!this.cached) await this.resolve(() => this.storedPass());
+  async current(options?: { forceCheck?: boolean }): Promise<string | null> {
+    const pass = this.storedPass();
+    const cookieChanged = this.cookieSnapshotChanged();
+    const force = options?.forceCheck ?? false;
+    const shouldClaim =
+      this.isCookieMode() &&
+      pass !== null &&
+      (force || this.identityCheckDirty || cookieChanged || pass !== this.lastClaimAttemptPass);
+
+    if (!this.cached || shouldClaim) {
+      await this.resolve(() => this.storedPass());
+      this.identityCheckDirty = false;
+      this.updateCookieSnapshot();
+    }
     return this.cached;
   }
 
   /** After a 401: whatever we sent is no good, so get another. */
   async renew(): Promise<string | null> {
+    this.identityCheckDirty = true;
     return this.resolve(() => this.issuePass());
   }
 
@@ -84,12 +116,26 @@ export class TokenSource {
     // next call starts a fresh one instead of awaiting an answer to a question
     // that no longer applies (e.g. the old tokenProvider).
     this.pending = null;
+    this.lastClaimAttemptPass = null;
+    this.identityCheckDirty = true;
+    this.updateCookieSnapshot();
   }
 
   /** Drop this browser's identity entirely — a host app signing its user out. */
   forget(): void {
     this.reset();
     this.clearPass();
+  }
+
+  private cookieSnapshotChanged(): boolean {
+    if (typeof document === "undefined") return false;
+    return document.cookie !== this.lastCookieSnapshot;
+  }
+
+  private updateCookieSnapshot(): void {
+    if (typeof document !== "undefined") {
+      this.lastCookieSnapshot = document.cookie;
+    }
   }
 
   /** Concurrent callers share one resolution. Without this, parallel requests
@@ -114,26 +160,46 @@ export class TokenSource {
     return this.pending;
   }
 
+  private isCookieMode(): boolean {
+    return !this.tokenUrl && !this.provider;
+  }
+
   /** A host token, plus the one-time hand-off of whatever this browser chatted
    *  about before signing in. */
   private async hostToken(): Promise<string | null> {
     const token = await this.fromHost();
-    if (token) await this.claimVisitorHistory(token);
+    if (token || (this.isCookieMode() && this.storedPass())) {
+      await this.claimVisitorHistory(token);
+    }
     return token;
   }
 
-  private async claimVisitorHistory(hostToken: string): Promise<void> {
+  private async claimVisitorHistory(hostToken: string | null): Promise<void> {
     const pass = this.storedPass();
     if (!pass) return;
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (hostToken) headers.Authorization = `Bearer ${hostToken}`;
       const response = await fetch(`${this.endpoint}${LINK_ENDPOINT}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${hostToken}` },
+        headers,
+        credentials: "include",
         body: JSON.stringify({ anonymous_token: pass }),
       });
-      // Drop the pass on any verdict, including a refusal — only a server that
-      // never answered is worth asking again.
-      if (response.status < 500) this.clearPass();
+      if (response.ok) {
+        const data = (await response.json().catch(() => null)) as { conversations_moved?: number } | null;
+        if (hostToken !== null || (data?.conversations_moved ?? 0) > 0) {
+          this.clearPass();
+          this.lastClaimAttemptPass = null;
+          this.identityCheckDirty = true;
+        } else {
+          this.lastClaimAttemptPass = pass;
+        }
+      } else if (response.status === 401) {
+        this.lastClaimAttemptPass = pass;
+      } else if (hostToken !== null && response.status >= 400 && response.status < 500) {
+        this.clearPass();
+      }
     } catch {
       // Offline: keep the pass so the next page load retries the hand-off.
     }
