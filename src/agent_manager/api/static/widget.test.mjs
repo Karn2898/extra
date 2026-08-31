@@ -779,16 +779,15 @@ assert.equal(mintedPass, false, "never asks for a visitor pass");
   const linkCallsAfter5Turn = calls.filter((c) => c.url.endsWith("/auth/link")).length;
   assert.equal(linkCallsAfter5Turn, 1, "/auth/link is throttled and not repeated on every anonymous request");
 
-  // 2. User logs in via cookie on the host site and resets identity / retries
+  // 2. User logs in via cookie on the host site (zero-code: no tokens.reset() or refreshIdentity() called)
   loggedInViaCookie = true;
-  tokens.reset();
-  await client.createConversation();
-  const sentAfterCookieLogin = calls.filter((c) => c.url.endsWith("/conversations")).pop().auth;
-  assert.equal(sentAfterCookieLogin, undefined, "no bearer sent after cookie login");
+  await client.listConversations();
+  const sentAfterCookieLogin = calls.filter((c) => c.url.includes("/conversations")).pop().auth;
+  assert.equal(sentAfterCookieLogin, undefined, "no bearer sent after zero-code cookie login");
   assert.equal(
     localStorage.getItem(visitorPassKey("https://api.example")),
     null,
-    "visitor pass is cleared after successful cookie merge",
+    "visitor pass is cleared after successful zero-code cookie merge",
   );
 }
 
