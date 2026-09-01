@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
 
 from agent_engine.approvals.coordinator import ApprovalCoordinator
@@ -92,6 +93,32 @@ class _ToolCall:
 def _elapsed_ms(start: float) -> int:
     """Whole milliseconds elapsed since a ``time.perf_counter()`` reading."""
     return int((time.perf_counter() - start) * 1000)
+
+
+def _extract_result_text(result: object) -> str:
+    """Turn a tool's return value into the text the model reads.
+
+    A ``response_format="content_and_artifact"`` tool (every MCP tool) returns
+    ``ToolMessage.content`` as either a plain string or a list of MCP content
+    blocks (``{"type": "text", "text": ...}``) rather than a single string.
+    ``str()`` on that list produces its Python repr — visible punctuation and
+    key names — instead of the text itself, so each shape needs its own
+    handling rather than one blind stringification.
+    """
+    content = result.content if isinstance(result, ToolMessage) else result
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(str(block.get("text", "")))
+            elif isinstance(block, dict):
+                parts.append(f"[unsupported {block.get('type', 'content')} block]")
+            else:
+                parts.append(str(block))
+        return "\n".join(parts)
+    return str(content)
 
 
 class ToolInvoker:
@@ -251,7 +278,14 @@ class ToolInvoker:
 
         start = time.perf_counter()
         try:
-            result = await call.tool.ainvoke(call.args)
+            result = await call.tool.ainvoke(
+                {
+                    "type": "tool_call",
+                    "id": call.tool_call_id,
+                    "name": call.name,
+                    "args": call.args,
+                }
+            )
         except Exception as exc:
             return await self._record_error(call, exc, _elapsed_ms(start))
         return await self._record_success(call, result, _elapsed_ms(start))
@@ -284,7 +318,7 @@ class ToolInvoker:
             current_run_context.get(),
             self._call_context(call, "succeeded", latency_ms),
         )
-        result_text = await self._transform_result(call, str(result), latency_ms)
+        result_text = await self._transform_result(call, _extract_result_text(result), latency_ms)
         await self._execution_manager.finish_execution(
             call.exec_id, status="succeeded", result=result_text
         )
