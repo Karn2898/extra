@@ -109,16 +109,19 @@ def _extract_result_text(result: object) -> str:
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                parts.append(str(block.get("text", "")))
-            elif isinstance(block, dict):
-                parts.append(f"[unsupported {block.get('type', 'content')} block]")
-            else:
-                parts.append(str(block))
-        return "\n".join(parts)
+        return "\n".join(_block_text(block) for block in content)
     return str(content)
+
+
+def _block_text(block: object) -> str:
+    """Read the text out of one MCP content block (each block is a flat dict —
+    none of the standard block types nest another list of blocks inside).
+    """
+    if not isinstance(block, dict):
+        return str(block)
+    if block.get("type") == "text":
+        return str(block.get("text", ""))
+    return f"[unsupported {block.get('type', 'content')} block]"
 
 
 class ToolInvoker:
