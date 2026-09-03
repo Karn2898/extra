@@ -712,6 +712,7 @@ export function AgentChatApp({
                 <ChatMessage
                   key={entry.id}
                   entry={entry}
+                  conversationId={activeId}
                   onApproval={(approval, decision) =>
                     void decideApproval(activeId, entry, approval, decision)
                   }
@@ -803,6 +804,7 @@ function Launcher({
 
 function ChatMessage({
   entry,
+  conversationId,
   onApproval,
   onCancelApproval,
   onEdit,
@@ -810,6 +812,7 @@ function ChatMessage({
   editable,
 }: {
   entry: MessageEntry;
+  conversationId?: string;
   onApproval: (approval: PendingApproval, decision: ApprovalDecision) => void;
   onCancelApproval: (approval: PendingApproval) => void;
   onEdit: () => void;
@@ -877,7 +880,7 @@ function ChatMessage({
               <MessageResponse>{entry.text}</MessageResponse>
             </MessageContent>
           ) : null}
-          {entry.text.trim() ? <MessageActions text={entry.text} feedback={entry.feedback} messageId={entry.messageId} conversationId={activeId} onFeedback={onFeedback} /> : null}
+          {entry.text.trim() ? <MessageActions text={entry.text} feedback={entry.feedback} messageId={entry.messageId} conversationId={conversationId} onFeedback={onFeedback} /> : null}
         </>
       )}
     </Message>
