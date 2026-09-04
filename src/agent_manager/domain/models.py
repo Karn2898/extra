@@ -24,6 +24,11 @@ class Role(StrEnum):
     AGENT = "agent"
 
 
+class MessageFeedback(StrEnum):
+    THUMBS_UP = "thumbs_up"
+    THUMBS_DOWN = "thumbs_down"
+
+
 @dataclass(frozen=True)
 class Message:
     role: Role
@@ -108,7 +113,7 @@ class ConversationMessage:
     status: str = "succeeded"
     error_type: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    feedback: str | None = None
+    feedback: MessageFeedback | None = None
 
 
 @dataclass(frozen=True)

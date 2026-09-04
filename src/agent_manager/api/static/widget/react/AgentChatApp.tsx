@@ -720,9 +720,26 @@ export function AgentChatApp({
                     void cancelApproval(activeId, entry.id, approval)
                   }
                   onEdit={() => editMessage(entry)}
-                  onFeedback={(messageId, feedback) =>
-                    void conversation.setMessageFeedback(activeId, messageId, feedback)
-                  }
+                  onFeedback={async (messageId, feedback) => {
+                    putEntries(activeId, (prev) =>
+                      prev.map((entry) =>
+                        entry.messageId === messageId
+                          ? { ...entry, feedback }
+                          : entry,
+                      ),
+                    );
+                    try {
+                      await conversation.setMessageFeedback(activeId, messageId, feedback);
+                    } catch {
+                      putEntries(activeId, (prev) =>
+                        prev.map((entry) =>
+                          entry.messageId === messageId
+                            ? { ...entry, feedback: undefined }
+                            : entry,
+                        ),
+                      );
+                    }
+                  }}
                   editable={canEdit}
                 />
               ))}

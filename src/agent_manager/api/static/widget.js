@@ -53356,7 +53356,8 @@ function reduceStreamEvent(entry, event) {
         ...entry,
         text: event.content ?? entry.text,
         route: event.route ?? entry.route,
-        tools: event.used_tools ?? entry.tools
+        tools: event.used_tools ?? entry.tools,
+        messageId: event.message_id ?? entry.messageId
       };
     case "pending_approval":
       if (!event.run_id || !event.approval_id || !event.agent_id || !event.tool_name) {
@@ -54126,7 +54127,24 @@ function AgentChatApp({
                       onApproval: (approval, decision) => void decideApproval(activeId, entry, approval, decision),
                       onCancelApproval: (approval) => void cancelApproval(activeId, entry.id, approval),
                       onEdit: () => editMessage(entry),
-                      onFeedback: (messageId, feedback) => void conversation.setMessageFeedback(activeId, messageId, feedback),
+                      onFeedback: async (messageId, feedback) => {
+                        putEntries(
+                          activeId,
+                          (prev) => prev.map(
+                            (entry2) => entry2.messageId === messageId ? { ...entry2, feedback } : entry2
+                          )
+                        );
+                        try {
+                          await conversation.setMessageFeedback(activeId, messageId, feedback);
+                        } catch {
+                          putEntries(
+                            activeId,
+                            (prev) => prev.map(
+                              (entry2) => entry2.messageId === messageId ? { ...entry2, feedback: void 0 } : entry2
+                            )
+                          );
+                        }
+                      },
                       editable: canEdit
                     },
                     entry.id

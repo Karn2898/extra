@@ -31,7 +31,7 @@ from agent_manager.api.schemas import (
     StreamEventOut,
     TokenBudgetResponse,
 )
-from agent_manager.domain import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, PageRequest
+from agent_manager.domain import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, MessageFeedback, PageRequest
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -121,7 +121,7 @@ async def set_message_feedback(
 ) -> MessageFeedbackResponse:
     with as_http_error():
         updated = await service.set_message_feedback(
-            conversation_id, message_id, body.feedback, caller
+            conversation_id, message_id, MessageFeedback(body.feedback), caller
         )
     if updated is None:
         from fastapi import HTTPException

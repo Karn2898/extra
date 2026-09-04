@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import re
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from typing import cast
@@ -617,6 +618,24 @@ def test_stream_surfaces_sse_events_and_persists_final_answer(client: TestClient
         ("user", "hello"),
         ("assistant", "answer:hello"),
     ]
+
+
+def test_stream_final_event_includes_persisted_message_id(client: TestClient) -> None:
+    cid = client.post("/conversations").json()["conversation_id"]
+
+    with client.stream(
+        "POST", f"/conversations/{cid}/messages/stream", json={"message": "hello"}
+    ) as response:
+        text = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    match = re.search(r"event: final\ndata: (.+?)\n\n", text)
+    assert match is not None
+    final_payload = json.loads(match.group(1))
+    assert final_payload["type"] == "final"
+    assert "message_id" in final_payload
+    assert isinstance(final_payload["message_id"], str)
+    assert len(final_payload["message_id"]) > 0
 
 
 async def test_closing_after_turn_started_cancels_a_run_before_engine_iteration() -> None:
@@ -1280,7 +1299,16 @@ def test_stream_sanitizes_late_engine_error_and_persists_final_answer(
         text = "".join(response.iter_text())
 
     assert response.status_code == 200
-    assert 'event: final\ndata: {"type": "final", "content": "done", "route": ["agent"]}' in text
+    assert "event: final" in text
+    final_match = re.search(r"event: final\ndata: (.+?)\n\n", text)
+    assert final_match is not None
+    final_data = json.loads(final_match.group(1))
+    assert final_data == {
+        "type": "final",
+        "content": "done",
+        "route": ["agent"],
+        "message_id": str(final_data["message_id"]),
+    }
     assert 'event: error\ndata: {"type": "error", "error": "Internal server error"}' in text
     assert "cleanup after final" not in text
     assert "event: done\ndata: [DONE]" in text

@@ -385,12 +385,13 @@ class SqlRepository(Repository):
 
     async def update_message_feedback(
         self,
+        conversation_id: str,
         message_id: str,
         feedback: str,
     ) -> ConversationMessage | None:
         async with self._sessions() as session:
             row = await session.get(ConversationMessageRow, message_id)
-            if row is None:
+            if row is None or row.session_id != conversation_id:
                 return None
             metadata = dict(row.metadata_json or {})
             metadata["feedback"] = feedback
@@ -398,6 +399,17 @@ class SqlRepository(Repository):
             session.add(row)
             await session.commit()
             await session.refresh(row)
+        return _message(row)
+
+    async def get_message_in_conversation(
+        self,
+        conversation_id: str,
+        message_id: str,
+    ) -> ConversationMessage | None:
+        async with self._sessions() as session:
+            row = await session.get(ConversationMessageRow, message_id)
+            if row is None or row.session_id != conversation_id:
+                return None
         return _message(row)
 
     async def get_snapshot(self, session_id: str) -> ConversationSnapshot | None:
